@@ -8,7 +8,7 @@ import Dashboard from "@/pages/Dashboard";
 
 import {
   ProductsPage, SkusPage, BatchesPage,
-  InventoryPage, WarehousesPage,
+  WarehousesPage,
   DistributorsPage, RetailersPage, CustomersPage,
   PrimaryOrdersPage, SecondaryOrdersPage, InvoicesPage,
   DispatchesPage, GitPage, GrnPage,
@@ -22,6 +22,10 @@ import {
   ReportsPage, AnalyticsPage,
   AiAssistantPage, SettingsPage,
 } from "@/pages/modules/AdminModules";
+
+import {
+  CompanyInventoryPage, DistributorInventoryPage, RetailerInventoryPage, StockLedgerPage,
+} from "@/pages/modules/InventoryModules";
 
 function Protected({ children }) {
   const { user } = useAuth();
@@ -52,7 +56,10 @@ function AppRoutes() {
         ["products", <ProductsPage />],
         ["skus", <SkusPage />],
         ["batches", <BatchesPage />],
-        ["inventory", <InventoryPage />],
+        ["inventory", <CompanyInventoryPage />],
+        ["distributor-inventory", <DistributorInventoryPage />],
+        ["retailer-inventory", <RetailerInventoryPage />],
+        ["stock-ledger", <StockLedgerPage />],
         ["warehouses", <WarehousesPage />],
         ["distributors", <DistributorsPage />],
         ["retailers", <RetailersPage />],

@@ -18,7 +18,10 @@ export const NAV_GROUPS = [
   {
     label: "Operations",
     items: [
-      { key: "inventory", label: "Inventory", icon: "Warehouse", to: "/app/inventory", roles: ["super_admin", "company_admin", "regional_manager", "distributor"] },
+      { key: "inventory", label: "Company Inventory", icon: "Warehouse", to: "/app/inventory", roles: ["super_admin", "company_admin", "regional_manager"] },
+      { key: "distributor-inventory", label: "Distributor Inventory", icon: "Handshake", to: "/app/distributor-inventory", roles: ["super_admin", "company_admin", "regional_manager", "distributor"] },
+      { key: "retailer-inventory", label: "Retailer Inventory", icon: "Store", to: "/app/retailer-inventory", roles: ["super_admin", "company_admin", "regional_manager", "retailer"] },
+      { key: "stock-ledger", label: "Stock Ledger", icon: "BookOpen", to: "/app/stock-ledger", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
       { key: "warehouses", label: "Warehouses", icon: "Building2", to: "/app/warehouses", roles: ["super_admin", "company_admin", "regional_manager"] },
       { key: "dispatches", label: "Dispatch", icon: "Truck", to: "/app/dispatches", roles: ["super_admin", "company_admin", "regional_manager", "distributor"] },
       { key: "goods-in-transit", label: "Goods In Transit", icon: "Route", to: "/app/goods-in-transit", roles: ["super_admin", "company_admin", "regional_manager", "distributor"] },

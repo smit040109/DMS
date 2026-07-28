@@ -1,5 +1,6 @@
 import React from "react";
 import ModulePage from "@/components/common/ModulePage";
+import WorkflowActions from "@/components/common/WorkflowActions";
 
 // Shared column recipes
 const money = (key, label, align = "right") => ({ key, label, type: "currency", align });
@@ -42,16 +43,19 @@ export function SkusPage() {
 }
 
 export function BatchesPage() {
+  const [reload, setReload] = React.useState(0);
   return (
     <ModulePage
+      key={reload}
       resource="batches"
       title="Batches"
-      subtitle="Manufacturing batches with QC status and expiry tracking"
+      subtitle="Manufacturing batches — approve QC and stock-in to Company Inventory"
       columns={[
         text("batch_no", "Batch"), text("sku_code", "SKU"), text("product_name", "Product"),
         date("manufactured_on", "Manufactured"), date("expires_on", "Expires"),
-        { key: "quantity", label: "Qty", align: "right", render: (r) => r.quantity?.toLocaleString() },
+        { key: "batch_quantity", label: "Qty", align: "right", render: (r) => (r.batch_quantity || r.quantity)?.toLocaleString() },
         { key: "quality_status", label: "QC Status", type: "status" },
+        { key: "actions", label: "Actions", render: (r) => <WorkflowActions entity="batch" row={r} onDone={() => setReload((v) => v + 1)} /> },
       ]}
     />
   );
@@ -158,7 +162,7 @@ export function CustomersPage() {
 }
 
 // ---------- Sales ----------
-const orderColumns = [
+const orderColumnsBase = [
   text("order_no", "Order"),
   text("party_name", "Party"),
   chip("party_type", "Type"),
@@ -171,39 +175,52 @@ const orderColumns = [
 ];
 
 export function PrimaryOrdersPage() {
+  const [reload, setReload] = React.useState(0);
   return (
     <ModulePage
+      key={reload}
       resource="primary-orders"
       title="Primary Orders"
-      subtitle="Distributor → Company orders with approval workflow"
-      columns={orderColumns}
+      subtitle="Distributor → Company — approve to auto-reserve FIFO stock + generate invoice"
+      columns={[
+        ...orderColumnsBase,
+        { key: "actions", label: "Actions", render: (r) => <WorkflowActions entity="primary-order" row={r} onDone={() => setReload((v) => v + 1)} /> },
+      ]}
     />
   );
 }
 
 export function SecondaryOrdersPage() {
+  const [reload, setReload] = React.useState(0);
   return (
     <ModulePage
+      key={reload}
       resource="secondary-orders"
       title="Secondary Orders"
-      subtitle="Retailer → Distributor orders with fulfilment tracking"
-      columns={orderColumns}
+      subtitle="Retailer → Distributor — approve reserves distributor stock + issues invoice"
+      columns={[
+        ...orderColumnsBase,
+        { key: "actions", label: "Actions", render: (r) => <WorkflowActions entity="secondary-order" row={r} onDone={() => setReload((v) => v + 1)} /> },
+      ]}
     />
   );
 }
 
 export function InvoicesPage() {
+  const [reload, setReload] = React.useState(0);
   return (
     <ModulePage
+      key={reload}
       resource="invoices"
       title="Invoices"
-      subtitle="GST-compliant invoices, ageing and collection status"
+      subtitle="Primary + Secondary invoices — click Dispatch to move stock into GIT"
       columns={[
-        text("invoice_no", "Invoice"), text("party_name", "Party"),
+        text("invoice_no", "Invoice"), text("party_name", "Party"), chip("type", "Type"),
         money("subtotal", "Subtotal"), money("tax", "Tax"), money("total", "Total"),
         money("paid", "Paid"),
         status(),
         date("due_on", "Due"),
+        { key: "actions", label: "Actions", render: (r) => <WorkflowActions entity="invoice" row={r} onDone={() => setReload((v) => v + 1)} /> },
       ]}
     />
   );
@@ -211,18 +228,20 @@ export function InvoicesPage() {
 
 // ---------- Ops ----------
 export function DispatchesPage() {
+  const [reload, setReload] = React.useState(0);
   return (
     <ModulePage
+      key={reload}
       resource="dispatches"
       title="Dispatch"
-      subtitle="Vehicle-loaded dispatches with route and ETA"
+      subtitle="Vehicles on the road — click Receive to auto-create GRN and update partner inventory"
       columns={[
-        text("dispatch_no", "Dispatch"), text("party_name", "Party"),
+        text("dispatch_no", "Dispatch"), text("party_name", "Party"), chip("type", "Type"),
         text("vehicle_no", "Vehicle"), text("driver", "Driver"),
         text("route", "Route"),
         { key: "distance_km", label: "Distance", align: "right", render: (r) => `${r.distance_km} km` },
         status(),
-        date("eta", "ETA"),
+        { key: "actions", label: "Actions", render: (r) => <WorkflowActions entity="dispatch" row={r} onDone={() => setReload((v) => v + 1)} /> },
       ]}
     />
   );

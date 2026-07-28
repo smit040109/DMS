@@ -18,6 +18,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr
 
 from seed_data import SEED
+from workflow import build_workflow_router
+from seed_workflow import run_seed_workflow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("gooil.dms")
@@ -383,7 +385,11 @@ async def delete_resource(resource: str, item_id: str, user: dict = Depends(get_
 
 @api.get("/")
 async def root():
-    return {"service": "GO OIL DMS", "status": "operational", "version": "1.0.0"}
+    return {"service": "GO OIL DMS", "status": "operational", "version": "2.0.0-workflow"}
+
+
+# Workflow router (Phase 1 business engine)
+api.include_router(build_workflow_router(db, get_current_user))
 
 
 # ---------- Startup ----------
@@ -409,15 +415,23 @@ async def seed_users():
 
 
 async def seed_all():
+    # Skip transactional collections — workflow engine will produce them.
+    TRANSACTIONAL = {"primary_orders", "secondary_orders", "invoices", "dispatches", "grns", "batches", "inventory"}
     for key, coll_name in COLLECTIONS.items():
         seed_key = coll_name
         if seed_key not in SEED:
+            continue
+        if seed_key in TRANSACTIONAL:
             continue
         count = await db[coll_name].count_documents({})
         if count == 0 and SEED[seed_key]:
             await db[coll_name].insert_many([{**d} for d in SEED[seed_key]])
             logger.info(f"Seeded {coll_name}: {len(SEED[seed_key])} docs")
     await db.users.create_index("email", unique=True)
+    await db.company_inventory.create_index([("sku_id", 1), ("batch_id", 1)])
+    await db.distributor_inventory.create_index([("partner_id", 1), ("sku_id", 1), ("batch_id", 1)])
+    await db.retailer_inventory.create_index([("partner_id", 1), ("sku_id", 1), ("batch_id", 1)])
+    await db.stock_ledger.create_index([("sku_id", 1), ("timestamp", -1)])
 
 
 @app.on_event("startup")
@@ -425,6 +439,7 @@ async def on_startup():
     logger.info("Starting GO OIL DMS backend...")
     await seed_all()
     await seed_users()
+    await run_seed_workflow(db)
     logger.info("Startup complete.")
 
 
