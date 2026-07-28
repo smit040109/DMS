@@ -8,7 +8,7 @@ import json
 from typing import Dict, Any, List
 
 # Configuration
-BASE_URL = "https://ed15ce41-22af-49d9-bd1d-94afbf07f3d2.preview.emergentagent.com/api"
+BASE_URL = "https://oil-dms-prod.preview.emergentagent.com/api"
 ADMIN_EMAIL = "admin@gooil.com"
 ADMIN_PASSWORD = "GoOil@2026"
 
