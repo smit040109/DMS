@@ -73,6 +73,9 @@ def ttl_cache(namespace: str, ttl: float = 30.0, cache: TTLCache | None = None):
 
     NOTE: request/user/db positional args are hashed via repr(), so user-specific data
     should be captured through kwargs or the user's role/id explicitly.
+
+    Tenant-aware: the current tenant_id (from tenancy.current_tenant_id contextvar)
+    is included in the cache key so tenant A's cached response never leaks to tenant B.
     """
     _cache = cache or analytics_cache
 
@@ -81,7 +84,13 @@ def ttl_cache(namespace: str, ttl: float = 30.0, cache: TTLCache | None = None):
         async def wrapper(*args, **kwargs):
             # ignore FastAPI's user dict from key to avoid per-user cache blowup
             safe_kwargs = {k: v for k, v in kwargs.items() if k != "user"}
-            key = _cache._key(namespace, args, safe_kwargs)
+            # include tenant scope in namespace to guarantee isolation
+            try:
+                from tenancy import current_tenant_id  # local import to avoid cycles
+                tid = current_tenant_id.get() or "_platform"
+            except Exception:
+                tid = "_unknown"
+            key = _cache._key(f"{namespace}:{tid}", args, safe_kwargs)
             cached = await _cache.get(key)
             if cached is not None:
                 return cached

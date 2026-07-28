@@ -5,6 +5,7 @@ import KpiCard from "@/components/common/KpiCard";
 import DataTable from "@/components/common/DataTable";
 import StatusPill from "@/components/common/StatusPill";
 import { useAuth } from "@/context/AuthContext";
+import { useTenant } from "@/context/TenantContext";
 import { ROLE_LABELS } from "@/lib/nav";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +38,7 @@ function formatAgo(iso) {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { tenant, brandName } = useTenant();
   const [kpis, setKpis] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [activity, setActivity] = useState([]);
@@ -94,12 +96,12 @@ export default function Dashboard() {
       {/* Meta strip */}
       <div className="bg-white border border-[#E5E7EB] rounded-xl card-soft p-5 mb-6 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         {[
-          { label: "Organization", value: "GO OIL Holdings", icon: Building2 },
-          { label: "Branch", value: "Lagos Central", icon: Package },
-          { label: "Current role", value: ROLE_LABELS[user?.role], icon: BadgeCheck },
-          { label: "Date range", value: "Last 30 days", icon: Calendar },
-          { label: "Last sync", value: "Today, 09:14", icon: RefreshCw },
-          { label: "Alerts", value: "14 SKUs low", icon: AlertTriangle, tone: "warning" },
+          { label: "Organization", value: brandName || tenant?.name || "VayuERP Platform", icon: Building2 },
+          { label: "Industry", value: (tenant?.industry || "distribution").replace(/\b\w/g, (c) => c.toUpperCase()), icon: Package },
+          { label: "Current role", value: ROLE_LABELS[user?.role] || user?.role, icon: BadgeCheck },
+          { label: "Currency · TZ", value: `${tenant?.currency || "USD"} · ${tenant?.timezone || "UTC"}`, icon: Calendar },
+          { label: "Last sync", value: "Just now", icon: RefreshCw },
+          { label: "Alerts", value: `${(analytics?.orders_by_status || []).length ? "Live" : "—"}`, icon: AlertTriangle, tone: "warning" },
         ].map((s) => (
           <div key={s.label} className="min-w-0">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-ink-muted font-semibold">

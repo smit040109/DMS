@@ -117,6 +117,31 @@ export const NAV_GROUPS = [
       { key: "settings", label: "Settings", icon: "Settings", to: "/app/settings", roles: "*" },
     ],
   },
+  {
+    label: "Tenant Admin",
+    items: [
+      { key: "tenant-branding", label: "Branding & Theme", icon: "Palette", to: "/app/tenant/branding", roles: ["super_admin", "company_admin", "platform_owner"] },
+      { key: "tenant-settings", label: "Company Settings", icon: "Building2", to: "/app/tenant/settings", roles: ["super_admin", "company_admin", "platform_owner"] },
+      { key: "tenant-marketplace", label: "App Marketplace", icon: "LayoutGrid", to: "/app/tenant/marketplace", roles: ["super_admin", "company_admin", "platform_owner"] },
+      { key: "tenant-api-keys", label: "API Keys", icon: "KeyRound", to: "/app/tenant/api-keys", roles: ["super_admin", "company_admin", "platform_owner"] },
+      { key: "tenant-webhooks", label: "Webhooks", icon: "Webhook", to: "/app/tenant/webhooks", roles: ["super_admin", "company_admin", "platform_owner"] },
+    ],
+  },
+  {
+    label: "Platform",
+    items: [
+      { key: "platform-tenants", label: "Tenants", icon: "Building", to: "/app/platform/tenants", roles: ["platform_owner"] },
+      { key: "platform-analytics", label: "Platform Analytics", icon: "LineChart", to: "/app/platform/analytics", roles: ["platform_owner"] },
+      { key: "platform-plans", label: "Subscription Plans", icon: "Crown", to: "/app/platform/plans", roles: ["platform_owner"] },
+      { key: "platform-subscriptions", label: "Subscriptions", icon: "Repeat", to: "/app/platform/subscriptions", roles: ["platform_owner"] },
+      { key: "platform-modules", label: "Modules Catalogue", icon: "Boxes", to: "/app/platform/modules", roles: ["platform_owner"] },
+      { key: "platform-billing", label: "Platform Billing", icon: "CreditCard", to: "/app/platform/billing", roles: ["platform_owner"] },
+      { key: "platform-announcements", label: "Announcements", icon: "Megaphone", to: "/app/platform/announcements", roles: ["platform_owner"] },
+      { key: "platform-flags", label: "Feature Flags", icon: "Flag", to: "/app/platform/flags", roles: ["platform_owner"] },
+      { key: "platform-backups", label: "Backups", icon: "DatabaseBackup", to: "/app/platform/backups", roles: ["platform_owner"] },
+      { key: "platform-onboard", label: "Onboard New Tenant", icon: "Sparkles", to: "/app/platform/onboard", roles: ["platform_owner"] },
+    ],
+  },
 ];
 
 export function filterNavForRole(role) {
@@ -127,6 +152,7 @@ export function filterNavForRole(role) {
 }
 
 export const ROLE_LABELS = {
+  platform_owner: "Platform Owner",
   super_admin: "Super Admin",
   company_admin: "Company Admin",
   regional_manager: "Regional Manager",

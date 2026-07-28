@@ -1,6 +1,7 @@
 import React, { Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { TenantProvider } from "@/context/TenantContext";
 import { Toaster } from "@/components/ui/sonner";
 import AppShell from "@/components/layout/AppShell";
 import Login from "@/pages/Login";
@@ -90,6 +91,24 @@ const FinanceAnalyticsPage   = lazyNamed(anaLoader, "FinanceAnalyticsPage");
 const BusinessAlertsPage     = lazyNamed(anaLoader, "BusinessAlertsPage");
 const ScorecardsPage         = lazyNamed(anaLoader, "ScorecardsPage");
 const ExecutiveAnalyticsHub  = lazyNamed(anaLoader, "ExecutiveAnalyticsHub");
+
+// PlatformModules chunk (VayuERP SaaS control plane)
+const platLoader = () => import(/* webpackChunkName: "platform" */ "@/pages/modules/PlatformModules");
+const TenantOnboardingPage  = lazyNamed(platLoader, "TenantOnboardingPage");
+const PlatformTenantsPage   = lazyNamed(platLoader, "PlatformTenantsPage");
+const PlatformAnalyticsPage = lazyNamed(platLoader, "PlatformAnalyticsPage");
+const PlatformPlansPage     = lazyNamed(platLoader, "PlatformPlansPage");
+const PlatformSubscriptionsPage = lazyNamed(platLoader, "PlatformSubscriptionsPage");
+const PlatformModulesPage   = lazyNamed(platLoader, "PlatformModulesPage");
+const PlatformBillingPage   = lazyNamed(platLoader, "PlatformBillingPage");
+const PlatformAnnouncementsPage = lazyNamed(platLoader, "PlatformAnnouncementsPage");
+const PlatformFlagsPage     = lazyNamed(platLoader, "PlatformFlagsPage");
+const PlatformBackupsPage   = lazyNamed(platLoader, "PlatformBackupsPage");
+const TenantBrandingPage    = lazyNamed(platLoader, "TenantBrandingPage");
+const TenantSettingsPage    = lazyNamed(platLoader, "TenantSettingsPage");
+const TenantApiKeysPage     = lazyNamed(platLoader, "TenantApiKeysPage");
+const TenantWebhooksPage    = lazyNamed(platLoader, "TenantWebhooksPage");
+const TenantMarketplacePage = lazyNamed(platLoader, "TenantMarketplacePage");
 
 function RouteFallback() {
   return (
@@ -186,6 +205,23 @@ function AppRoutes() {
         ["executive-analytics", ExecutiveAnalyticsHub],
         ["business-alerts", BusinessAlertsPage],
         ["scorecards", ScorecardsPage],
+        // VayuERP — Platform (super admin)
+        ["platform/tenants", PlatformTenantsPage],
+        ["platform/analytics", PlatformAnalyticsPage],
+        ["platform/plans", PlatformPlansPage],
+        ["platform/subscriptions", PlatformSubscriptionsPage],
+        ["platform/modules", PlatformModulesPage],
+        ["platform/billing", PlatformBillingPage],
+        ["platform/announcements", PlatformAnnouncementsPage],
+        ["platform/flags", PlatformFlagsPage],
+        ["platform/backups", PlatformBackupsPage],
+        ["platform/onboard", TenantOnboardingPage],
+        // Tenant admin
+        ["tenant/branding", TenantBrandingPage],
+        ["tenant/settings", TenantSettingsPage],
+        ["tenant/api-keys", TenantApiKeysPage],
+        ["tenant/webhooks", TenantWebhooksPage],
+        ["tenant/marketplace", TenantMarketplacePage],
       ].map(([path, Component]) => (
         <Route
           key={path}
@@ -211,8 +247,10 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
-        <Toaster richColors position="top-right" />
+        <TenantProvider>
+          <AppRoutes />
+          <Toaster richColors position="top-right" />
+        </TenantProvider>
       </AuthProvider>
     </BrowserRouter>
   );

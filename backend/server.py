@@ -30,20 +30,32 @@ from seed_workflow import run_seed_workflow
 from security import (
     validate_env, parse_cors_origins, limiter, SecurityHeadersMiddleware, role_guard,
 )
+from tenancy import (
+    TenantScopedDatabase, TENANT_EXEMPT_COLLECTIONS,
+    DEFAULT_TENANT_ID, DEFAULT_TENANT_SLUG,
+    current_tenant_id, bypass_scope, backfill_tenant_id, ensure_tenant_indexes,
+)
+from platform_router import build_platform_router, bootstrap_platform_data
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-logger = logging.getLogger("gooil.dms")
+logger = logging.getLogger("vayuerp.core")
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ["DB_NAME"]]
+_raw_db = client[os.environ["DB_NAME"]]
+# --- Tenant-scoped wrapper. All existing routers see this and become
+# --- tenant-safe with zero code changes.
+db = TenantScopedDatabase(_raw_db, exempt=TENANT_EXEMPT_COLLECTIONS)
 
 JWT_ALGO = "HS256"
 JWT_SECRET = os.environ["JWT_SECRET"]
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@gooil.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "GoOil@2026")
+PLATFORM_OWNER_EMAIL = os.environ.get("PLATFORM_OWNER_EMAIL", "owner@vayuerp.com")
+PLATFORM_OWNER_PASSWORD = os.environ.get("PLATFORM_OWNER_PASSWORD", "VayuERP@2026")
+PLATFORM_NAME = os.environ.get("PLATFORM_NAME", "VayuERP")
 
 
 def hash_password(pw: str) -> str:
@@ -57,9 +69,10 @@ def verify_password(pw: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(user_id: str, email: str, role: str) -> str:
+def create_access_token(user_id: str, email: str, role: str, tenant_id: Optional[str] = None) -> str:
     payload = {
         "sub": user_id, "email": email, "role": role,
+        "tenant_id": tenant_id,
         "exp": datetime.now(timezone.utc) + timedelta(hours=12),
         "type": "access",
     }
@@ -76,9 +89,14 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Not authenticated")
     try:
         payload = pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
-        user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+        # Users collection is tenant-scoped; look up via RAW db so cross-tenant
+        # login continues to work (users email is globally unique).
+        user = await _raw_db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
+        # Set tenant context for this request. Platform owner has None.
+        tid = user.get("tenant_id") or payload.get("tenant_id")
+        current_tenant_id.set(tid)
         return user
     except pyjwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -86,7 +104,20 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-app = FastAPI(title="GO OIL DMS API")
+# Guards specific to platform-level access
+async def platform_owner_guard(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") != "platform_owner":
+        raise HTTPException(status_code=403, detail="Platform owner access required")
+    return user
+
+
+async def tenant_admin_guard(user: dict = Depends(get_current_user)) -> dict:
+    if user.get("role") not in {"platform_owner", "super_admin", "company_admin"}:
+        raise HTTPException(status_code=403, detail="Tenant admin access required")
+    return user
+
+
+app = FastAPI(title=f"{PLATFORM_NAME} API")
 api = APIRouter(prefix="/api")
 
 # Rate-limiter binding
@@ -150,13 +181,23 @@ class AiIn(BaseModel):
 @limiter.limit("10/minute")
 async def login(request: Request, response: Response, body: LoginIn):
     email = body.email.lower().strip()
-    user = await db.users.find_one({"email": email})
+    # Users are tenant-scoped in the wrapper; use raw db for the login lookup
+    # since email is globally unique across tenants.
+    user = await _raw_db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user.get("password_hash", "")):
         logger.warning(f"Failed login for {email} from {request.client.host if request.client else '?'}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    token = create_access_token(user["id"], user["email"], user["role"])
+    # Suspended tenant guard
+    tid = user.get("tenant_id")
+    if tid:
+        t = await _raw_db.tenants.find_one({"id": tid}, {"_id": 0, "status": 1})
+        if t and t.get("status") == "suspended":
+            raise HTTPException(status_code=403, detail="Tenant suspended — contact platform administrator")
+    token = create_access_token(user["id"], user["email"], user["role"], tenant_id=tid)
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
     user.pop("password_hash", None); user.pop("_id", None)
+    # set request tenant context
+    current_tenant_id.set(tid)
     return {"user": user, "token": token}
 
 
@@ -165,23 +206,28 @@ async def login(request: Request, response: Response, body: LoginIn):
 async def register(request: Request, response: Response, body: RegisterIn):
     body.validate_password()
     email = body.email.lower().strip()
-    if await db.users.find_one({"email": email}):
+    if await _raw_db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
     valid_roles = {r["key"] for r in SEED["roles"]}
     if body.role not in valid_roles:
         raise HTTPException(status_code=400, detail="Invalid role")
+    # Self-registration defaults to the GO OIL tenant. In production this
+    # endpoint should be scoped by subdomain / tenant_slug in body.
+    tid = DEFAULT_TENANT_ID
     user = {
         "id": f"usr-{uuid.uuid4().hex[:12]}",
+        "tenant_id": tid,
         "email": email, "name": body.name, "role": body.role, "branch_id": None,
         "title": body.role.replace("_", " ").title(),
         "password_hash": hash_password(body.password),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "avatar": "".join([w[0] for w in body.name.split()[:2]]).upper(),
     }
-    await db.users.insert_one(user)
-    token = create_access_token(user["id"], user["email"], user["role"])
+    await _raw_db.users.insert_one(user)
+    token = create_access_token(user["id"], user["email"], user["role"], tenant_id=tid)
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
     user.pop("password_hash", None); user.pop("_id", None)
+    current_tenant_id.set(tid)
     return {"user": user, "token": token}
 
 
@@ -446,15 +492,16 @@ async def delete_resource(resource: str, item_id: str, user: dict = Depends(requ
 async def health():
     """Public health check for k8s / load balancer probes."""
     try:
-        await db.command("ping")
-        return {"status": "ok", "db": "connected", "service": "gooil-dms"}
+        await _raw_db.command("ping")
+        return {"status": "ok", "db": "connected", "service": PLATFORM_NAME.lower()}
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"db_unavailable: {e}")
 
 
 @api.get("/")
 async def root():
-    return {"service": "GO OIL DMS", "status": "operational", "version": "5.0.0-enterprise"}
+    return {"service": PLATFORM_NAME, "status": "operational", "version": "6.0.0-saas",
+             "features": ["multi-tenant", "white-label", "subscriptions", "marketplace", "api-platform"]}
 
 
 # Workflow router (Phase 1 business engine)
@@ -480,6 +527,9 @@ api.include_router(ai_copilot_router)
 # Integrations router (Part G: Razorpay/Stripe/GST/Tally/Barcode/QR/Excel-import/Webhooks — scaffold)
 integrations_router = build_integrations_router(db, get_current_user)
 api.include_router(integrations_router)
+# Platform router (VayuERP SaaS control plane — tenants, plans, subscriptions, modules, api keys, branding, analytics)
+platform_router = build_platform_router(db, get_current_user, platform_owner_guard, tenant_admin_guard)
+api.include_router(platform_router)
 
 
 # ---------- Startup ----------
@@ -487,38 +537,51 @@ async def seed_users():
     from seed_data import TEST_USERS
     common_pw = ADMIN_PASSWORD
     for u in TEST_USERS:
-        existing = await db.users.find_one({"email": u["email"]})
+        # Use raw db so users are seeded regardless of tenant context (bootstrap).
+        existing = await _raw_db.users.find_one({"email": u["email"]})
         pw_hash = hash_password(common_pw)
         if not existing:
             doc = {
                 "id": f"usr-{uuid.uuid4().hex[:12]}",
+                "tenant_id": DEFAULT_TENANT_ID,   # all seed users belong to GO OIL tenant
                 "email": u["email"], "name": u["name"], "role": u["role"],
                 "branch_id": u.get("branch_id"), "title": u.get("title", ""),
                 "password_hash": pw_hash,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "avatar": "".join([w[0] for w in u["name"].split()[:2]]).upper(),
             }
-            await db.users.insert_one(doc)
+            await _raw_db.users.insert_one(doc)
         else:
+            update: Dict[str, Any] = {}
             if not verify_password(common_pw, existing.get("password_hash", "")):
-                await db.users.update_one({"email": u["email"]}, {"$set": {"password_hash": pw_hash}})
+                update["password_hash"] = pw_hash
+            if not existing.get("tenant_id"):
+                update["tenant_id"] = DEFAULT_TENANT_ID
+            if update:
+                await _raw_db.users.update_one({"email": u["email"]}, {"$set": update})
 
 
 async def seed_all():
     # Skip transactional collections — workflow engine will produce them.
     TRANSACTIONAL = {"primary_orders", "secondary_orders", "invoices", "dispatches", "grns", "batches", "inventory",
                      "payments", "ledger", "cashback"}
-    for key, coll_name in COLLECTIONS.items():
-        seed_key = coll_name
-        if seed_key not in SEED:
-            continue
-        if seed_key in TRANSACTIONAL:
-            continue
-        count = await db[coll_name].count_documents({})
-        if count == 0 and SEED[seed_key]:
-            await db[coll_name].insert_many([{**d} for d in SEED[seed_key]])
-            logger.info(f"Seeded {coll_name}: {len(SEED[seed_key])} docs")
-    await db.users.create_index("email", unique=True)
+    # During bootstrap seed we set the current tenant to GO OIL so tenant_id
+    # is auto-stamped by the wrapper.
+    from tenancy import scope_tenant
+    with scope_tenant(DEFAULT_TENANT_ID):
+        for key, coll_name in COLLECTIONS.items():
+            seed_key = coll_name
+            if seed_key not in SEED:
+                continue
+            if seed_key in TRANSACTIONAL:
+                continue
+            count = await _raw_db[coll_name].count_documents({})
+            if count == 0 and SEED[seed_key]:
+                # stamp tenant_id on each doc explicitly (raw db insert)
+                docs = [{**d, "tenant_id": DEFAULT_TENANT_ID} for d in SEED[seed_key]]
+                await _raw_db[coll_name].insert_many(docs)
+                logger.info(f"Seeded {coll_name}: {len(docs)} docs (tenant={DEFAULT_TENANT_ID})")
+    await _raw_db.users.create_index("email", unique=True)
     # Phase 1 — inventory & workflow
     await db.company_inventory.create_index([("sku_id", 1), ("batch_id", 1)])
     await db.distributor_inventory.create_index([("partner_id", 1), ("sku_id", 1), ("batch_id", 1)])
@@ -587,22 +650,46 @@ async def seed_all():
 
 @app.on_event("startup")
 async def on_startup():
-    logger.info("Starting GO OIL DMS backend...")
+    logger.info(f"Starting {PLATFORM_NAME} backend (SaaS multi-tenant)...")
     try:
         env_summary = validate_env()
         logger.info(f"[env] validated. CORS mode: {'restricted' if env_summary['cors'] != '*' else 'open (dev)'}")
     except Exception as e:
         logger.error(f"[env] validation failed: {e}")
         raise
+
+    # --- Platform bootstrap (idempotent) ---
+    logger.info("[tenancy] Bootstrapping platform data (plans, modules, owner, GO OIL tenant)...")
+    boot_report = await bootstrap_platform_data(_raw_db, PLATFORM_OWNER_EMAIL, PLATFORM_OWNER_PASSWORD)
+    logger.info(f"[tenancy] bootstrap complete: {boot_report}")
+
+    # --- Backfill tenant_id on any pre-existing data (migrating single-tenant → multi-tenant) ---
+    migration_report = await backfill_tenant_id(_raw_db, DEFAULT_TENANT_ID, TENANT_EXEMPT_COLLECTIONS)
+    if migration_report:
+        logger.info(f"[tenancy] migration: stamped tenant_id={DEFAULT_TENANT_ID} on {sum(migration_report.values())} docs across {len(migration_report)} collections")
+        logger.info(f"[tenancy] migration detail: {migration_report}")
+    else:
+        logger.info("[tenancy] migration: all docs already had tenant_id — noop")
+
+    # --- Seed baseline data (inside GO OIL tenant scope so wrapper stamps tenant_id) ---
     await seed_all()
     await seed_users()
-    await run_seed_workflow(db)
-    # Phase 2 finance auto-post: ensure ledger + outstanding populated for existing invoices
-    try:
-        await finance_router.autopost_existing_invoices()
-    except Exception as e:
-        logger.warning(f"Finance autopost skipped: {e}")
-    logger.info("Startup complete.")
+
+    # --- Tenant indexes ---
+    idx = await ensure_tenant_indexes(_raw_db, TENANT_EXEMPT_COLLECTIONS)
+    logger.info(f"[tenancy] tenant_id indexes ensured on {len(idx)} collections")
+
+    # --- Business workflow seed (must run inside GO OIL tenant scope) ---
+    from tenancy import scope_tenant
+    with scope_tenant(DEFAULT_TENANT_ID):
+        await run_seed_workflow(db)
+        # Phase 2 finance auto-post
+        try:
+            await finance_router.autopost_existing_invoices()
+        except Exception as e:
+            logger.warning(f"Finance autopost skipped: {e}")
+
+    logger.info(f"{PLATFORM_NAME} startup complete.")
 
 
 @app.on_event("shutdown")

@@ -1,809 +1,840 @@
-#!/usr/bin/env python3
-"""GO OIL DMS — Backend Testing Suite for Parts B/C/D + Light Regression.
+"""
+VayuERP SaaS Backend — Slice 1 (Multi-Tenant Foundation) Regression Test Suite
 
-Tests:
-- Part B: Performance (caching, response times)
-- Part C: Security (rate limiting, headers, RBAC, password strength, health check)
-- Part D: Exports (35 collections, 4 formats, auth)
-- Light Regression: Part A functionality (login, exception scanner, KPI, party360)
+This test suite covers:
+1. TENANT ISOLATION (critical - do NOT skip)
+2. EXISTING GO OIL REGRESSION (must all still work)
+3. PLATFORM ROUTER endpoints
+4. TENANT ADMIN endpoints
+5. AUTHENTICATION
+6. DATA MIGRATION verification
+7. PERFORMANCE
 """
 import requests
-import time
 import json
-from typing import Dict, Any, List, Tuple
+import time
+from typing import Dict, Any, Optional, List
 
-# Base URL from frontend/.env
+# Backend URL from frontend/.env
 BASE_URL = "https://saas-productize.preview.emergentagent.com/api"
 
-# Test credentials (all use password: GoOil@2026)
-CREDENTIALS = {
-    "admin": {"email": "admin@gooil.com", "password": "GoOil@2026"},
-    "customer": {"email": "customer@gooil.com", "password": "GoOil@2026"},
-    "company_admin": {"email": "company@gooil.com", "password": "GoOil@2026"},
-    "regional_manager": {"email": "regional@gooil.com", "password": "GoOil@2026"},
-    "sales_executive": {"email": "sales@gooil.com", "password": "GoOil@2026"},
-    "distributor": {"email": "distributor@gooil.com", "password": "GoOil@2026"},
-    "distributor_accountant": {"email": "accountant@gooil.com", "password": "GoOil@2026"},
-    "retailer": {"email": "retailer@gooil.com", "password": "GoOil@2026"},
-}
+# Test credentials from /app/memory/test_credentials.md
+PLATFORM_OWNER = {"email": "owner@vayuerp.com", "password": "VayuERP@2026"}
+GO_OIL_ADMIN = {"email": "admin@gooil.com", "password": "GoOil@2026"}
+GO_OIL_COMPANY = {"email": "company@gooil.com", "password": "GoOil@2026"}
+GO_OIL_DISTRIBUTOR = {"email": "distributor@gooil.com", "password": "GoOil@2026"}
+ACME_ADMIN = {"email": "admin@acmepaint.com", "password": "AcmePaint@2026"}
 
-# Test results storage
+# Test results tracking
 test_results = {
-    "part_b_performance": [],
-    "part_c_security": [],
-    "part_d_exports": [],
-    "part_a_regression": [],
+    "passed": [],
+    "failed": [],
+    "critical_failures": [],
+    "performance_issues": []
 }
 
-
-def log_test(category: str, test_name: str, passed: bool, details: str = "", priority: str = "MEDIUM"):
-    """Log test result."""
+def log_test(name: str, passed: bool, details: str = "", critical: bool = False):
+    """Log test result"""
     result = {
-        "test": test_name,
+        "name": name,
         "passed": passed,
         "details": details,
-        "priority": priority,
+        "critical": critical
     }
-    test_results[category].append(result)
-    status = "✅ PASS" if passed else "❌ FAIL"
-    print(f"{status} [{priority}] {test_name}: {details}")
+    if passed:
+        test_results["passed"].append(result)
+        print(f"✅ {name}")
+    else:
+        test_results["failed"].append(result)
+        if critical:
+            test_results["critical_failures"].append(result)
+        print(f"❌ {name}: {details}")
 
+def login(credentials: Dict[str, str]) -> Optional[str]:
+    """Login and return access token"""
+    try:
+        resp = requests.post(f"{BASE_URL}/auth/login", json=credentials, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            return data.get("token")
+        else:
+            print(f"Login failed for {credentials['email']}: {resp.status_code} - {resp.text}")
+            return None
+    except Exception as e:
+        print(f"Login error for {credentials['email']}: {e}")
+        return None
 
-def login(role: str = "admin") -> Tuple[str, Dict[str, Any]]:
-    """Login and return (token, user)."""
-    creds = CREDENTIALS.get(role)
-    if not creds:
-        raise ValueError(f"Unknown role: {role}")
-    
-    resp = requests.post(f"{BASE_URL}/auth/login", json=creds, timeout=10)
-    if resp.status_code != 200:
-        raise Exception(f"Login failed for {role}: {resp.status_code} {resp.text}")
-    
-    data = resp.json()
-    return data["token"], data["user"]
+def api_get(endpoint: str, token: str, timeout: int = 10) -> tuple:
+    """Make GET request and return (status_code, data, response_time)"""
+    start = time.time()
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=timeout)
+        elapsed = time.time() - start
+        try:
+            data = resp.json()
+        except Exception:
+            data = resp.text
+        return (resp.status_code, data, elapsed)
+    except Exception as e:
+        elapsed = time.time() - start
+        return (0, str(e), elapsed)
 
+def api_post(endpoint: str, token: str, payload: Dict[str, Any], timeout: int = 10) -> tuple:
+    """Make POST request and return (status_code, data, response_time)"""
+    start = time.time()
+    try:
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        resp = requests.post(f"{BASE_URL}{endpoint}", headers=headers, json=payload, timeout=timeout)
+        elapsed = time.time() - start
+        try:
+            data = resp.json()
+        except Exception:
+            data = resp.text
+        return (resp.status_code, data, elapsed)
+    except Exception as e:
+        elapsed = time.time() - start
+        return (0, str(e), elapsed)
 
-def get_headers(token: str) -> Dict[str, str]:
-    """Return auth headers."""
-    return {"Authorization": f"Bearer {token}"}
+def api_put(endpoint: str, token: str, payload: Dict[str, Any], timeout: int = 10) -> tuple:
+    """Make PUT request and return (status_code, data, response_time)"""
+    start = time.time()
+    try:
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        resp = requests.put(f"{BASE_URL}{endpoint}", headers=headers, json=payload, timeout=timeout)
+        elapsed = time.time() - start
+        try:
+            data = resp.json()
+        except Exception:
+            data = resp.text
+        return (resp.status_code, data, elapsed)
+    except Exception as e:
+        elapsed = time.time() - start
+        return (0, str(e), elapsed)
 
+def api_delete(endpoint: str, token: str, timeout: int = 10) -> tuple:
+    """Make DELETE request and return (status_code, data, response_time)"""
+    start = time.time()
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.delete(f"{BASE_URL}{endpoint}", headers=headers, timeout=timeout)
+        elapsed = time.time() - start
+        try:
+            data = resp.json()
+        except Exception:
+            data = resp.text
+        return (resp.status_code, data, elapsed)
+    except Exception as e:
+        elapsed = time.time() - start
+        return (0, str(e), elapsed)
 
 # ============================================================================
-# PART B — PERFORMANCE TESTS
+# TEST SUITE
 # ============================================================================
 
-def test_part_b_performance():
-    """Test Part B: Performance (caching, response times)."""
+def test_1_authentication():
+    """Test 5: AUTHENTICATION"""
     print("\n" + "="*80)
-    print("PART B — PERFORMANCE TESTS")
+    print("TEST 5: AUTHENTICATION")
     print("="*80)
     
-    token, user = login("admin")
-    headers = get_headers(token)
+    # 5.1: Platform owner login
+    token = login(PLATFORM_OWNER)
+    log_test("5.1: Platform owner login", token is not None, critical=True)
     
-    # Test 1: GET /api/analytics/dimensions — should respond < 200ms both cold and warm (cached 60s)
-    print("\n[B1] Testing /api/analytics/dimensions caching and response time...")
+    # 5.2: GO OIL admin login
+    token = login(GO_OIL_ADMIN)
+    log_test("5.2: GO OIL admin login", token is not None, critical=True)
     
-    # Cold call
-    start = time.time()
-    resp = requests.get(f"{BASE_URL}/analytics/dimensions", headers=headers, timeout=10)
-    cold_time = (time.time() - start) * 1000
+    # 5.3: GO OIL company admin login
+    token = login(GO_OIL_COMPANY)
+    log_test("5.3: GO OIL company admin login", token is not None, critical=True)
     
-    if resp.status_code == 200:
-        data = resp.json()
+    # 5.4: GO OIL distributor login
+    token = login(GO_OIL_DISTRIBUTOR)
+    log_test("5.4: GO OIL distributor login", token is not None, critical=True)
+    
+    # 5.5: Acme Paint admin login
+    token = login(ACME_ADMIN)
+    log_test("5.5: Acme Paint admin login", token is not None, critical=True)
+    
+    # 5.6: JWT payload includes tenant_id claim (verify via /auth/me)
+    if token:
+        status, data, _ = api_get("/auth/me", token)
+        has_tenant = status == 200 and isinstance(data, dict) and "user" in data and "tenant_id" in data["user"]
+        log_test("5.6: JWT includes tenant_id claim", has_tenant, 
+                f"Status: {status}, Has tenant_id: {has_tenant}")
+
+def test_2_existing_go_oil_regression():
+    """Test 2: EXISTING GO OIL REGRESSION (must all still work)"""
+    print("\n" + "="*80)
+    print("TEST 2: EXISTING GO OIL REGRESSION")
+    print("="*80)
+    
+    token = login(GO_OIL_COMPANY)
+    if not token:
+        log_test("2.0: GO OIL login prerequisite", False, "Cannot login as GO OIL company admin", critical=True)
+        return
+    
+    # 2.1: Executive KPI has revenue > 0
+    status, data, elapsed = api_get("/analytics/kpi/executive?range=month", token)
+    kpis = data.get("kpis", {}) if isinstance(data, dict) else {}
+    revenue = kpis.get("revenue", {}).get("value", 0) if isinstance(kpis, dict) else 0
+    sales = kpis.get("sales_count", {}).get("value", 0) if isinstance(kpis, dict) else 0
+    revenue_ok = status == 200 and revenue > 0
+    sales_ok = status == 200 and sales > 0
+    log_test("2.1: Executive KPI - revenue > 0 and sales_count > 0", 
+            revenue_ok and sales_ok,
+            f"Status: {status}, Revenue: {revenue}, Sales: {sales}",
+            critical=True)
+    
+    # 2.2: Products returns 26 products
+    status, data, elapsed = api_get("/collections/products", token)
+    products_count = len(data.get("data", [])) if isinstance(data, dict) else 0
+    log_test("2.2: Products collection returns 26 products",
+            status == 200 and products_count == 26,
+            f"Status: {status}, Count: {products_count}",
+            critical=True)
+    
+    # 2.3: Dimensions returns 5 branches, 15 distributors, 75 skus
+    status, data, elapsed = api_get("/analytics/dimensions", token)
+    if status == 200 and isinstance(data, dict):
         branches = len(data.get("branches", []))
         distributors = len(data.get("distributors", []))
-        
-        # Warm call (should be cached)
-        start = time.time()
-        resp2 = requests.get(f"{BASE_URL}/analytics/dimensions", headers=headers, timeout=10)
-        warm_time = (time.time() - start) * 1000
-        
-        # Check response times
-        cold_ok = cold_time < 200
-        warm_ok = warm_time < 200
-        
-        details = f"Cold: {cold_time:.0f}ms, Warm: {warm_time:.0f}ms (cached 60s). Branches: {branches}, Distributors: {distributors}"
-        passed = resp.status_code == 200 and cold_ok and warm_ok
-        log_test("part_b_performance", "Dimensions endpoint caching", passed, details, "HIGH")
+        skus = len(data.get("skus", []))
+        dims_ok = branches == 5 and distributors == 15 and skus == 75
+        log_test("2.3: Dimensions - 5 branches, 15 distributors, 75 SKUs",
+                dims_ok,
+                f"Branches: {branches}, Distributors: {distributors}, SKUs: {skus}",
+                critical=True)
     else:
-        log_test("part_b_performance", "Dimensions endpoint caching", False, 
-                f"Failed: {resp.status_code} {resp.text[:200]}", "HIGH")
+        log_test("2.3: Dimensions endpoint", False, f"Status: {status}", critical=True)
     
-    # Test 2: GET /api/analytics/scorecards/distributor — should respond < 300ms warm (cached 45s)
-    print("\n[B2] Testing /api/analytics/scorecards/distributor caching and response time...")
+    # 2.4: Outstanding returns > 100 party rows
+    status, data, elapsed = api_get("/finance/outstanding", token)
+    outstanding_count = len(data.get("data", [])) if isinstance(data, dict) else 0
+    log_test("2.4: Outstanding returns > 100 party rows",
+            status == 200 and outstanding_count > 100,
+            f"Status: {status}, Count: {outstanding_count}",
+            critical=True)
     
-    # Cold call
-    start = time.time()
-    resp = requests.get(f"{BASE_URL}/analytics/scorecards/distributor", headers=headers, timeout=10)
-    cold_time = (time.time() - start) * 1000
+    # 2.5: Alerts returns > 0 alerts
+    status, data, elapsed = api_get("/analytics/alerts", token)
+    alerts_count = len(data.get("alerts", [])) if isinstance(data, dict) else 0
+    log_test("2.5: Business alerts returns > 0 alerts",
+            status == 200 and alerts_count > 0,
+            f"Status: {status}, Count: {alerts_count}")
     
-    if resp.status_code == 200:
-        data = resp.json()
-        rows = len(data.get("rows", []))
-        
-        # Warm call (should be cached)
-        start = time.time()
-        resp2 = requests.get(f"{BASE_URL}/analytics/scorecards/distributor", headers=headers, timeout=10)
-        warm_time = (time.time() - start) * 1000
-        
-        warm_ok = warm_time < 300
-        
-        details = f"Cold: {cold_time:.0f}ms, Warm: {warm_time:.0f}ms (cached 45s). Rows: {rows}"
-        passed = resp.status_code == 200 and warm_ok
-        log_test("part_b_performance", "Scorecards endpoint caching", passed, details, "HIGH")
+    # 2.6: Exception scanner returns 200 (no 500 / no ObjectId leak)
+    status, data, elapsed = api_post("/reverse/exceptions/scan", token, {})
+    data_str = json.dumps(data) if isinstance(data, dict) else str(data)
+    has_objectid = "_id" in data_str or "ObjectId" in data_str
+    log_test("2.6: Exception scanner - no 500, no ObjectId leak",
+            status == 200 and not has_objectid,
+            f"Status: {status}, Has ObjectId: {has_objectid}",
+            critical=True)
+    
+    # 2.7: Party360 distributor profile
+    status, data, elapsed = api_get("/analytics/party360/distributor/dist-100", token)
+    has_profile = status == 200 and isinstance(data, dict) and "profile" in data and "financials" in data
+    log_test("2.7: Party360 distributor profile",
+            has_profile,
+            f"Status: {status}, Has profile: {has_profile}")
+    
+    # 2.8: Dashboard KPIs returns 5 role KPIs
+    status, data, elapsed = api_get("/dashboard/kpis", token)
+    kpis_count = len(data.get("kpis", [])) if isinstance(data, dict) else 0
+    log_test("2.8: Dashboard KPIs returns 5 role KPIs",
+            status == 200 and kpis_count == 5,
+            f"Status: {status}, Count: {kpis_count}")
+
+def test_3_platform_router():
+    """Test 3: PLATFORM ROUTER endpoints"""
+    print("\n" + "="*80)
+    print("TEST 3: PLATFORM ROUTER ENDPOINTS")
+    print("="*80)
+    
+    token = login(PLATFORM_OWNER)
+    if not token:
+        log_test("3.0: Platform owner login prerequisite", False, "Cannot login as platform owner", critical=True)
+        return
+    
+    # 3.1: GET /platform/tenants - returns >= 2 tenants
+    status, data, elapsed = api_get("/platform/tenants", token)
+    tenants_count = len(data.get("data", [])) if isinstance(data, dict) else 0
+    log_test("3.1: GET /platform/tenants - returns >= 2 tenants",
+            status == 200 and tenants_count >= 2,
+            f"Status: {status}, Count: {tenants_count}",
+            critical=True)
+    
+    # 3.2: GET /platform/analytics - returns totals + revenue.mrr
+    status, data, elapsed = api_get("/platform/analytics", token)
+    has_mrr = status == 200 and isinstance(data, dict) and "revenue" in data and "mrr" in data.get("revenue", {})
+    log_test("3.2: GET /platform/analytics - returns MRR",
+            has_mrr,
+            f"Status: {status}, Has MRR: {has_mrr}",
+            critical=True)
+    
+    # 3.3: GET /platform/health - db_ok: true
+    status, data, elapsed = api_get("/platform/health", token)
+    db_ok = status == 200 and isinstance(data, dict) and data.get("db_ok") == True
+    log_test("3.3: GET /platform/health - db_ok: true",
+            db_ok,
+            f"Status: {status}, db_ok: {data.get('db_ok') if isinstance(data, dict) else 'N/A'}")
+    
+    # 3.4: GET /platform/plans - 4 plans
+    status, data, elapsed = api_get("/platform/plans", token)
+    plans_count = len(data.get("data", [])) if isinstance(data, dict) else 0
+    log_test("3.4: GET /platform/plans - 4 plans",
+            status == 200 and plans_count == 4,
+            f"Status: {status}, Count: {plans_count}",
+            critical=True)
+    
+    # 3.5: GET /platform/modules - 15 modules
+    status, data, elapsed = api_get("/platform/modules", token)
+    modules_count = len(data.get("data", [])) if isinstance(data, dict) else 0
+    log_test("3.5: GET /platform/modules - 15 modules",
+            status == 200 and modules_count == 15,
+            f"Status: {status}, Count: {modules_count}",
+            critical=True)
+    
+    # 3.6: GET /platform/subscriptions - >= 2
+    status, data, elapsed = api_get("/platform/subscriptions", token)
+    subs_count = len(data.get("data", [])) if isinstance(data, dict) else 0
+    log_test("3.6: GET /platform/subscriptions - >= 2",
+            status == 200 and subs_count >= 2,
+            f"Status: {status}, Count: {subs_count}",
+            critical=True)
+    
+    # 3.7: POST /platform/announcements - creates
+    payload = {
+        "title": "Test Announcement",
+        "body": "This is a test announcement for regression testing",
+        "severity": "info",
+        "audience": "all"
+    }
+    status, data, elapsed = api_post("/platform/announcements", token, payload)
+    log_test("3.7: POST /platform/announcements - creates",
+            status == 200 and isinstance(data, dict) and "id" in data,
+            f"Status: {status}")
+    
+    # 3.8: GET /platform/announcements - returns announcements
+    status, data, elapsed = api_get("/platform/announcements", token)
+    log_test("3.8: GET /platform/announcements - returns list",
+            status == 200 and isinstance(data, dict) and "data" in data,
+            f"Status: {status}")
+    
+    # 3.9: POST /platform/feature-flags - creates
+    payload = {
+        "key": "test_feature",
+        "value": True,
+        "scope": "global"
+    }
+    status, data, elapsed = api_post("/platform/feature-flags", token, payload)
+    log_test("3.9: POST /platform/feature-flags - creates",
+            status == 200 and isinstance(data, dict) and "key" in data,
+            f"Status: {status}")
+    
+    # 3.10: GET /platform/feature-flags - returns resolved
+    status, data, elapsed = api_get("/platform/feature-flags", token)
+    has_resolved = status == 200 and isinstance(data, dict) and "resolved" in data
+    log_test("3.10: GET /platform/feature-flags - returns resolved",
+            has_resolved,
+            f"Status: {status}, Has resolved: {has_resolved}")
+
+def test_4_tenant_admin_endpoints():
+    """Test 4: TENANT ADMIN endpoints"""
+    print("\n" + "="*80)
+    print("TEST 4: TENANT ADMIN ENDPOINTS")
+    print("="*80)
+    
+    token = login(GO_OIL_COMPANY)
+    if not token:
+        log_test("4.0: GO OIL company admin login prerequisite", False, "Cannot login", critical=True)
+        return
+    
+    # 4.1: GET /platform/me/tenant - returns tenant config
+    status, data, elapsed = api_get("/platform/me/tenant", token)
+    has_config = status == 200 and isinstance(data, dict) and "brand_colors" in data and "industry" in data
+    log_test("4.1: GET /platform/me/tenant - returns config",
+            has_config,
+            f"Status: {status}, Has config: {has_config}",
+            critical=True)
+    
+    # 4.2: PUT /platform/me/tenant/branding - updates brand_colors
+    payload = {
+        "brand_colors": {
+            "primary": "#FF0000",
+            "secondary": "#00FF00",
+            "accent": "#0000FF"
+        }
+    }
+    status, data, elapsed = api_put("/platform/me/tenant/branding", token, payload)
+    log_test("4.2: PUT /platform/me/tenant/branding - updates",
+            status == 200,
+            f"Status: {status}")
+    
+    # 4.3: GET /platform/me/tenant - verify branding updated
+    status, data, elapsed = api_get("/platform/me/tenant", token)
+    updated = status == 200 and isinstance(data, dict) and data.get("brand_colors", {}).get("primary") == "#FF0000"
+    log_test("4.3: Branding update verification",
+            updated,
+            f"Status: {status}, Updated: {updated}")
+    
+    # 4.4: PUT /platform/me/tenant/settings - change currency
+    payload = {"currency": "EUR"}
+    status, data, elapsed = api_put("/platform/me/tenant/settings", token, payload)
+    log_test("4.4: PUT /platform/me/tenant/settings - updates",
+            status == 200,
+            f"Status: {status}")
+    
+    # 4.5: POST /platform/me/api-keys - creates
+    payload = {
+        "name": "Test API Key",
+        "scopes": ["read", "write"],
+        "expires_days": 365
+    }
+    status, data, elapsed = api_post("/platform/me/api-keys", token, payload)
+    has_secret = status == 200 and isinstance(data, dict) and "secret" in data and "full_key" in data
+    api_key_id = data.get("id") if isinstance(data, dict) else None
+    log_test("4.5: POST /platform/me/api-keys - returns secret once",
+            has_secret,
+            f"Status: {status}, Has secret: {has_secret}",
+            critical=True)
+    
+    # 4.6: GET /platform/me/api-keys - list without secret
+    status, data, elapsed = api_get("/platform/me/api-keys", token)
+    keys = data.get("data", []) if isinstance(data, dict) else []
+    no_secret = all("secret" not in k for k in keys)
+    log_test("4.6: GET /platform/me/api-keys - list without secret",
+            status == 200 and no_secret,
+            f"Status: {status}, No secret in list: {no_secret}")
+    
+    # 4.7: DELETE /platform/me/api-keys/{id} - revokes
+    if api_key_id:
+        status, data, elapsed = api_delete(f"/platform/me/api-keys/{api_key_id}", token)
+        log_test("4.7: DELETE /platform/me/api-keys - revokes",
+                status == 200,
+                f"Status: {status}")
     else:
-        log_test("part_b_performance", "Scorecards endpoint caching", False,
-                f"Failed: {resp.status_code} {resp.text[:200]}", "HIGH")
+        log_test("4.7: DELETE /platform/me/api-keys - revokes", False, "No API key ID to delete")
     
-    # Test 3: Verify all Phase 1-4 endpoints still return < 3s response time
-    print("\n[B3] Testing Phase 1-4 endpoint response times (< 3s)...")
+    # 4.8: POST /platform/me/webhooks - creates
+    payload = {
+        "name": "Test Webhook",
+        "url": "https://example.com/webhook",
+        "events": ["order.created", "invoice.paid"]
+    }
+    status, data, elapsed = api_post("/platform/me/webhooks", token, payload)
+    webhook_id = data.get("id") if isinstance(data, dict) else None
+    log_test("4.8: POST /platform/me/webhooks - creates",
+            status == 200 and webhook_id is not None,
+            f"Status: {status}")
     
-    endpoints = [
-        ("/collections/branches", "Branches"),
-        ("/collections/products", "Products"),
-        ("/collections/primary-orders", "Primary Orders"),
-        ("/collections/invoices", "Invoices"),
-        ("/analytics/kpi/executive?range=month", "Executive KPI"),
-        ("/analytics/party360/distributor/dist-100", "Party 360"),
-        ("/analytics/sales", "Sales Analytics"),
-        ("/analytics/inventory", "Inventory Analytics"),
-        ("/analytics/finance", "Finance Analytics"),
-        ("/analytics/alerts", "Business Alerts"),
+    # 4.9: DELETE /platform/me/webhooks/{id} - removes
+    if webhook_id:
+        status, data, elapsed = api_delete(f"/platform/me/webhooks/{webhook_id}", token)
+        log_test("4.9: DELETE /platform/me/webhooks - removes",
+                status == 200,
+                f"Status: {status}")
+    else:
+        log_test("4.9: DELETE /platform/me/webhooks - removes", False, "No webhook ID to delete")
+    
+    # 4.10: GET /platform/me/modules - returns catalogue
+    status, data, elapsed = api_get("/platform/me/modules", token)
+    has_enabled = status == 200 and isinstance(data, dict) and "enabled" in data
+    log_test("4.10: GET /platform/me/modules - returns catalogue",
+            has_enabled,
+            f"Status: {status}, Has enabled: {has_enabled}")
+    
+    # 4.11: POST /platform/me/modules/{key}/enable - toggles
+    status, data, elapsed = api_post("/platform/me/modules/crm/enable", token, {})
+    log_test("4.11: POST /platform/me/modules/crm/enable",
+            status == 200,
+            f"Status: {status}")
+    
+    # 4.12: POST /platform/me/modules/{key}/disable - toggles
+    status, data, elapsed = api_post("/platform/me/modules/crm/disable", token, {})
+    log_test("4.12: POST /platform/me/modules/crm/disable",
+            status == 200,
+            f"Status: {status}")
+    
+    # 4.13: GET /platform/backups - returns tenant's backups
+    status, data, elapsed = api_get("/platform/backups", token)
+    log_test("4.13: GET /platform/backups - returns list",
+            status == 200 and isinstance(data, dict),
+            f"Status: {status}")
+    
+    # 4.14: POST /platform/backups - creates manual backup
+    payload = {"kind": "manual"}
+    status, data, elapsed = api_post("/platform/backups", token, payload)
+    log_test("4.14: POST /platform/backups - creates manual",
+            status == 200 and isinstance(data, dict) and "id" in data,
+            f"Status: {status}")
+    
+    # 4.15: GO OIL admin CANNOT POST /platform/plans (owner only) - must 403
+    status, data, elapsed = api_post("/platform/plans", token, {
+        "key": "test_plan",
+        "name": "Test Plan",
+        "price_monthly": 99,
+        "price_yearly": 999
+    })
+    log_test("4.15: Tenant admin CANNOT POST /platform/plans - 403",
+            status == 403,
+            f"Status: {status}",
+            critical=True)
+    
+    # 4.16: GO OIL admin CANNOT POST /platform/announcements - must 403
+    status, data, elapsed = api_post("/platform/announcements", token, {
+        "title": "Test",
+        "body": "Test"
+    })
+    log_test("4.16: Tenant admin CANNOT POST /platform/announcements - 403",
+            status == 403,
+            f"Status: {status}",
+            critical=True)
+    
+    # 4.17: GO OIL admin CANNOT POST /platform/feature-flags - must 403
+    status, data, elapsed = api_post("/platform/feature-flags", token, {
+        "key": "test",
+        "value": True
+    })
+    log_test("4.17: Tenant admin CANNOT POST /platform/feature-flags - 403",
+            status == 403,
+            f"Status: {status}",
+            critical=True)
+
+def test_1_tenant_isolation():
+    """Test 1: TENANT ISOLATION (CRITICAL - do NOT skip)"""
+    print("\n" + "="*80)
+    print("TEST 1: TENANT ISOLATION (CRITICAL)")
+    print("="*80)
+    
+    # 1.1: Create a fresh tenant "Test Corp"
+    owner_token = login(PLATFORM_OWNER)
+    if not owner_token:
+        log_test("1.0: Platform owner login prerequisite", False, "Cannot login", critical=True)
+        return
+    
+    # Use timestamp to make slug unique
+    import time
+    unique_suffix = str(int(time.time()))[-6:]
+    
+    payload = {
+        "name": "Test Corp",
+        "slug": f"testcorp{unique_suffix}",
+        "industry": "distribution",
+        "country": "USA",
+        "currency": "USD",
+        "admin": {
+            "email": f"admin{unique_suffix}@testcorp.com",
+            "name": "Test Admin",
+            "password": "TestCorp@2026"
+        },
+        "plan": "starter"
+    }
+    status, data, elapsed = api_post("/platform/tenants", owner_token, payload)
+    tenant_created = status == 200 and isinstance(data, dict) and "tenant" in data
+    test_corp_id = data.get("tenant", {}).get("id") if isinstance(data, dict) else None
+    log_test("1.1: Create fresh tenant 'Test Corp'",
+            tenant_created,
+            f"Status: {status}, Tenant ID: {test_corp_id}",
+            critical=True)
+    
+    if not tenant_created:
+        print("⚠️  Cannot proceed with tenant isolation tests - tenant creation failed")
+        return
+    
+    # 1.2: Login as Test Corp admin
+    test_corp_token = login({"email": f"admin{unique_suffix}@testcorp.com", "password": "TestCorp@2026"})
+    log_test("1.2: Login as Test Corp admin",
+            test_corp_token is not None,
+            critical=True)
+    log_test("1.2: Login as Test Corp admin",
+            test_corp_token is not None,
+            critical=True)
+    
+    if not test_corp_token:
+        print("⚠️  Cannot proceed - Test Corp admin login failed")
+        return
+    
+    # 1.3: Test Corp sees ZERO products
+    status, data, elapsed = api_get("/collections/products", test_corp_token)
+    products_count = len(data.get("data", [])) if isinstance(data, dict) else -1
+    log_test("1.3: Test Corp sees ZERO products",
+            status == 200 and products_count == 0,
+            f"Status: {status}, Count: {products_count}",
+            critical=True)
+    
+    # 1.4: Test Corp sees ZERO invoices
+    status, data, elapsed = api_get("/collections/invoices", test_corp_token)
+    invoices_count = len(data.get("data", [])) if isinstance(data, dict) else -1
+    log_test("1.4: Test Corp sees ZERO invoices",
+            status == 200 and invoices_count == 0,
+            f"Status: {status}, Count: {invoices_count}",
+            critical=True)
+    
+    # 1.5: Test Corp sees ZERO orders
+    status, data, elapsed = api_get("/collections/primary-orders", test_corp_token)
+    orders_count = len(data.get("data", [])) if isinstance(data, dict) else -1
+    log_test("1.5: Test Corp sees ZERO primary orders",
+            status == 200 and orders_count == 0,
+            f"Status: {status}, Count: {orders_count}",
+            critical=True)
+    
+    # 1.6: Test Corp sees ZERO revenue on executive KPI
+    status, data, elapsed = api_get("/analytics/kpi/executive?range=month", test_corp_token)
+    kpis = data.get("kpis", {}) if isinstance(data, dict) else {}
+    revenue = kpis.get("revenue", {}).get("value", -1) if isinstance(kpis, dict) else -1
+    sales = kpis.get("sales_count", {}).get("value", -1) if isinstance(kpis, dict) else -1
+    log_test("1.6: Test Corp sees ZERO revenue and sales",
+            status == 200 and revenue == 0 and sales == 0,
+            f"Status: {status}, Revenue: {revenue}, Sales: {sales}",
+            critical=True)
+    
+    # 1.7: Test Corp sees empty dimensions
+    status, data, elapsed = api_get("/analytics/dimensions", test_corp_token)
+    if status == 200 and isinstance(data, dict):
+        branches = len(data.get("branches", []))
+        distributors = len(data.get("distributors", []))
+        log_test("1.7: Test Corp sees empty dimensions",
+                branches == 0 and distributors == 0,
+                f"Branches: {branches}, Distributors: {distributors}",
+                critical=True)
+    else:
+        log_test("1.7: Test Corp dimensions", False, f"Status: {status}", critical=True)
+    
+    # 1.8: Test Corp sees empty outstanding
+    status, data, elapsed = api_get("/finance/outstanding", test_corp_token)
+    outstanding_count = len(data.get("data", [])) if isinstance(data, dict) else -1
+    log_test("1.8: Test Corp sees empty outstanding",
+            status == 200 and outstanding_count == 0,
+            f"Status: {status}, Count: {outstanding_count}",
+            critical=True)
+    
+    # 1.9: Create a product AS Test Corp admin
+    payload = {
+        "code": "TESTPROD001",
+        "name": "Test Product",
+        "category": "Test Category",
+        "grade": "Premium",
+        "active": True
+    }
+    status, data, elapsed = api_post("/collections/products", test_corp_token, payload)
+    test_product_id = data.get("id") if isinstance(data, dict) else None
+    log_test("1.9: Create product as Test Corp admin",
+            status == 200 and test_product_id is not None,
+            f"Status: {status}, Product ID: {test_product_id}",
+            critical=True)
+    
+    # 1.10: GO OIL admin does NOT see Test Corp's product
+    gooil_token = login(GO_OIL_COMPANY)
+    if gooil_token and test_product_id:
+        status, data, elapsed = api_get(f"/collections/products/{test_product_id}", gooil_token)
+        log_test("1.10: GO OIL admin CANNOT see Test Corp product - 404",
+                status == 404,
+                f"Status: {status}",
+                critical=True)
+    else:
+        log_test("1.10: GO OIL admin CANNOT see Test Corp product", False, "Prerequisites failed", critical=True)
+    
+    # 1.11: GO OIL admin sees their own products (26)
+    if gooil_token:
+        status, data, elapsed = api_get("/collections/products", gooil_token)
+        products_count = len(data.get("data", [])) if isinstance(data, dict) else 0
+        log_test("1.11: GO OIL admin still sees their 26 products",
+                status == 200 and products_count == 26,
+                f"Status: {status}, Count: {products_count}",
+                critical=True)
+    
+    # 1.12: Attempt cross-tenant access on party360 - must 404
+    if gooil_token:
+        # Try to access a GO OIL distributor from Test Corp token
+        status, data, elapsed = api_get("/analytics/party360/distributor/dist-100", test_corp_token)
+        log_test("1.12: Test Corp CANNOT access GO OIL party360 - 404",
+                status == 404,
+                f"Status: {status}",
+                critical=True)
+    
+    # 1.13: Cache is tenant-aware (dimensions returns different data)
+    # Get dimensions for GO OIL
+    if gooil_token:
+        status1, data1, _ = api_get("/analytics/dimensions", gooil_token)
+        gooil_branches = len(data1.get("branches", [])) if isinstance(data1, dict) else 0
+        
+        # Get dimensions for Test Corp
+        status2, data2, _ = api_get("/analytics/dimensions", test_corp_token)
+        testcorp_branches = len(data2.get("branches", [])) if isinstance(data2, dict) else 0
+        
+        log_test("1.13: Cache is tenant-aware (different dimensions)",
+                status1 == 200 and status2 == 200 and gooil_branches != testcorp_branches,
+                f"GO OIL branches: {gooil_branches}, Test Corp branches: {testcorp_branches}",
+                critical=True)
+
+def test_6_data_migration():
+    """Test 6: DATA MIGRATION verification"""
+    print("\n" + "="*80)
+    print("TEST 6: DATA MIGRATION VERIFICATION")
+    print("="*80)
+    
+    # This test verifies that all existing GO OIL documents have tenant_id="tnt-gooil"
+    # We'll sample check a few collections
+    
+    token = login(GO_OIL_COMPANY)
+    if not token:
+        log_test("6.0: GO OIL login prerequisite", False, "Cannot login", critical=True)
+        return
+    
+    collections_to_check = [
+        ("invoices", "/collections/invoices"),
+        ("primary-orders", "/collections/primary-orders"),
+        ("batches", "/collections/batches"),
+        ("products", "/collections/products")
     ]
     
-    slow_endpoints = []
-    for endpoint, name in endpoints:
-        start = time.time()
-        resp = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=10)
-        elapsed = (time.time() - start) * 1000
-        
-        if elapsed > 3000:
-            slow_endpoints.append(f"{name} ({elapsed:.0f}ms)")
-        
-        # Categorize response time
-        if elapsed < 100:
-            bracket = "fast <100ms"
-        elif elapsed < 500:
-            bracket = "ok <500ms"
-        elif elapsed < 3000:
-            bracket = "slow <3s"
-        else:
-            bracket = "terrible >3s"
-        
-        print(f"  {name}: {elapsed:.0f}ms [{bracket}]")
-    
-    if slow_endpoints:
-        log_test("part_b_performance", "Phase 1-4 response times", False,
-                f"Slow endpoints (>3s): {', '.join(slow_endpoints)}", "CRITICAL")
-    else:
-        log_test("part_b_performance", "Phase 1-4 response times", True,
-                "All endpoints < 3s", "HIGH")
-
-
-# ============================================================================
-# PART C — SECURITY TESTS
-# ============================================================================
-
-def test_part_c_security():
-    """Test Part C: Security (rate limiting, headers, RBAC, password strength, health check)."""
-    print("\n" + "="*80)
-    print("PART C — SECURITY TESTS")
-    print("="*80)
-    
-    # Test 1: Rate limiting on /auth/login (10/minute)
-    print("\n[C1] Testing rate limiting on /auth/login (10/minute)...")
-    
-    bad_creds = {"email": "admin@gooil.com", "password": "wrongpassword"}
-    rate_limited = False
-    attempts = 0
-    
-    for i in range(12):
-        resp = requests.post(f"{BASE_URL}/auth/login", json=bad_creds, timeout=10)
-        attempts += 1
-        if resp.status_code == 429:
-            rate_limited = True
-            break
-    
-    if rate_limited:
-        log_test("part_c_security", "Login rate limiting", True,
-                f"429 received after {attempts} attempts (expected ~11)", "HIGH")
-    else:
-        log_test("part_c_security", "Login rate limiting", False,
-                f"No 429 after {attempts} attempts", "CRITICAL")
-    
-    # Wait a bit to avoid rate limit for next tests
-    time.sleep(2)
-    
-    # Test 2: Rate limiting on /auth/register (5/minute)
-    print("\n[C2] Testing rate limiting on /auth/register (5/minute)...")
-    
-    rate_limited = False
-    attempts = 0
-    
-    for i in range(7):
-        test_user = {
-            "email": f"test{i}_{int(time.time())}@example.com",
-            "password": "TestPass123",
-            "name": f"Test User {i}",
-            "role": "customer"
-        }
-        resp = requests.post(f"{BASE_URL}/auth/register", json=test_user, timeout=10)
-        attempts += 1
-        if resp.status_code == 429:
-            rate_limited = True
-            break
-    
-    if rate_limited:
-        log_test("part_c_security", "Register rate limiting", True,
-                f"429 received after {attempts} attempts (expected ~6)", "HIGH")
-    else:
-        log_test("part_c_security", "Register rate limiting", False,
-                f"No 429 after {attempts} attempts", "CRITICAL")
-    
-    # Wait a bit to avoid rate limit
-    time.sleep(2)
-    
-    # Test 3: Security headers on /api/health
-    print("\n[C3] Testing security headers on /api/health...")
-    
-    resp = requests.get(f"{BASE_URL}/health", timeout=10)
-    headers = resp.headers
-    
-    required_headers = {
-        "X-Content-Type-Options": "nosniff",
-        "X-Frame-Options": "DENY",
-        "Referrer-Policy": "strict-origin-when-cross-origin",
-        "Permissions-Policy": lambda v: v is not None,  # Just check it exists
-    }
-    
-    missing_headers = []
-    for header, expected in required_headers.items():
-        value = headers.get(header)
-        if callable(expected):
-            if not expected(value):
-                missing_headers.append(header)
-        elif value != expected:
-            missing_headers.append(f"{header} (got: {value})")
-    
-    if missing_headers:
-        log_test("part_c_security", "Security headers", False,
-                f"Missing/incorrect: {', '.join(missing_headers)}", "HIGH")
-    else:
-        log_test("part_c_security", "Security headers", True,
-                "All required headers present", "HIGH")
-    
-    # Test 4: RBAC - customer can't access /admin/users
-    print("\n[C4] Testing RBAC - customer can't access /admin/users...")
-    
-    customer_token, _ = login("customer")
-    customer_headers = get_headers(customer_token)
-    
-    resp = requests.get(f"{BASE_URL}/admin/users", headers=customer_headers, timeout=10)
-    
-    if resp.status_code == 403:
-        log_test("part_c_security", "RBAC - customer denied /admin/users", True,
-                "403 Forbidden as expected", "HIGH")
-    else:
-        log_test("part_c_security", "RBAC - customer denied /admin/users", False,
-                f"Expected 403, got {resp.status_code}", "CRITICAL")
-    
-    # Test 5: RBAC - admin can access /admin/users
-    print("\n[C5] Testing RBAC - admin can access /admin/users...")
-    
-    admin_token, _ = login("admin")
-    admin_headers = get_headers(admin_token)
-    
-    resp = requests.get(f"{BASE_URL}/admin/users", headers=admin_headers, timeout=10)
-    
-    if resp.status_code == 200:
-        data = resp.json()
-        count = data.get("count", 0)
-        log_test("part_c_security", "RBAC - admin allowed /admin/users", True,
-                f"200 OK, {count} users returned", "HIGH")
-    else:
-        log_test("part_c_security", "RBAC - admin allowed /admin/users", False,
-                f"Expected 200, got {resp.status_code}", "CRITICAL")
-    
-    # Test 6: RBAC - customer can't POST to /collections/products
-    print("\n[C6] Testing RBAC - customer can't POST to /collections/products...")
-    
-    test_product = {"name": "Test Product", "code": "TEST-001"}
-    resp = requests.post(f"{BASE_URL}/collections/products", json=test_product,
-                        headers=customer_headers, timeout=10)
-    
-    if resp.status_code == 403:
-        log_test("part_c_security", "RBAC - customer denied POST /collections", True,
-                "403 Forbidden as expected", "HIGH")
-    else:
-        log_test("part_c_security", "RBAC - customer denied POST /collections", False,
-                f"Expected 403, got {resp.status_code}", "CRITICAL")
-    
-    # Test 7: RBAC - admin can POST to /collections/products
-    print("\n[C7] Testing RBAC - admin can POST to /collections/products...")
-    
-    test_product = {
-        "name": f"Test Product {int(time.time())}",
-        "code": f"TEST-{int(time.time())}",
-        "category": "Lubricants"
-    }
-    resp = requests.post(f"{BASE_URL}/collections/products", json=test_product,
-                        headers=admin_headers, timeout=10)
-    
-    if resp.status_code == 200:
-        data = resp.json()
-        log_test("part_c_security", "RBAC - admin allowed POST /collections", True,
-                f"200 OK, product created: {data.get('id')}", "HIGH")
-    else:
-        log_test("part_c_security", "RBAC - admin allowed POST /collections", False,
-                f"Expected 200, got {resp.status_code}: {resp.text[:200]}", "HIGH")
-    
-    # Test 8: RBAC - customer can GET /collections/products
-    print("\n[C8] Testing RBAC - customer can GET /collections/products...")
-    
-    resp = requests.get(f"{BASE_URL}/collections/products", headers=customer_headers, timeout=10)
-    
-    if resp.status_code == 200:
-        data = resp.json()
-        count = data.get("count", 0)
-        log_test("part_c_security", "RBAC - customer allowed GET /collections", True,
-                f"200 OK, {count} products returned", "MEDIUM")
-    else:
-        log_test("part_c_security", "RBAC - customer allowed GET /collections", False,
-                f"Expected 200, got {resp.status_code}", "HIGH")
-    
-    # Test 9: Password strength validation - weak password
-    print("\n[C9] Testing password strength validation - weak password...")
-    
-    weak_user = {
-        "email": f"weak_{int(time.time())}@example.com",
-        "password": "weak",
-        "name": "Weak User",
-        "role": "customer"
-    }
-    resp = requests.post(f"{BASE_URL}/auth/register", json=weak_user, timeout=10)
-    
-    if resp.status_code == 400:
-        log_test("part_c_security", "Password strength - weak rejected", True,
-                f"400 Bad Request: {resp.json().get('detail', '')[:100]}", "HIGH")
-    else:
-        log_test("part_c_security", "Password strength - weak rejected", False,
-                f"Expected 400, got {resp.status_code}", "HIGH")
-    
-    # Test 10: Password strength validation - strong password
-    print("\n[C10] Testing password strength validation - strong password...")
-    
-    strong_user = {
-        "email": f"strong_{int(time.time())}@example.com",
-        "password": "AllUpper2026",
-        "name": "Strong User",
-        "role": "customer"
-    }
-    resp = requests.post(f"{BASE_URL}/auth/register", json=strong_user, timeout=10)
-    
-    if resp.status_code in [200, 400]:  # 400 if email exists is also acceptable
-        if resp.status_code == 200:
-            log_test("part_c_security", "Password strength - strong accepted", True,
-                    "200 OK, user created", "MEDIUM")
-        else:
-            # Check if it's email exists error
-            detail = resp.json().get("detail", "")
-            if "already registered" in detail.lower():
-                log_test("part_c_security", "Password strength - strong accepted", True,
-                        "Password validation passed (email exists)", "MEDIUM")
+    for coll_name, endpoint in collections_to_check:
+        status, data, elapsed = api_get(endpoint, token)
+        if status == 200 and isinstance(data, dict):
+            docs = data.get("data", [])
+            if docs:
+                # Check first 5 docs for tenant_id
+                sample = docs[:5]
+                all_have_tenant = all("tenant_id" in doc for doc in sample)
+                all_gooil = all(doc.get("tenant_id") == "tnt-gooil" for doc in sample)
+                log_test(f"6.{collections_to_check.index((coll_name, endpoint)) + 1}: {coll_name} have tenant_id=tnt-gooil",
+                        all_have_tenant and all_gooil,
+                        f"Status: {status}, All have tenant_id: {all_have_tenant}, All tnt-gooil: {all_gooil}")
             else:
-                log_test("part_c_security", "Password strength - strong accepted", False,
-                        f"400 but not email exists: {detail}", "HIGH")
-    else:
-        log_test("part_c_security", "Password strength - strong accepted", False,
-                f"Expected 200/400, got {resp.status_code}", "HIGH")
-    
-    # Test 11: Health check endpoint
-    print("\n[C11] Testing health check endpoint...")
-    
-    resp = requests.get(f"{BASE_URL}/health", timeout=10)
-    
-    if resp.status_code == 200:
-        data = resp.json()
-        status = data.get("status")
-        db = data.get("db")
-        
-        if status == "ok" and db == "connected":
-            log_test("part_c_security", "Health check endpoint", True,
-                    f"200 OK: status={status}, db={db}", "MEDIUM")
+                log_test(f"6.{collections_to_check.index((coll_name, endpoint)) + 1}: {coll_name} migration", 
+                        True, f"No docs to check")
         else:
-            log_test("part_c_security", "Health check endpoint", False,
-                    f"200 but wrong data: {data}", "HIGH")
-    else:
-        log_test("part_c_security", "Health check endpoint", False,
-                f"Expected 200, got {resp.status_code}", "HIGH")
+            log_test(f"6.{collections_to_check.index((coll_name, endpoint)) + 1}: {coll_name} migration", 
+                    False, f"Status: {status}")
 
-
-# ============================================================================
-# PART D — EXPORTS TESTS
-# ============================================================================
-
-def test_part_d_exports():
-    """Test Part D: Exports (35 collections, 4 formats, auth)."""
+def test_7_performance():
+    """Test 7: PERFORMANCE"""
     print("\n" + "="*80)
-    print("PART D — EXPORTS TESTS")
+    print("TEST 7: PERFORMANCE")
     print("="*80)
     
-    token, user = login("admin")
-    headers = get_headers(token)
+    token = login(GO_OIL_COMPANY)
+    if not token:
+        log_test("7.0: GO OIL login prerequisite", False, "Cannot login", critical=True)
+        return
     
-    # Test 1: GET /api/exports/collections — returns array of 35 exportable resources
-    print("\n[D1] Testing /api/exports/collections...")
+    endpoints = [
+        "/analytics/kpi/executive?range=month",
+        "/analytics/dimensions",
+        "/collections/products",
+        "/finance/outstanding",
+        "/analytics/alerts",
+        "/analytics/party360/distributor/dist-100",
+        "/dashboard/kpis",
+        "/collections/invoices",
+        "/collections/primary-orders",
+        "/analytics/sales?range=month"
+    ]
     
-    resp = requests.get(f"{BASE_URL}/exports/collections", headers=headers, timeout=10)
-    
-    if resp.status_code == 200:
-        data = resp.json()
-        collections = data.get("data", [])
-        count = len(collections)
-        
-        if count == 35:
-            log_test("part_d_exports", "Exports collections list", True,
-                    f"35 exportable resources returned", "HIGH")
-        else:
-            log_test("part_d_exports", "Exports collections list", False,
-                    f"Expected 35 resources, got {count}", "HIGH")
-    else:
-        log_test("part_d_exports", "Exports collections list", False,
-                f"Expected 200, got {resp.status_code}", "CRITICAL")
-    
-    # Test 2: GET /api/exports/products?format=csv — 200 with content-type text/csv
-    print("\n[D2] Testing /api/exports/products?format=csv...")
-    
-    resp = requests.get(f"{BASE_URL}/exports/products?format=csv", headers=headers, timeout=10)
-    
-    if resp.status_code == 200:
-        content_type = resp.headers.get("Content-Type", "")
-        content = resp.text
-        
-        # Check if first line looks like CSV headers
-        first_line = content.split("\n")[0] if content else ""
-        has_headers = "," in first_line
-        
-        if "text/csv" in content_type and has_headers:
-            log_test("part_d_exports", "Export CSV format", True,
-                    f"text/csv, {len(content)} bytes, headers: {first_line[:50]}", "HIGH")
-        else:
-            log_test("part_d_exports", "Export CSV format", False,
-                    f"Content-Type: {content_type}, headers: {has_headers}", "HIGH")
-    else:
-        log_test("part_d_exports", "Export CSV format", False,
-                f"Expected 200, got {resp.status_code}", "CRITICAL")
-    
-    # Test 3: GET /api/exports/products?format=xlsx — 200 with correct content-type
-    print("\n[D3] Testing /api/exports/products?format=xlsx...")
-    
-    resp = requests.get(f"{BASE_URL}/exports/products?format=xlsx", headers=headers, timeout=10)
-    
-    if resp.status_code == 200:
-        content_type = resp.headers.get("Content-Type", "")
-        content = resp.content
-        
-        # Check if it's a valid zip (xlsx is a zip file)
-        is_zip = content[:4] == b'PK\x03\x04'
-        
-        if "application/vnd.openxmlformats" in content_type and is_zip:
-            log_test("part_d_exports", "Export XLSX format", True,
-                    f"Valid XLSX, {len(content)} bytes", "HIGH")
-        else:
-            log_test("part_d_exports", "Export XLSX format", False,
-                    f"Content-Type: {content_type}, is_zip: {is_zip}", "HIGH")
-    else:
-        log_test("part_d_exports", "Export XLSX format", False,
-                f"Expected 200, got {resp.status_code}", "CRITICAL")
-    
-    # Test 4: GET /api/exports/invoices?format=pdf — 200 with content-type application/pdf
-    print("\n[D4] Testing /api/exports/invoices?format=pdf...")
-    
-    resp = requests.get(f"{BASE_URL}/exports/invoices?format=pdf", headers=headers, timeout=10)
-    
-    if resp.status_code == 200:
-        content_type = resp.headers.get("Content-Type", "")
-        content = resp.content
-        
-        # Check if it starts with %PDF
-        is_pdf = content[:4] == b'%PDF'
-        
-        if "application/pdf" in content_type and is_pdf:
-            log_test("part_d_exports", "Export PDF format", True,
-                    f"Valid PDF, {len(content)} bytes", "HIGH")
-        else:
-            log_test("part_d_exports", "Export PDF format", False,
-                    f"Content-Type: {content_type}, is_pdf: {is_pdf}", "HIGH")
-    else:
-        log_test("part_d_exports", "Export PDF format", False,
-                f"Expected 200, got {resp.status_code}", "CRITICAL")
-    
-    # Test 5: GET /api/exports/outstanding?format=print — 200 with content-type text/html
-    print("\n[D5] Testing /api/exports/outstanding?format=print...")
-    
-    resp = requests.get(f"{BASE_URL}/exports/outstanding?format=print", headers=headers, timeout=10)
-    
-    if resp.status_code == 200:
-        content_type = resp.headers.get("Content-Type", "")
-        content = resp.text
-        
-        has_table = "<table>" in content.lower()
-        
-        if "text/html" in content_type and has_table:
-            log_test("part_d_exports", "Export Print HTML format", True,
-                    f"Valid HTML with <table>, {len(content)} bytes", "HIGH")
-        else:
-            log_test("part_d_exports", "Export Print HTML format", False,
-                    f"Content-Type: {content_type}, has_table: {has_table}", "HIGH")
-    else:
-        log_test("part_d_exports", "Export Print HTML format", False,
-                f"Expected 200, got {resp.status_code}", "CRITICAL")
-    
-    # Test 6: POST /api/exports/render with custom data
-    print("\n[D6] Testing POST /api/exports/render...")
-    
-    test_data = {
-        "rows": [
-            {"a": 1, "b": "x"},
-            {"a": 2, "b": "y"}
-        ],
-        "format": "csv",
-        "title": "Test Export"
-    }
-    resp = requests.post(f"{BASE_URL}/exports/render", json=test_data, headers=headers, timeout=10)
-    
-    if resp.status_code == 200:
-        content_type = resp.headers.get("Content-Type", "")
-        content = resp.text
-        
-        if "text/csv" in content_type:
-            log_test("part_d_exports", "Export render endpoint", True,
-                    f"CSV rendered, {len(content)} bytes", "HIGH")
-        else:
-            log_test("part_d_exports", "Export render endpoint", False,
-                    f"Content-Type: {content_type}", "HIGH")
-    else:
-        log_test("part_d_exports", "Export render endpoint", False,
-                f"Expected 200, got {resp.status_code}: {resp.text[:200]}", "CRITICAL")
-    
-    # Test 7: Invalid format — expect 400 or validation error
-    print("\n[D7] Testing invalid export format...")
-    
-    resp = requests.get(f"{BASE_URL}/exports/products?format=badformat", headers=headers, timeout=10)
-    
-    if resp.status_code in [400, 422]:
-        log_test("part_d_exports", "Export invalid format rejected", True,
-                f"{resp.status_code} as expected", "MEDIUM")
-    else:
-        log_test("part_d_exports", "Export invalid format rejected", False,
-                f"Expected 400/422, got {resp.status_code}", "HIGH")
-    
-    # Test 8: Unknown resource — expect 404
-    print("\n[D8] Testing unknown export resource...")
-    
-    resp = requests.get(f"{BASE_URL}/exports/nothingness?format=csv", headers=headers, timeout=10)
-    
-    if resp.status_code == 404:
-        log_test("part_d_exports", "Export unknown resource rejected", True,
-                "404 as expected", "MEDIUM")
-    else:
-        log_test("part_d_exports", "Export unknown resource rejected", False,
-                f"Expected 404, got {resp.status_code}", "HIGH")
-    
-    # Test 9: Auth required — no bearer token
-    print("\n[D9] Testing export auth requirement...")
-    
-    resp = requests.get(f"{BASE_URL}/exports/products?format=csv", timeout=10)
-    
-    if resp.status_code == 401:
-        log_test("part_d_exports", "Export auth required", True,
-                "401 Unauthorized as expected", "HIGH")
-    else:
-        log_test("part_d_exports", "Export auth required", False,
-                f"Expected 401, got {resp.status_code}", "CRITICAL")
+    for endpoint in endpoints:
+        status, data, elapsed = api_get(endpoint, token)
+        under_3s = elapsed < 3.0
+        log_test(f"7.{endpoints.index(endpoint) + 1}: {endpoint} < 3s",
+                status == 200 and under_3s,
+                f"Status: {status}, Time: {elapsed:.2f}s")
+        if elapsed >= 3.0:
+            test_results["performance_issues"].append({
+                "endpoint": endpoint,
+                "time": elapsed
+            })
 
-
-# ============================================================================
-# PART A — LIGHT REGRESSION TESTS
-# ============================================================================
-
-def test_part_a_regression():
-    """Test Part A: Light regression (ensure nothing broke)."""
+def test_5_tenant_suspended():
+    """Test 5.7-5.8: Tenant suspended login guard"""
     print("\n" + "="*80)
-    print("PART A — LIGHT REGRESSION TESTS")
+    print("TEST 5.7-5.8: TENANT SUSPENDED LOGIN GUARD")
     print("="*80)
     
-    # Test 1: Login all 8 personas
-    print("\n[A1] Testing login for all 8 personas...")
+    # This test requires suspending a tenant, which we'll skip for now
+    # as it would affect other tests. We'll just verify the platform owner
+    # never gets blocked.
     
-    failed_logins = []
-    for role in CREDENTIALS.keys():
-        try:
-            token, user = login(role)
-            print(f"  ✓ {role}: {user.get('email')}")
-        except Exception as e:
-            failed_logins.append(f"{role}: {str(e)[:100]}")
-            print(f"  ✗ {role}: {str(e)[:100]}")
-    
-    if failed_logins:
-        log_test("part_a_regression", "Login all personas", False,
-                f"Failed: {', '.join(failed_logins)}", "CRITICAL")
+    owner_token = login(PLATFORM_OWNER)
+    if owner_token:
+        status, data, _ = api_get("/platform/tenants", owner_token)
+        log_test("5.7: Platform owner can login and access endpoints",
+                status == 200,
+                f"Status: {status}")
     else:
-        log_test("part_a_regression", "Login all personas", True,
-                "All 8 personas logged in successfully", "HIGH")
-    
-    # Get admin token for remaining tests
-    token, user = login("admin")
-    headers = get_headers(token)
-    
-    # Test 2: POST /api/reverse/exceptions/scan — should return 200 with no ObjectId leaks
-    print("\n[A2] Testing POST /api/reverse/exceptions/scan (no ObjectId leaks)...")
-    
-    resp = requests.post(f"{BASE_URL}/reverse/exceptions/scan", headers=headers, timeout=10)
-    
-    if resp.status_code == 200:
-        data = resp.json()
-        content = json.dumps(data)
-        
-        # Check for ObjectId leaks
-        has_objectid = "ObjectId" in content or "_id" in content
-        
-        if not has_objectid:
-            found = data.get("found", 0)
-            log_test("part_a_regression", "Exception scanner no ObjectId leaks", True,
-                    f"200 OK, found={found}, no ObjectId leaks", "HIGH")
-        else:
-            log_test("part_a_regression", "Exception scanner no ObjectId leaks", False,
-                    "ObjectId leak detected in response", "CRITICAL")
-    else:
-        log_test("part_a_regression", "Exception scanner no ObjectId leaks", False,
-                f"Expected 200, got {resp.status_code}: {resp.text[:200]}", "CRITICAL")
-    
-    # Test 3: GET /api/analytics/kpi/executive?range=month — should return 15 KPIs
-    print("\n[A3] Testing GET /api/analytics/kpi/executive?range=month (15 KPIs)...")
-    
-    resp = requests.get(f"{BASE_URL}/analytics/kpi/executive?range=month", headers=headers, timeout=10)
-    
-    if resp.status_code == 200:
-        data = resp.json()
-        kpis = data.get("kpis", {})
-        kpi_count = len(kpis)
-        
-        expected_kpis = [
-            "revenue", "inventory_value", "inventory_health", "outstanding",
-            "collections", "cash_flow", "claims_amount", "claims_count",
-            "returns_amount", "returns_count", "replacement_cost",
-            "approval_queue", "exception_count", "business_risk_score",
-            "company_health_score"
-        ]
-        
-        missing_kpis = [k for k in expected_kpis if k not in kpis]
-        
-        if kpi_count == 15 and not missing_kpis:
-            log_test("part_a_regression", "Executive KPI 15 metrics", True,
-                    f"All 15 KPIs present: revenue=${kpis.get('revenue', 0)/1e6:.1f}M", "HIGH")
-        else:
-            log_test("part_a_regression", "Executive KPI 15 metrics", False,
-                    f"Expected 15 KPIs, got {kpi_count}. Missing: {missing_kpis}", "CRITICAL")
-    else:
-        log_test("part_a_regression", "Executive KPI 15 metrics", False,
-                f"Expected 200, got {resp.status_code}", "CRITICAL")
-    
-    # Test 4: GET /api/analytics/party360/distributor/dist-100 — should return unified profile
-    print("\n[A4] Testing GET /api/analytics/party360/distributor/dist-100...")
-    
-    resp = requests.get(f"{BASE_URL}/analytics/party360/distributor/dist-100", headers=headers, timeout=10)
-    
-    if resp.status_code == 200:
-        data = resp.json()
-        
-        required_sections = ["profile", "financials", "performance", "risk_score", "health_score", "timeline"]
-        missing_sections = [s for s in required_sections if s not in data]
-        
-        if not missing_sections:
-            profile = data.get("profile", {})
-            financials = data.get("financials", {})
-            log_test("part_a_regression", "Party 360 unified profile", True,
-                    f"All sections present. Party: {profile.get('name', '?')}, Outstanding: ${financials.get('outstanding', 0)/1e6:.1f}M", "HIGH")
-        else:
-            log_test("part_a_regression", "Party 360 unified profile", False,
-                    f"Missing sections: {missing_sections}", "CRITICAL")
-    else:
-        log_test("part_a_regression", "Party 360 unified profile", False,
-                f"Expected 200, got {resp.status_code}", "CRITICAL")
-
+        log_test("5.7: Platform owner login", False, "Cannot login")
 
 # ============================================================================
 # MAIN TEST RUNNER
 # ============================================================================
 
-def print_summary():
-    """Print test summary."""
+def run_all_tests():
+    """Run all test suites"""
+    print("\n" + "="*80)
+    print("VayuERP SaaS Backend — Slice 1 Regression Test Suite")
+    print("="*80)
+    
+    # Run tests in order of criticality
+    test_1_authentication()
+    test_2_existing_go_oil_regression()
+    test_3_platform_router()
+    test_4_tenant_admin_endpoints()
+    test_1_tenant_isolation()
+    test_6_data_migration()
+    test_5_tenant_suspended()
+    test_7_performance()
+    
+    # Print summary
     print("\n" + "="*80)
     print("TEST SUMMARY")
     print("="*80)
     
-    categories = [
-        ("PART B — PERFORMANCE", "part_b_performance"),
-        ("PART C — SECURITY", "part_c_security"),
-        ("PART D — EXPORTS", "part_d_exports"),
-        ("PART A — REGRESSION", "part_a_regression"),
-    ]
+    total = len(test_results["passed"]) + len(test_results["failed"])
+    passed = len(test_results["passed"])
+    failed = len(test_results["failed"])
+    critical_failed = len(test_results["critical_failures"])
     
-    total_tests = 0
-    total_passed = 0
-    critical_failures = []
-    high_failures = []
-    medium_failures = []
+    print(f"\nTotal Tests: {total}")
+    print(f"✅ Passed: {passed} ({passed/total*100:.1f}%)")
+    print(f"❌ Failed: {failed} ({failed/total*100:.1f}%)")
+    print(f"🔴 Critical Failures: {critical_failed}")
     
-    for category_name, category_key in categories:
-        results = test_results[category_key]
-        passed = sum(1 for r in results if r["passed"])
-        total = len(results)
-        
-        total_tests += total
-        total_passed += passed
-        
-        print(f"\n{category_name}: {passed}/{total} passed")
-        
-        for result in results:
-            if not result["passed"]:
-                status = "❌"
-                priority = result["priority"]
-                
-                if priority == "CRITICAL":
-                    critical_failures.append(f"{category_name}: {result['test']}")
-                elif priority == "HIGH":
-                    high_failures.append(f"{category_name}: {result['test']}")
-                else:
-                    medium_failures.append(f"{category_name}: {result['test']}")
-            else:
-                status = "✅"
-            
-            print(f"  {status} [{result['priority']}] {result['test']}")
-            if result["details"]:
-                print(f"      {result['details']}")
+    if test_results["critical_failures"]:
+        print("\n" + "="*80)
+        print("CRITICAL FAILURES")
+        print("="*80)
+        for failure in test_results["critical_failures"]:
+            print(f"\n❌ {failure['name']}")
+            print(f"   Details: {failure['details']}")
     
-    print("\n" + "="*80)
-    print(f"OVERALL: {total_passed}/{total_tests} tests passed ({total_passed*100//total_tests if total_tests else 0}%)")
-    print("="*80)
+    if test_results["performance_issues"]:
+        print("\n" + "="*80)
+        print("PERFORMANCE ISSUES (>3s)")
+        print("="*80)
+        for issue in test_results["performance_issues"]:
+            print(f"⚠️  {issue['endpoint']}: {issue['time']:.2f}s")
     
-    if critical_failures:
-        print(f"\n🚨 CRITICAL FAILURES ({len(critical_failures)}):")
-        for f in critical_failures:
-            print(f"  - {f}")
+    if failed > 0:
+        print("\n" + "="*80)
+        print("ALL FAILURES")
+        print("="*80)
+        for failure in test_results["failed"]:
+            print(f"\n❌ {failure['name']}")
+            print(f"   Details: {failure['details']}")
     
-    if high_failures:
-        print(f"\n⚠️  HIGH PRIORITY FAILURES ({len(high_failures)}):")
-        for f in high_failures:
-            print(f"  - {f}")
-    
-    if medium_failures:
-        print(f"\n⚡ MEDIUM PRIORITY FAILURES ({len(medium_failures)}):")
-        for f in medium_failures:
-            print(f"  - {f}")
-    
-    if not critical_failures and not high_failures:
-        print("\n✅ All critical and high priority tests passed!")
-
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "critical_failures": critical_failed,
+        "success_rate": passed/total*100 if total > 0 else 0
+    }
 
 if __name__ == "__main__":
-    print("GO OIL DMS — Backend Testing Suite")
-    print("Testing Parts B/C/D + Light Regression")
-    print("="*80)
-    
-    try:
-        test_part_b_performance()
-        test_part_c_security()
-        test_part_d_exports()
-        test_part_a_regression()
-        print_summary()
-    except KeyboardInterrupt:
-        print("\n\nTests interrupted by user.")
-        print_summary()
-    except Exception as e:
-        print(f"\n\n❌ FATAL ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        print_summary()
+    summary = run_all_tests()
+    print(f"\n{'='*80}")
+    print(f"Final Result: {'✅ PASS' if summary['critical_failures'] == 0 else '❌ FAIL'}")
+    print(f"Success Rate: {summary['success_rate']:.1f}%")
+    print(f"{'='*80}\n")

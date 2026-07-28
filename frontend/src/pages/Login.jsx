@@ -13,12 +13,13 @@ import GoldLogo from "@/components/common/GoldLogo";
 import { ROLE_LABELS } from "@/lib/nav";
 
 const QUICK_LOGINS = [
-  { role: "company_admin", email: "company@gooil.com", label: "Company Admin" },
-  { role: "regional_manager", email: "regional@gooil.com", label: "Regional Manager" },
-  { role: "sales_executive", email: "sales@gooil.com", label: "Sales Executive" },
-  { role: "distributor", email: "distributor@gooil.com", label: "Distributor" },
-  { role: "retailer", email: "retailer@gooil.com", label: "Retailer" },
-  { role: "customer", email: "customer@gooil.com", label: "Customer" },
+  { role: "platform_owner", email: "owner@vayuerp.com", label: "Platform Owner", password: "VayuERP@2026", tenant: "VayuERP" },
+  { role: "company_admin", email: "company@gooil.com", label: "GO OIL — Company Admin", password: "GoOil@2026", tenant: "GO OIL" },
+  { role: "regional_manager", email: "regional@gooil.com", label: "GO OIL — Regional Manager", password: "GoOil@2026", tenant: "GO OIL" },
+  { role: "sales_executive", email: "sales@gooil.com", label: "GO OIL — Sales Executive", password: "GoOil@2026", tenant: "GO OIL" },
+  { role: "distributor", email: "distributor@gooil.com", label: "GO OIL — Distributor", password: "GoOil@2026", tenant: "GO OIL" },
+  { role: "retailer", email: "retailer@gooil.com", label: "GO OIL — Retailer", password: "GoOil@2026", tenant: "GO OIL" },
+  { role: "customer", email: "customer@gooil.com", label: "GO OIL — Customer", password: "GoOil@2026", tenant: "GO OIL" },
 ];
 
 const DEMO_PASSWORD = "GoOil@2026";
@@ -45,7 +46,7 @@ export default function Login() {
 
   const quick = async (u) => {
     setBusy(true);
-    const r = await login(u.email, DEMO_PASSWORD);
+    const r = await login(u.email, u.password || DEMO_PASSWORD);
     setBusy(false);
     if (r.ok) nav("/app");
   };
@@ -67,21 +68,21 @@ export default function Login() {
 
         <div className="relative z-10">
           <div className="text-[11px] uppercase tracking-[0.32em] text-gold/90 font-semibold mb-4">
-            Enterprise Distribution Management
+            Enterprise SaaS ERP Platform
           </div>
           <h1 className="font-display font-extrabold text-4xl xl:text-5xl leading-tight tracking-tight">
-            The command layer for <span className="text-gold">GO OIL</span> operations.
+            One platform. <span className="text-gold">Every industry.</span>
           </h1>
           <p className="mt-4 text-white/70 text-base max-w-md leading-relaxed">
-            Primary & secondary orders, warehouse, dispatch, GRN, invoicing, ledger and AI insights — unified across every branch, distributor and retailer.
+            Multi-tenant ERP for Lubricants, FMCG, Chemicals, Paint, Pharma, Automotive and Distribution. White-labelled, subscription-driven, API-first.
           </p>
 
           <div className="mt-10 grid grid-cols-2 gap-4 max-w-md">
             {[
-              { icon: TrendingUp, label: "Real-time KPIs", sub: "97.1% fill rate" },
-              { icon: ShieldCheck, label: "Role-based access", sub: "8 personas" },
-              { icon: Zap, label: "AI Copilot", sub: "Claude Sonnet" },
-              { icon: ArrowRight, label: "28 modules", sub: "Unified" },
+              { icon: TrendingUp, label: "Real-time BI", sub: "15 executive KPIs" },
+              { icon: ShieldCheck, label: "Tenant isolation", sub: "Zero data leak" },
+              { icon: Zap, label: "AI Copilot", sub: "Business-analyst" },
+              { icon: ArrowRight, label: "15 modules", sub: "Marketplace ready" },
             ].map((f) => (
               <div key={f.label} className="rounded-xl bg-white/8 backdrop-blur border border-white/10 px-4 py-3">
                 <f.icon size={16} className="text-gold" />
@@ -93,7 +94,7 @@ export default function Login() {
         </div>
 
         <div className="relative z-10 text-xs text-white/50">
-          © {new Date().getFullYear()} GO OIL Holdings. Trusted enterprise ERP.
+          © {new Date().getFullYear()} VayuERP — Enterprise SaaS Platform. GO OIL is a customer tenant.
         </div>
       </div>
 
@@ -102,9 +103,9 @@ export default function Login() {
         <div className="w-full max-w-md">
           <div className="lg:hidden mb-6"><GoldLogo /></div>
 
-          <h2 className="font-display font-extrabold text-3xl text-ink">Sign in to your command center</h2>
+          <h2 className="font-display font-extrabold text-3xl text-ink">Sign in to VayuERP</h2>
           <p className="mt-1.5 text-sm text-ink-muted">
-            {tab === "login" ? "Use one of the demo roles or your own credentials." : "Create an account to explore the DMS."}
+            {tab === "login" ? "Try a demo role or sign in with your own credentials." : "Create an account inside the GO OIL demo tenant."}
           </p>
 
           <Tabs value={tab} onValueChange={setTab} className="mt-6">
@@ -130,18 +131,21 @@ export default function Login() {
               </form>
 
               <div className="mt-6">
-                <div className="text-[11px] uppercase tracking-[0.22em] text-ink-muted font-semibold mb-3">One-click demo</div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="text-[11px] uppercase tracking-[0.22em] text-ink-muted font-semibold mb-3">One-click demo tenants</div>
+                <div className="grid grid-cols-1 gap-2">
                   {QUICK_LOGINS.map((u) => (
                     <button
                       key={u.role}
                       onClick={() => quick(u)}
                       disabled={busy}
-                      className="text-left text-xs rounded-lg border border-[#E5E7EB] px-3 py-2.5 hover:border-gold hover:bg-gold/5 transition disabled:opacity-50"
+                      className="text-left text-xs rounded-lg border border-[#E5E7EB] px-3 py-2.5 hover:border-gold hover:bg-gold/5 transition disabled:opacity-50 flex items-center justify-between"
                       data-testid={`quick-login-${u.role}`}
                     >
-                      <div className="font-semibold text-ink">{u.label}</div>
-                      <div className="text-ink-muted mt-0.5 truncate">{u.email}</div>
+                      <div>
+                        <div className="font-semibold text-ink">{u.label}</div>
+                        <div className="text-ink-muted mt-0.5 truncate">{u.email}</div>
+                      </div>
+                      <span className={`text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-full ${u.role === 'platform_owner' ? 'bg-ink text-white' : 'bg-gold/10 text-gold-dark'}`}>{u.tenant}</span>
                     </button>
                   ))}
                 </div>
