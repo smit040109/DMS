@@ -127,6 +127,55 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # Security headers on every response
 app.add_middleware(SecurityHeadersMiddleware, enable_hsts=os.environ.get("ENABLE_HSTS", "").lower() == "true")
 
+
+# ---------- API usage tracking (Module 9/10) ----------
+# Records every /api/* call to platform_events. Non-blocking — errors are
+# swallowed so the request path stays fast.
+from starlette.middleware.base import BaseHTTPMiddleware  # noqa: E402
+
+class ApiUsageMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        import time as _t
+        started = _t.perf_counter()
+        # Extract tenant_id from JWT at request entry so we log it correctly.
+        tid_from_jwt = None
+        try:
+            tok = request.cookies.get("access_token")
+            if not tok:
+                auth = request.headers.get("Authorization", "")
+                if auth.startswith("Bearer "):
+                    tok = auth[7:]
+            if tok:
+                payload = pyjwt.decode(tok, JWT_SECRET, algorithms=[JWT_ALGO], options={"verify_exp": False})
+                tid_from_jwt = payload.get("tenant_id")
+                # pre-set contextvar so downstream code sees it even if the
+                # endpoint doesn't call get_current_user (public endpoints etc).
+                current_tenant_id.set(tid_from_jwt)
+        except Exception:
+            pass
+
+        response = await call_next(request)
+
+        try:
+            path = request.url.path
+            if path.startswith("/api/") and not path.startswith("/api/health"):
+                duration_ms = int((_t.perf_counter() - started) * 1000)
+                await _raw_db["platform_events"].insert_one({
+                    "id": f"evt-{uuid.uuid4().hex[:12]}",
+                    "kind": "api_call",
+                    "tenant_id": tid_from_jwt,
+                    "method": request.method,
+                    "path": path,
+                    "status": response.status_code,
+                    "duration_ms": duration_ms,
+                    "at": datetime.now(timezone.utc).isoformat(),
+                })
+        except Exception:
+            pass
+        return response
+
+app.add_middleware(ApiUsageMiddleware)
+
 # CORS — driven from env for production. Falls back to '*' for dev.
 _cors_origins = parse_cors_origins()
 app.add_middleware(

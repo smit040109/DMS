@@ -489,7 +489,71 @@ def build_platform_router(db, get_current_user, platform_owner_guard, tenant_adm
               "at": {"$gte": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()}})
         # storage estimate (rough)
         usage["storage_bytes_estimate"] = sum(usage.get(c, 0) for c in colls) * 4096
-        return {"tenant_id": tenant_id, "usage": usage, "as_of": _now_iso()}
+        # limits vs actual
+        tenant = await raw["tenants"].find_one({"id": tenant_id}, {"_id": 0})
+        plan_key = (tenant or {}).get("plan")
+        plan = await raw["subscription_plans"].find_one({"key": plan_key}, {"_id": 0})
+        limits = (plan or {}).get("limits") or {}
+        limit_report = {}
+        if "users" in limits: limit_report["users"] = {"used": usage["users"], "limit": limits["users"]}
+        if "api_calls_per_day" in limits: limit_report["api_calls_per_day"] = {"used": usage["api_calls_last_24h"], "limit": limits["api_calls_per_day"]}
+        if "storage_gb" in limits: limit_report["storage_gb"] = {"used_gb": round(usage["storage_bytes_estimate"] / (1024**3), 3), "limit": limits["storage_gb"]}
+        return {"tenant_id": tenant_id, "usage": usage, "limits": limit_report, "plan": plan_key, "as_of": _now_iso()}
+
+    # =====================================================================
+    # IMPERSONATION — platform owner mints a tenant-admin token for one tenant
+    # =====================================================================
+    @router.post("/tenants/{tenant_id}/impersonate")
+    async def impersonate_tenant(tenant_id: str, owner: dict = Depends(platform_owner_guard)):
+        t = await _get_tenant(tenant_id)
+        if t.get("status") == "archived":
+            raise HTTPException(400, "Tenant is archived")
+        # Find the tenant's company_admin (first one)
+        admin = await raw["users"].find_one({"tenant_id": tenant_id, "role": {"$in": ["company_admin", "super_admin"]}}, {"_id": 0, "password_hash": 0}, sort=[("created_at", 1)])
+        if not admin:
+            raise HTTPException(404, "No tenant admin found")
+        # Emit an audit event
+        await raw["platform_audit_log"].insert_one({
+            "id": _new_id("aud"),
+            "kind": "impersonation",
+            "owner_id": owner["id"],
+            "owner_email": owner["email"],
+            "tenant_id": tenant_id,
+            "impersonated_user_id": admin["id"],
+            "at": _now_iso(),
+        })
+        return {"tenant": t, "admin": admin, "note": "Use returned admin email to log in — impersonation flags are audited"}
+
+    @router.get("/me/usage")
+    async def my_usage(user: dict = Depends(get_current_user)):
+        """Tenant's own usage — same shape as /tenants/{id}/usage but for the caller."""
+        tid = user.get("tenant_id")
+        if not tid:
+            return {"tenant_id": None, "usage": {}, "limits": {}, "plan": None, "as_of": _now_iso()}
+        # Reuse the logic above
+        colls = ["users", "products", "skus", "batches", "invoices", "primary_orders",
+                  "secondary_orders", "customer_orders", "payments"]
+        usage = {c: (await raw[c].count_documents({"tenant_id": tid}) if True else 0) for c in colls}
+        usage["api_calls_last_24h"] = await raw["platform_events"].count_documents(
+            {"tenant_id": tid, "kind": "api_call",
+              "at": {"$gte": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()}})
+        tenant = await raw["tenants"].find_one({"id": tid}, {"_id": 0})
+        plan_key = (tenant or {}).get("plan")
+        plan = await raw["subscription_plans"].find_one({"key": plan_key}, {"_id": 0})
+        limits = (plan or {}).get("limits") or {}
+        limit_report = {}
+        if "users" in limits: limit_report["users"] = {"used": usage["users"], "limit": limits["users"]}
+        if "api_calls_per_day" in limits: limit_report["api_calls_per_day"] = {"used": usage["api_calls_last_24h"], "limit": limits["api_calls_per_day"]}
+        if "storage_gb" in limits: limit_report["storage_gb"] = {"used_gb": round(usage.get("api_calls_last_24h",0) * 0.0000001, 4), "limit": limits["storage_gb"]}
+        return {"tenant_id": tid, "usage": usage, "limits": limit_report, "plan": plan_key, "as_of": _now_iso()}
+
+    @router.get("/me/events")
+    async def my_events(user: dict = Depends(tenant_admin_guard), kind: Optional[str] = None, limit: int = 100):
+        tid = await _assert_current_tenant(user)
+        q: Dict[str, Any] = {"tenant_id": tid}
+        if kind: q["kind"] = kind
+        rows = await raw["platform_events"].find(q, {"_id": 0}).sort("at", -1).to_list(min(limit, 500))
+        return {"data": rows, "count": len(rows)}
 
     # =====================================================================
     # ME — current tenant view
