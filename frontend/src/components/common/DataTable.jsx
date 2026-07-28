@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from "react";
-import { Search, SlidersHorizontal, Download, ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react";
+import { Search, SlidersHorizontal, ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import StatusPill from "@/components/common/StatusPill";
+import ExportMenu from "@/components/common/ExportMenu";
 
 export default function DataTable({
   data = [],
@@ -14,6 +15,9 @@ export default function DataTable({
   actions,
   emptyLabel = "No records found",
   testId = "data-table",
+  exportTitle,
+  exportResource, // if set, uses server-side full-collection export via /api/exports/{resource}
+  exportable = true,
 }) {
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -71,9 +75,16 @@ export default function DataTable({
           <Button variant="outline" size="sm" className="border-[#E5E7EB] h-9" data-testid={`${testId}-filters`}>
             <SlidersHorizontal size={14} className="mr-1.5" /> Filters
           </Button>
-          <Button variant="outline" size="sm" className="border-[#E5E7EB] h-9" data-testid={`${testId}-export`}>
-            <Download size={14} className="mr-1.5" /> Export
-          </Button>
+          {exportable && (
+            <ExportMenu
+              rows={filtered}
+              columns={columns.map((c) => c.key)}
+              resource={exportResource}
+              title={exportTitle || testId.replace(/-/g, " ")}
+              subtitle={`${filtered.length} rows`}
+              testId={`${testId}-export`}
+            />
+          )}
           {actions}
         </div>
       </div>

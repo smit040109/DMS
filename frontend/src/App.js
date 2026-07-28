@@ -1,4 +1,4 @@
-import React from "react";
+import React, { Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
@@ -6,43 +6,101 @@ import AppShell from "@/components/layout/AppShell";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 
-import {
-  ProductsPage, SkusPage, BatchesPage,
-  WarehousesPage,
-  DistributorsPage, RetailersPage, CustomersPage,
-  PrimaryOrdersPage, SecondaryOrdersPage, InvoicesPage,
-  DispatchesPage, GitPage, GrnPage,
-  ExpensesPage,
-  ApprovalsPage, NotificationsPage,
-} from "@/pages/modules/ListModules";
+/**
+ * Route-level code-splitting.
+ * Each module file becomes its own webpack chunk, so the initial JS
+ * payload only contains AppShell + Dashboard + Login + shared UI.
+ * All list/inventory/finance/reverse/analytics/admin modules load on demand.
+ *
+ * lazyNamed() extracts a named export from a module file and shapes it as a
+ * default export (which is what React.lazy expects).
+ */
+const lazyNamed = (loader, name) =>
+  React.lazy(() => loader().then((mod) => ({ default: mod[name] })));
 
-import {
-  UsersPage, RolesPage, MasterDataPage,
-  ReportsPage, AnalyticsPage,
-  AiAssistantPage, SettingsPage,
-} from "@/pages/modules/AdminModules";
+// ListModules chunk
+const listLoader = () => import(/* webpackChunkName: "list" */ "@/pages/modules/ListModules");
+const ProductsPage        = lazyNamed(listLoader, "ProductsPage");
+const SkusPage            = lazyNamed(listLoader, "SkusPage");
+const BatchesPage         = lazyNamed(listLoader, "BatchesPage");
+const WarehousesPage      = lazyNamed(listLoader, "WarehousesPage");
+const DistributorsPage    = lazyNamed(listLoader, "DistributorsPage");
+const RetailersPage       = lazyNamed(listLoader, "RetailersPage");
+const CustomersPage       = lazyNamed(listLoader, "CustomersPage");
+const PrimaryOrdersPage   = lazyNamed(listLoader, "PrimaryOrdersPage");
+const SecondaryOrdersPage = lazyNamed(listLoader, "SecondaryOrdersPage");
+const InvoicesPage        = lazyNamed(listLoader, "InvoicesPage");
+const DispatchesPage      = lazyNamed(listLoader, "DispatchesPage");
+const GitPage             = lazyNamed(listLoader, "GitPage");
+const GrnPage             = lazyNamed(listLoader, "GrnPage");
+const ExpensesPage        = lazyNamed(listLoader, "ExpensesPage");
+const ApprovalsPage       = lazyNamed(listLoader, "ApprovalsPage");
+const NotificationsPage   = lazyNamed(listLoader, "NotificationsPage");
 
-import {
-  CompanyInventoryPage, DistributorInventoryPage, RetailerInventoryPage, StockLedgerPage,
-} from "@/pages/modules/InventoryModules";
+// AdminModules chunk
+const adminLoader = () => import(/* webpackChunkName: "admin" */ "@/pages/modules/AdminModules");
+const UsersPage       = lazyNamed(adminLoader, "UsersPage");
+const RolesPage       = lazyNamed(adminLoader, "RolesPage");
+const MasterDataPage  = lazyNamed(adminLoader, "MasterDataPage");
+const ReportsPage     = lazyNamed(adminLoader, "ReportsPage");
+const AnalyticsPage   = lazyNamed(adminLoader, "AnalyticsPage");
+const AiAssistantPage = lazyNamed(adminLoader, "AiAssistantPage");
+const SettingsPage    = lazyNamed(adminLoader, "SettingsPage");
 
-import {
-  PaymentsFinancePage, OutstandingPage, DoubleLedgerPage,
-  CashbackEnginePage, CouponsEnginePage,
-  CustomerOrdersPage, WalletsPage, ReconciliationPage, AuditLogPage,
-} from "@/pages/modules/FinanceModules";
+// InventoryModules chunk
+const invLoader = () => import(/* webpackChunkName: "inventory" */ "@/pages/modules/InventoryModules");
+const CompanyInventoryPage     = lazyNamed(invLoader, "CompanyInventoryPage");
+const DistributorInventoryPage = lazyNamed(invLoader, "DistributorInventoryPage");
+const RetailerInventoryPage    = lazyNamed(invLoader, "RetailerInventoryPage");
+const StockLedgerPage          = lazyNamed(invLoader, "StockLedgerPage");
 
-import {
-  ReturnsPage, DamagePage, ClaimsPage,
-  CreditNotesPage, DebitNotesPage, ReplacementsPage,
-  ExpiryPage, ApprovalEnginePage, ExceptionsPage, ReportsHubPage,
-} from "@/pages/modules/ReverseModules";
+// FinanceModules chunk
+const finLoader = () => import(/* webpackChunkName: "finance" */ "@/pages/modules/FinanceModules");
+const PaymentsFinancePage = lazyNamed(finLoader, "PaymentsFinancePage");
+const OutstandingPage     = lazyNamed(finLoader, "OutstandingPage");
+const DoubleLedgerPage    = lazyNamed(finLoader, "DoubleLedgerPage");
+const CashbackEnginePage  = lazyNamed(finLoader, "CashbackEnginePage");
+const CouponsEnginePage   = lazyNamed(finLoader, "CouponsEnginePage");
+const CustomerOrdersPage  = lazyNamed(finLoader, "CustomerOrdersPage");
+const WalletsPage         = lazyNamed(finLoader, "WalletsPage");
+const ReconciliationPage  = lazyNamed(finLoader, "ReconciliationPage");
+const AuditLogPage        = lazyNamed(finLoader, "AuditLogPage");
 
-import {
-  ExecutiveCommandCenter, OrderTracePage, Party360Page,
-  SalesAnalyticsPage, InventoryAnalyticsPage, FinanceAnalyticsPage,
-  BusinessAlertsPage, ScorecardsPage, ExecutiveAnalyticsHub,
-} from "@/pages/modules/AnalyticsModules";
+// ReverseModules chunk
+const revLoader = () => import(/* webpackChunkName: "reverse" */ "@/pages/modules/ReverseModules");
+const ReturnsPage         = lazyNamed(revLoader, "ReturnsPage");
+const DamagePage          = lazyNamed(revLoader, "DamagePage");
+const ClaimsPage          = lazyNamed(revLoader, "ClaimsPage");
+const CreditNotesPage     = lazyNamed(revLoader, "CreditNotesPage");
+const DebitNotesPage      = lazyNamed(revLoader, "DebitNotesPage");
+const ReplacementsPage    = lazyNamed(revLoader, "ReplacementsPage");
+const ExpiryPage          = lazyNamed(revLoader, "ExpiryPage");
+const ApprovalEnginePage  = lazyNamed(revLoader, "ApprovalEnginePage");
+const ExceptionsPage      = lazyNamed(revLoader, "ExceptionsPage");
+const ReportsHubPage      = lazyNamed(revLoader, "ReportsHubPage");
+
+// AnalyticsModules chunk (Phase 4 BI)
+const anaLoader = () => import(/* webpackChunkName: "analytics" */ "@/pages/modules/AnalyticsModules");
+const ExecutiveCommandCenter = lazyNamed(anaLoader, "ExecutiveCommandCenter");
+const OrderTracePage         = lazyNamed(anaLoader, "OrderTracePage");
+const Party360Page           = lazyNamed(anaLoader, "Party360Page");
+const SalesAnalyticsPage     = lazyNamed(anaLoader, "SalesAnalyticsPage");
+const InventoryAnalyticsPage = lazyNamed(anaLoader, "InventoryAnalyticsPage");
+const FinanceAnalyticsPage   = lazyNamed(anaLoader, "FinanceAnalyticsPage");
+const BusinessAlertsPage     = lazyNamed(anaLoader, "BusinessAlertsPage");
+const ScorecardsPage         = lazyNamed(anaLoader, "ScorecardsPage");
+const ExecutiveAnalyticsHub  = lazyNamed(anaLoader, "ExecutiveAnalyticsHub");
+
+function RouteFallback() {
+  return (
+    <div className="min-h-[50vh] flex items-center justify-center" data-testid="route-loading">
+      <div className="flex items-center gap-3 text-ink-muted text-sm">
+        <div className="h-4 w-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+        <span>Loading module…</span>
+      </div>
+    </div>
+  );
+}
 
 function Protected({ children }) {
   const { user } = useAuth();
@@ -70,71 +128,75 @@ function AppRoutes() {
         }
       />
       {[
-        ["products", <ProductsPage />],
-        ["skus", <SkusPage />],
-        ["batches", <BatchesPage />],
-        ["inventory", <CompanyInventoryPage />],
-        ["distributor-inventory", <DistributorInventoryPage />],
-        ["retailer-inventory", <RetailerInventoryPage />],
-        ["stock-ledger", <StockLedgerPage />],
-        ["warehouses", <WarehousesPage />],
-        ["distributors", <DistributorsPage />],
-        ["retailers", <RetailersPage />],
-        ["customers", <CustomersPage />],
-        ["primary-orders", <PrimaryOrdersPage />],
-        ["secondary-orders", <SecondaryOrdersPage />],
-        ["customer-orders", <CustomerOrdersPage />],
-        ["invoices", <InvoicesPage />],
-        ["dispatches", <DispatchesPage />],
-        ["goods-in-transit", <GitPage />],
-        ["grns", <GrnPage />],
-        ["payments", <PaymentsFinancePage />],
-        ["outstanding", <OutstandingPage />],
-        ["ledger", <DoubleLedgerPage />],
-        ["reconciliation", <ReconciliationPage />],
-        ["expenses", <ExpensesPage />],
-        ["cashback", <CashbackEnginePage />],
-        ["coupons", <CouponsEnginePage />],
-        ["wallets", <WalletsPage />],
-        ["approvals", <ApprovalsPage />],
-        ["audit-log", <AuditLogPage />],
-        ["notifications", <NotificationsPage />],
-        ["users", <UsersPage />],
-        ["roles", <RolesPage />],
-        ["master-data", <MasterDataPage />],
-        ["reports", <ReportsPage />],
-        ["analytics", <AnalyticsPage />],
-        ["ai-assistant", <AiAssistantPage />],
-        ["settings", <SettingsPage />],
+        ["products", ProductsPage],
+        ["skus", SkusPage],
+        ["batches", BatchesPage],
+        ["inventory", CompanyInventoryPage],
+        ["distributor-inventory", DistributorInventoryPage],
+        ["retailer-inventory", RetailerInventoryPage],
+        ["stock-ledger", StockLedgerPage],
+        ["warehouses", WarehousesPage],
+        ["distributors", DistributorsPage],
+        ["retailers", RetailersPage],
+        ["customers", CustomersPage],
+        ["primary-orders", PrimaryOrdersPage],
+        ["secondary-orders", SecondaryOrdersPage],
+        ["customer-orders", CustomerOrdersPage],
+        ["invoices", InvoicesPage],
+        ["dispatches", DispatchesPage],
+        ["goods-in-transit", GitPage],
+        ["grns", GrnPage],
+        ["payments", PaymentsFinancePage],
+        ["outstanding", OutstandingPage],
+        ["ledger", DoubleLedgerPage],
+        ["reconciliation", ReconciliationPage],
+        ["expenses", ExpensesPage],
+        ["cashback", CashbackEnginePage],
+        ["coupons", CouponsEnginePage],
+        ["wallets", WalletsPage],
+        ["approvals", ApprovalsPage],
+        ["audit-log", AuditLogPage],
+        ["notifications", NotificationsPage],
+        ["users", UsersPage],
+        ["roles", RolesPage],
+        ["master-data", MasterDataPage],
+        ["reports", ReportsPage],
+        ["analytics", AnalyticsPage],
+        ["ai-assistant", AiAssistantPage],
+        ["settings", SettingsPage],
         // Phase 3 — Reverse Logistics
-        ["returns", <ReturnsPage />],
-        ["damage", <DamagePage />],
-        ["claims", <ClaimsPage />],
-        ["credit-notes", <CreditNotesPage />],
-        ["debit-notes", <DebitNotesPage />],
-        ["replacements", <ReplacementsPage />],
-        ["expiry", <ExpiryPage />],
-        ["approval-engine", <ApprovalEnginePage />],
-        ["exceptions", <ExceptionsPage />],
-        ["reports-hub", <ReportsHubPage />],
+        ["returns", ReturnsPage],
+        ["damage", DamagePage],
+        ["claims", ClaimsPage],
+        ["credit-notes", CreditNotesPage],
+        ["debit-notes", DebitNotesPage],
+        ["replacements", ReplacementsPage],
+        ["expiry", ExpiryPage],
+        ["approval-engine", ApprovalEnginePage],
+        ["exceptions", ExceptionsPage],
+        ["reports-hub", ReportsHubPage],
         // Phase 4 — Business Intelligence
-        ["executive-center", <ExecutiveCommandCenter />],
-        ["order-trace", <OrderTracePage />],
-        ["party-360", <Party360Page />],
-        ["party360/:type/:id", <Party360Page />],
-        ["sales-analytics", <SalesAnalyticsPage />],
-        ["inventory-analytics", <InventoryAnalyticsPage />],
-        ["finance-analytics", <FinanceAnalyticsPage />],
-        ["executive-analytics", <ExecutiveAnalyticsHub />],
-        ["business-alerts", <BusinessAlertsPage />],
-        ["scorecards", <ScorecardsPage />],
-      ].map(([path, el]) => (
+        ["executive-center", ExecutiveCommandCenter],
+        ["order-trace", OrderTracePage],
+        ["party-360", Party360Page],
+        ["party360/:type/:id", Party360Page],
+        ["sales-analytics", SalesAnalyticsPage],
+        ["inventory-analytics", InventoryAnalyticsPage],
+        ["finance-analytics", FinanceAnalyticsPage],
+        ["executive-analytics", ExecutiveAnalyticsHub],
+        ["business-alerts", BusinessAlertsPage],
+        ["scorecards", ScorecardsPage],
+      ].map(([path, Component]) => (
         <Route
           key={path}
           path={`/app/${path}`}
           element={
             <Protected>
-              <AppShell>{el}</AppShell>
+              <AppShell>
+                <Suspense fallback={<RouteFallback />}>
+                  <Component />
+                </Suspense>
+              </AppShell>
             </Protected>
           }
         />

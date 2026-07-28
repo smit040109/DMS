@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from cache_utils import ttl_cache, analytics_cache
+
 
 # ---------- Time-range helpers ----------
 
@@ -102,6 +104,7 @@ def build_analytics_router(db, get_current_user):
     # DIMENSIONS (filter dropdowns)
     # ==========================================================
     @router.get("/dimensions")
+    @ttl_cache("analytics.dimensions", ttl=60.0)
     async def dimensions(user: dict = Depends(get_current_user)):
         branches = await db.branches.find({}, {"_id": 0, "id": 1, "name": 1, "region": 1}).to_list(200)
         distributors = await db.distributors.find({}, {"_id": 0, "id": 1, "name": 1, "branch_id": 1}).to_list(500)
@@ -1046,6 +1049,7 @@ def build_analytics_router(db, get_current_user):
     # BUSINESS SCORECARDS
     # ==========================================================
     @router.get("/scorecards/{entity_type}")
+    @ttl_cache("analytics.scorecards", ttl=45.0)
     async def scorecards(entity_type: str, user: dict = Depends(get_current_user)):
         if entity_type not in ("distributor", "retailer", "sales_executive", "warehouse", "branch", "company"):
             raise HTTPException(400, "Invalid entity_type")

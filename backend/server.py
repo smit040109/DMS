@@ -22,7 +22,13 @@ from workflow import build_workflow_router
 from finance import build_finance_router
 from reverse import build_reverse_router
 from analytics import build_analytics_router
+from exports import build_exports_router
 from seed_workflow import run_seed_workflow
+from security import (
+    validate_env, parse_cors_origins, limiter, SecurityHeadersMiddleware, role_guard,
+)
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("gooil.dms")
@@ -80,12 +86,30 @@ async def get_current_user(request: Request) -> dict:
 app = FastAPI(title="GO OIL DMS API")
 api = APIRouter(prefix="/api")
 
+# Rate-limiter binding
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Security headers on every response
+app.add_middleware(SecurityHeadersMiddleware, enable_hsts=os.environ.get("ENABLE_HSTS", "").lower() == "true")
+
+# CORS — driven from env for production. Falls back to '*' for dev.
+_cors_origins = parse_cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origins=["*"],
+    allow_credentials=True if _cors_origins != ["*"] else False,
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Role-guard factory shared with all routers
+require_admin_role = role_guard(get_current_user)("super_admin", "company_admin")
+require_finance_role = role_guard(get_current_user)(
+    "super_admin", "company_admin", "distributor_accountant",
+)
+require_ops_role = role_guard(get_current_user)(
+    "super_admin", "company_admin", "regional_manager",
 )
 
 
@@ -100,6 +124,18 @@ class RegisterIn(BaseModel):
     name: str
     role: str = "customer"
 
+    def validate_password(self):
+        pw = self.password
+        errors = []
+        if len(pw) < 8:
+            errors.append("at least 8 characters")
+        if not any(c.isupper() for c in pw):
+            errors.append("one uppercase letter")
+        if not any(c.isdigit() for c in pw):
+            errors.append("one digit")
+        if errors:
+            raise HTTPException(status_code=400, detail=f"Password must contain: {', '.join(errors)}")
+
 
 class AiIn(BaseModel):
     prompt: str
@@ -108,10 +144,12 @@ class AiIn(BaseModel):
 
 # ---------- Auth ----------
 @api.post("/auth/login")
-async def login(response: Response, body: LoginIn):
+@limiter.limit("10/minute")
+async def login(request: Request, response: Response, body: LoginIn):
     email = body.email.lower().strip()
     user = await db.users.find_one({"email": email})
     if not user or not verify_password(body.password, user.get("password_hash", "")):
+        logger.warning(f"Failed login for {email} from {request.client.host if request.client else '?'}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
     token = create_access_token(user["id"], user["email"], user["role"])
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
@@ -120,7 +158,9 @@ async def login(response: Response, body: LoginIn):
 
 
 @api.post("/auth/register")
-async def register(response: Response, body: RegisterIn):
+@limiter.limit("5/minute")
+async def register(request: Request, response: Response, body: RegisterIn):
+    body.validate_password()
     email = body.email.lower().strip()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -253,7 +293,7 @@ async def master_data(user: dict = Depends(get_current_user)):
 
 
 @api.get("/admin/users")
-async def list_users(user: dict = Depends(get_current_user)):
+async def list_users(user: dict = Depends(require_admin_role)):
     users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(500)
     return {"data": users, "count": len(users)}
 
@@ -363,7 +403,7 @@ async def get_resource(resource: str, item_id: str, user: dict = Depends(get_cur
 
 @api.post("/collections/{resource}")
 async def create_resource(resource: str, payload: Dict[str, Any] = Body(...),
-                            user: dict = Depends(get_current_user)):
+                            user: dict = Depends(require_admin_role)):
     if resource not in COLLECTIONS:
         raise HTTPException(status_code=404, detail="Resource not found")
     payload["id"] = payload.get("id") or f"{resource[:3]}-{uuid.uuid4().hex[:10]}"
@@ -376,7 +416,7 @@ async def create_resource(resource: str, payload: Dict[str, Any] = Body(...),
 
 @api.put("/collections/{resource}/{item_id}")
 async def update_resource(resource: str, item_id: str, payload: Dict[str, Any] = Body(...),
-                            user: dict = Depends(get_current_user)):
+                            user: dict = Depends(require_admin_role)):
     if resource not in COLLECTIONS:
         raise HTTPException(status_code=404, detail="Resource not found")
     payload.pop("_id", None)
@@ -390,7 +430,7 @@ async def update_resource(resource: str, item_id: str, payload: Dict[str, Any] =
 
 
 @api.delete("/collections/{resource}/{item_id}")
-async def delete_resource(resource: str, item_id: str, user: dict = Depends(get_current_user)):
+async def delete_resource(resource: str, item_id: str, user: dict = Depends(require_admin_role)):
     if resource not in COLLECTIONS:
         raise HTTPException(status_code=404, detail="Resource not found")
     r = await db[COLLECTIONS[resource]].delete_one({"id": item_id})
@@ -399,9 +439,19 @@ async def delete_resource(resource: str, item_id: str, user: dict = Depends(get_
     return {"ok": True}
 
 
+@api.get("/health")
+async def health():
+    """Public health check for k8s / load balancer probes."""
+    try:
+        await db.command("ping")
+        return {"status": "ok", "db": "connected", "service": "gooil-dms"}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"db_unavailable: {e}")
+
+
 @api.get("/")
 async def root():
-    return {"service": "GO OIL DMS", "status": "operational", "version": "2.0.0-workflow"}
+    return {"service": "GO OIL DMS", "status": "operational", "version": "5.0.0-enterprise"}
 
 
 # Workflow router (Phase 1 business engine)
@@ -415,6 +465,9 @@ api.include_router(reverse_router)
 # Analytics & BI router (Phase 4: executive KPIs, trace, party360, alerts, scorecards, AI-ready)
 analytics_router = build_analytics_router(db, get_current_user)
 api.include_router(analytics_router)
+# Exports router (Part D: CSV / Excel / PDF / Print View for every collection)
+exports_router = build_exports_router(db, get_current_user)
+api.include_router(exports_router)
 
 
 # ---------- Startup ----------
@@ -454,33 +507,81 @@ async def seed_all():
             await db[coll_name].insert_many([{**d} for d in SEED[seed_key]])
             logger.info(f"Seeded {coll_name}: {len(SEED[seed_key])} docs")
     await db.users.create_index("email", unique=True)
+    # Phase 1 — inventory & workflow
     await db.company_inventory.create_index([("sku_id", 1), ("batch_id", 1)])
     await db.distributor_inventory.create_index([("partner_id", 1), ("sku_id", 1), ("batch_id", 1)])
     await db.retailer_inventory.create_index([("partner_id", 1), ("sku_id", 1), ("batch_id", 1)])
     await db.stock_ledger.create_index([("sku_id", 1), ("timestamp", -1)])
+    await db.stock_ledger.create_index([("reference_id", 1)])
+    await db.batches.create_index([("sku_id", 1)])
+    await db.batches.create_index([("expires_on", 1)])
+    await db.skus.create_index([("product_id", 1)])
+    await db.skus.create_index([("code", 1)])
+    await db.primary_orders.create_index([("status", 1), ("created_at", -1)])
+    await db.primary_orders.create_index([("distributor_id", 1)])
+    await db.primary_orders.create_index([("order_no", 1)])
+    await db.secondary_orders.create_index([("status", 1), ("created_at", -1)])
+    await db.secondary_orders.create_index([("distributor_id", 1)])
+    await db.secondary_orders.create_index([("retailer_id", 1)])
+    await db.customer_orders.create_index([("retailer_id", 1)])
+    await db.customer_orders.create_index([("customer_id", 1)])
+    await db.customer_orders.create_index([("created_at", -1)])
+    await db.invoices.create_index([("invoice_no", 1)])
+    await db.invoices.create_index([("party_id", 1), ("party_type", 1)])
+    await db.invoices.create_index([("status", 1), ("created_at", -1)])
+    await db.invoices.create_index([("primary_order_id", 1)])
+    await db.dispatches.create_index([("order_id", 1)])
+    await db.dispatches.create_index([("status", 1), ("created_at", -1)])
+    await db.grns.create_index([("dispatch_id", 1)])
+    await db.grns.create_index([("created_at", -1)])
+    # Phase 2 — finance
     await db.double_ledger.create_index([("party_id", 1), ("timestamp", 1)])
     await db.double_ledger.create_index([("reference_id", 1)])
+    await db.double_ledger.create_index([("account", 1), ("timestamp", 1)])
     await db.outstanding.create_index([("party_id", 1), ("party_type", 1)], unique=True)
+    await db.payments.create_index([("party_id", 1), ("party_type", 1)])
+    await db.payments.create_index([("reference", 1), ("party_id", 1)])
+    await db.payments.create_index([("created_at", -1)])
     await db.wallets.create_index([("party_id", 1), ("party_type", 1)], unique=True)
+    await db.cashback_transactions.create_index([("party_id", 1), ("created_at", -1)])
+    await db.cashback_rules.create_index([("active", 1)])
+    await db.coupons.create_index([("code", 1)], unique=False)
+    await db.coupon_redemptions.create_index([("code", 1), ("party_id", 1)])
     await db.audit_log.create_index([("timestamp", -1)])
     await db.audit_log.create_index([("entity_id", 1)])
-    await db.coupon_redemptions.create_index([("code", 1), ("party_id", 1)])
-    # Phase 3 indexes
+    await db.audit_log.create_index([("action", 1), ("timestamp", -1)])
+    # Phase 3 — reverse logistics
     await db.returns.create_index([("created_at", -1)])
     await db.returns.create_index([("party_id", 1)])
+    await db.returns.create_index([("status", 1)])
     await db.claims.create_index([("created_at", -1)])
+    await db.claims.create_index([("status", 1)])
+    await db.claims.create_index([("invoice_id", 1), ("type", 1)])
     await db.credit_notes.create_index([("created_at", -1)])
+    await db.credit_notes.create_index([("party_id", 1)])
     await db.debit_notes.create_index([("created_at", -1)])
+    await db.debit_notes.create_index([("party_id", 1)])
     await db.replacements.create_index([("created_at", -1)])
     await db.exceptions.create_index([("detected_at", -1)])
     await db.exceptions.create_index([("status", 1), ("kind", 1)])
     await db.approval_requests.create_index([("status", 1), ("requested_at", -1)])
+    await db.approval_requests.create_index([("entity_type", 1), ("entity_id", 1)])
     await db.approval_matrix.create_index([("entity_type", 1), ("amount_min", 1)])
+    # Notifications
+    await db.notifications.create_index([("recipient_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("created_at", -1)])
+    await db.notifications.create_index([("read", 1), ("recipient_id", 1)])
 
 
 @app.on_event("startup")
 async def on_startup():
     logger.info("Starting GO OIL DMS backend...")
+    try:
+        env_summary = validate_env()
+        logger.info(f"[env] validated. CORS mode: {'restricted' if env_summary['cors'] != '*' else 'open (dev)'}")
+    except Exception as e:
+        logger.error(f"[env] validation failed: {e}")
+        raise
     await seed_all()
     await seed_users()
     await run_seed_workflow(db)
