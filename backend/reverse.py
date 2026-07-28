@@ -1143,7 +1143,7 @@ def build_reverse_router(db, get_current_user, finance_router):
             "detected_at": now_iso(),
         }
         await db.exceptions.insert_one(rec)
-        return rec
+        return strip_id(rec)
 
     @router.post("/exceptions/scan")
     async def scan_exceptions(user: dict = Depends(get_current_user)):
