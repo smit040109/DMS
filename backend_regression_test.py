@@ -9,7 +9,7 @@ import time
 from typing import Dict, Any, List, Optional
 
 # Configuration from frontend/.env
-BASE_URL = "https://38026b09-a311-4ef3-8159-6cb799593d83.preview.emergentagent.com/api"
+BASE_URL = "https://saas-productize.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 TEST_USERS = [
