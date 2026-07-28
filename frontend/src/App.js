@@ -12,8 +12,7 @@ import {
   DistributorsPage, RetailersPage, CustomersPage,
   PrimaryOrdersPage, SecondaryOrdersPage, InvoicesPage,
   DispatchesPage, GitPage, GrnPage,
-  PaymentsPage, LedgerPage, ExpensesPage,
-  CashbackPage, CouponsPage,
+  ExpensesPage,
   ApprovalsPage, NotificationsPage,
 } from "@/pages/modules/ListModules";
 
@@ -26,6 +25,12 @@ import {
 import {
   CompanyInventoryPage, DistributorInventoryPage, RetailerInventoryPage, StockLedgerPage,
 } from "@/pages/modules/InventoryModules";
+
+import {
+  PaymentsFinancePage, OutstandingPage, DoubleLedgerPage,
+  CashbackEnginePage, CouponsEnginePage,
+  CustomerOrdersPage, WalletsPage, ReconciliationPage, AuditLogPage,
+} from "@/pages/modules/FinanceModules";
 
 function Protected({ children }) {
   const { user } = useAuth();
@@ -66,16 +71,21 @@ function AppRoutes() {
         ["customers", <CustomersPage />],
         ["primary-orders", <PrimaryOrdersPage />],
         ["secondary-orders", <SecondaryOrdersPage />],
+        ["customer-orders", <CustomerOrdersPage />],
         ["invoices", <InvoicesPage />],
         ["dispatches", <DispatchesPage />],
         ["goods-in-transit", <GitPage />],
         ["grns", <GrnPage />],
-        ["payments", <PaymentsPage />],
-        ["ledger", <LedgerPage />],
+        ["payments", <PaymentsFinancePage />],
+        ["outstanding", <OutstandingPage />],
+        ["ledger", <DoubleLedgerPage />],
+        ["reconciliation", <ReconciliationPage />],
         ["expenses", <ExpensesPage />],
-        ["cashback", <CashbackPage />],
-        ["coupons", <CouponsPage />],
+        ["cashback", <CashbackEnginePage />],
+        ["coupons", <CouponsEnginePage />],
+        ["wallets", <WalletsPage />],
         ["approvals", <ApprovalsPage />],
+        ["audit-log", <AuditLogPage />],
         ["notifications", <NotificationsPage />],
         ["users", <UsersPage />],
         ["roles", <RolesPage />],

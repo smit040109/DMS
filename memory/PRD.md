@@ -1,84 +1,67 @@
 # GO OIL — Distribution Management System (DMS)
 
 ## Original problem statement
-Build a COMPLETE enterprise-grade DMS with 28 modules and 8 role-based dashboards. Phase 1 must implement the FULL end-to-end business engine from Product creation to Retailer Inventory, where every transaction cascades through: stock movements, inventory buckets, ledger entries and workflow status transitions.
+Enterprise-grade DMS with 28 modules, 8 role dashboards. Phase 1: connected operational engine (Product → Retailer Inventory). Phase 2: connected financial engine (Customer Order → Coupon → Cashback → Invoice → Payment → Ledger → Outstanding → Reconciliation).
 
 ## Architecture
-- **Backend**: FastAPI + MongoDB with a **workflow engine** (`/app/backend/workflow.py`) enforcing state transitions, FIFO batch consumption, stock ledger writes and cascading updates. JWT auth. AI Copilot via `emergentintegrations` + Claude Sonnet 4.5.
-- **Frontend**: React + shadcn/ui. Reusable `AppShell`, `DataTable`, `ModulePage`, `WorkflowActions` (row-level action buttons with dialogs).
+- **Backend** (`FastAPI + MongoDB`): 3 routers — `collections` (generic CRUD), `workflow` (Phase 1 operations), `finance` (Phase 2 financials). Ledger + inventory are recomputed from immutable ledger writes.
+- **Frontend** (`React + shadcn/ui`): Reusable `AppShell`, `DataTable`, `PageHeader`, `WorkflowActions`. All finance UI added under existing design system — no redesign.
 
-## Data model (Phase 1)
-Collections:
-- **Reference**: `branches`, `roles`, `users`, `products`, `skus`, `distributors`, `retailers`, `customers`, `warehouses`, `master_data`
-- **Transactional (workflow-driven)**: `batches`, `company_inventory`, `distributor_inventory`, `retailer_inventory`, `primary_orders`, `secondary_orders`, `invoices`, `dispatches`, `grns`, `stock_ledger`
-- **Inventory bucket schema** (per SKU + Batch + Partner): `{available, reserved, in_transit, damaged, returned, expired}`
+## Phase 1 (delivered v2.0)
+`Batch → Stock In → Company Inventory → Primary Order → Approve (FIFO reserve) → Auto-Invoice → Dispatch → GIT → GRN → Distributor Inventory → Secondary Order → ... → Retailer Inventory`. Stock ledger, bucket accounting (available/reserved/in_transit/damaged/returned/expired).
 
-## Phase 1 workflow engine — proven end-to-end
-`Batch (create)` → `Stock In` → `Company Inventory (available)` → `Primary Order (validate stock + credit)` → `Approve (FIFO reserve)` → `Auto-Invoice` → `Dispatch (dialog: vehicle/driver/LR)` → `Goods In Transit (reserved → in_transit)` → `Receive GRN (in_transit → distributor available)` → `Distributor Inventory` → `Secondary Order (retailer)` → `Approve (reserve distributor stock)` → `Auto-Invoice` → `Dispatch to Retailer` → `Retailer GRN` → `Retailer Inventory (available)`.
+## Phase 2 — Financial Engine (delivered v3.0)
+### New backend module `backend/finance.py`
+- **Double-entry ledger** (`double_ledger` collection). Chart of accounts: AR (1200), CASH (1000), SALES (4000), TAX_OUT (2100), DISCOUNT (5100), CASHBACK_EXP (5200), CASHBACK_LIAB (2200), AP (2000). Every posting is journal-balanced.
+- **Outstanding management** — computed from AR journal. Includes overdue days, credit utilization, collection status. Auto-refresh on every payment/invoice.
+- **Payment engine** — multi-method (Cash/UPI/Bank Transfer/Cheque/Card/Wallet). Auto-allocates to invoices oldest-first if none selected. Fully reversible with ledger unwind. Payment allocations tracked separately.
+- **Coupon engine** — code-based with validation rules: existence, expiry, usage-limit, min-order, party applicability, one-per-party. Fraud check via `coupon_redemptions` idempotency.
+- **Cashback engine** — rule-based (`cashback_rules`): scope (sku/product/category/distributor/retailer/customer/campaign), percent/flat, max cap, daily/monthly caps, approval-required flag. Auto-crediting through **wallets** collection with earn/redeem history in `cashback_transactions`.
+- **Customer orders** (`customer_orders`) — retailer → customer sale. Validates retailer inventory FIFO, redeems coupon, computes cashback, generates customer invoice, posts AR ledger, updates outstanding, deducts retailer inventory, credits wallet.
+- **Reconciliation** — matches invoices vs payments per party, produces variance report saved to `reconciliation_reports`.
+- **Audit log** — every finance action stamped in `audit_log` (actor, action, entity, meta).
+- **Auto-post** on startup — every pre-existing Phase 1 invoice back-fills a matching AR/Sales/Tax journal entry so ledger + outstanding are populated day-1.
 
-Every step:
-1. Validates state transition + business rules (stock availability, credit limit)
-2. Moves qty between buckets (available/reserved/in_transit/damaged etc.)
-3. Appends an immutable `stock_ledger` row
-4. Cascades status on the linked entities (order → invoice → dispatch → GRN)
+### Endpoints (`/api/finance/*`)
+- Payments: `POST /payments`, `POST /payments/{id}/reverse`
+- Coupons: `POST /coupons/create`, `POST /coupons/validate`
+- Cashback: `POST /cashback-rules`, `GET /cashback-rules`, `POST /cashback/compute`, `POST /cashback/{id}/approve|reject`
+- Customer orders: `POST /customer-orders`, `POST /customer-orders/{id}/pack|deliver|cancel`
+- Outstanding: `GET /outstanding`, `GET /outstanding/{pt}/{id}`
+- Ledger: `GET /ledger`, `GET /ledger/{pt}/{id}` (with running balance per account)
+- Wallet: `GET /wallets/{pt}/{id}`
+- Reconciliation: `POST /reconciliation/run`, `GET /reconciliation/reports`
+- Audit: `GET /audit-log`
 
-Endpoints under `/api/workflow/*`:
-- `POST /workflow/batches`, `POST /workflow/batches/{id}/stock-in`
-- `POST /workflow/primary-orders`, `POST /workflow/primary-orders/{id}/approve|reject`
-- `POST /workflow/primary-invoices/generate/{order_id}`
-- `POST /workflow/invoices/{id}/dispatch`
-- `POST /workflow/dispatches/{id}/receive`
-- `POST /workflow/secondary-orders`, `POST /workflow/secondary-orders/{id}/approve|reject`
-- `POST /workflow/secondary-invoices/generate/{order_id}`
-- `GET  /workflow/inventory/company | /distributor/{id} | /retailer/{id}`
-- `GET  /workflow/stock-ledger?sku_id&scope&reference_id`
-- `GET  /workflow/order/{id}/trace` — full linked trail
+### New Frontend pages (`FinanceModules.jsx`)
+- **Payments** with "Record Payment" dialog (party-type + auto-allocation checklist + methods)
+- **Outstanding** — tabs by party type, aged with utilization bar
+- **Double-Entry Ledger** — account + party-type filters, formatted Dr/Cr columns
+- **Cashback Engine** — Rules tab + Pending approvals with one-click approve/reject
+- **Coupon Engine** — create dialog + validate dialog (test coupon before use)
+- **Customer Orders** — new order dialog with retailer/customer/SKU/coupon/payment; success preview shows invoice + cashback
+- **Wallets** — party-type & party selector; balance + lifetime metrics + txn history
+- **Reconciliation** — one-click run per party type; report with balanced/variance summary
+- **Audit Log** — full action history
 
-## Personas / Roles (all password `GoOil@2026`)
-| Role | Email |
-|------|-------|
-| Super Admin | admin@gooil.com |
-| Company Admin | company@gooil.com |
-| Regional Manager | regional@gooil.com |
-| Sales Executive | sales@gooil.com |
-| Distributor | distributor@gooil.com |
-| Distributor Accountant | accountant@gooil.com |
-| Retailer | retailer@gooil.com |
-| Customer | customer@gooil.com |
+## Personas (all password `GoOil@2026`)
+See `test_credentials.md`. Nav is role-filtered — Customer sees Invoices/Coupons/Wallet; Distributor Accountant sees Payments/Ledger/Reconciliation/Outstanding.
 
-## Implemented (Feb 2026)
-### v1.0 — App shell
-- JWT auth, 8 seeded role users, role-adaptive sidebar + dashboard
-- 28 module pages
-- AI Copilot (Claude Sonnet 4.5)
-- Enterprise design system (Manrope + IBM Plex Sans, gold #C9A227 accent, soft shadows)
+## Backlog
+### P1
+- Deep entity trace drawer (order/invoice → dispatch → GRN → payment → ledger timeline)
+- Retailer & Customer portal-specific dashboards for their own outstanding/wallet
+- Refund / return workflow (partial reverse inventory + credit note)
+- Cashback expiry sweep (nightly cron)
+- Payment gateway hookup (Stripe/Razorpay for real customer payment collection)
 
-### v2.0 — Phase 1 workflow engine ✅ NEW
-- Full workflow engine at `backend/workflow.py` (~600 lines)
-- FIFO batch consumption enforced at reservation time
-- Stock ledger — immutable log of every movement, filterable by scope (company/distributor/retailer)
-- 3 real inventory views (Company / Distributor / Retailer) with bucket distribution bar
-- `Stock Ledger` page with movement-type badges
-- `WorkflowActions` component: Stock-In on batches; Approve/Reject on orders; Dispatch dialog on invoices; Receive on dispatches
-- Seeded transactional chain — 60 batches, 24 primary orders (spread across pending/approved/invoiced/dispatched/completed/rejected), 9 secondary orders producing retailer inventory
-- Insufficient-stock and credit-limit validation on order creation
-- `/api/workflow/order/{id}/trace` — end-to-end audit trail per order
-
-## Prioritized backlog
-### P1 — depth
-- Order & Invoice detail drill-down pages with linked entities (invoice ↔ dispatch ↔ GRN)
-- Distributor onboarding wizard (multi-step KYC → credit → warehouse assignment)
-- Payments & Ledger wiring (Phase 2 — invoice payment → outstanding reduction → double-entry ledger)
-- Cashback & Coupon runtime engine (Phase 2)
-- Full audit-log page (who, what, when, why) tied to `stock_ledger` + auth events
-
-### P2 — polish
-- Server-side pagination for very large ledgers
-- Expiry auto-scan (nightly) → move expired stock buckets
+### P2
+- Multi-currency
+- Server-side pagination on ledger & audit log
 - CSV/PDF report exports
-- Real-time WebSocket for status changes
+- Real-time WebSocket
 
 ## Next actions
-- Phase 2: Payments → Ledger → Cashback → Coupon runtime engine
-- Deep entity pages with cross-entity trace visualisation
-- Server-side authorization on write endpoints (role guards on `/workflow/*/approve` etc.)
+- Phase 3: Reporting & Analytics engine — build parameterized reports (GSTR, TB, P&L, aged receivables) that read from `double_ledger` + `outstanding`
+- Add role-based write authorization on `/finance/*` mutations (currently any authenticated user)
+- Add retailer portal "Pay distributor invoice" quick-action

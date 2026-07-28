@@ -41,22 +41,26 @@ export const NAV_GROUPS = [
     items: [
       { key: "primary-orders", label: "Primary Orders", icon: "ShoppingCart", to: "/app/primary-orders", roles: ["super_admin", "company_admin", "regional_manager", "distributor"] },
       { key: "secondary-orders", label: "Secondary Orders", icon: "ShoppingBag", to: "/app/secondary-orders", roles: ["super_admin", "company_admin", "regional_manager", "sales_executive", "distributor", "retailer"] },
+      { key: "customer-orders", label: "Customer Orders", icon: "Users", to: "/app/customer-orders", roles: ["super_admin", "company_admin", "regional_manager", "sales_executive", "retailer", "customer"] },
       { key: "invoices", label: "Invoices", icon: "FileText", to: "/app/invoices", roles: ["super_admin", "company_admin", "regional_manager", "distributor", "distributor_accountant", "retailer", "customer"] },
     ],
   },
   {
     label: "Finance",
     items: [
-      { key: "payments", label: "Payments", icon: "CreditCard", to: "/app/payments", roles: ["super_admin", "company_admin", "regional_manager", "distributor", "distributor_accountant"] },
-      { key: "ledger", label: "Ledger", icon: "BookOpen", to: "/app/ledger", roles: ["super_admin", "company_admin", "regional_manager", "distributor", "distributor_accountant"] },
+      { key: "payments", label: "Payments", icon: "CreditCard", to: "/app/payments", roles: ["super_admin", "company_admin", "regional_manager", "distributor", "distributor_accountant", "retailer"] },
+      { key: "outstanding", label: "Outstanding", icon: "AlertCircle", to: "/app/outstanding", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
+      { key: "ledger", label: "Double-Entry Ledger", icon: "BookOpen", to: "/app/ledger", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
+      { key: "reconciliation", label: "Reconciliation", icon: "GitCompareArrows", to: "/app/reconciliation", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
       { key: "expenses", label: "Expenses", icon: "Receipt", to: "/app/expenses", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
     ],
   },
   {
     label: "Rewards",
     items: [
-      { key: "cashback", label: "Cashback", icon: "Gift", to: "/app/cashback", roles: ["super_admin", "company_admin", "regional_manager", "sales_executive", "retailer"] },
-      { key: "coupons", label: "Coupons", icon: "Ticket", to: "/app/coupons", roles: ["super_admin", "company_admin", "regional_manager", "sales_executive"] },
+      { key: "cashback", label: "Cashback Engine", icon: "Gift", to: "/app/cashback", roles: ["super_admin", "company_admin", "regional_manager", "sales_executive", "retailer"] },
+      { key: "coupons", label: "Coupon Engine", icon: "Ticket", to: "/app/coupons", roles: ["super_admin", "company_admin", "regional_manager", "sales_executive"] },
+      { key: "wallets", label: "Wallets", icon: "Wallet", to: "/app/wallets", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant", "retailer", "customer"] },
     ],
   },
   {
@@ -73,6 +77,7 @@ export const NAV_GROUPS = [
       { key: "roles", label: "Role Management", icon: "ShieldCheck", to: "/app/roles", roles: ["super_admin", "company_admin"] },
       { key: "master-data", label: "Master Data", icon: "Database", to: "/app/master-data", roles: ["super_admin", "company_admin"] },
       { key: "approvals", label: "Approval Engine", icon: "CheckCheck", to: "/app/approvals", roles: ["super_admin", "company_admin", "regional_manager"] },
+      { key: "audit-log", label: "Audit Log", icon: "ScrollText", to: "/app/audit-log", roles: ["super_admin", "company_admin"] },
       { key: "notifications", label: "Notifications", icon: "Bell", to: "/app/notifications", roles: "*" },
       { key: "ai-assistant", label: "AI Assistant", icon: "Sparkles", to: "/app/ai-assistant", roles: "*" },
       { key: "settings", label: "Settings", icon: "Settings", to: "/app/settings", roles: "*" },

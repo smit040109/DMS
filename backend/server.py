@@ -19,6 +19,7 @@ from pydantic import BaseModel, EmailStr
 
 from seed_data import SEED
 from workflow import build_workflow_router
+from finance import build_finance_router
 from seed_workflow import run_seed_workflow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -301,6 +302,7 @@ COLLECTIONS = {
     "distributors": "distributors",
     "retailers": "retailers",
     "customers": "customers",
+    "customer-orders": "customer_orders",
     "primary-orders": "primary_orders",
     "secondary-orders": "secondary_orders",
     "invoices": "invoices",
@@ -390,6 +392,9 @@ async def root():
 
 # Workflow router (Phase 1 business engine)
 api.include_router(build_workflow_router(db, get_current_user))
+# Finance router (Phase 2 financial engine)
+finance_router = build_finance_router(db, get_current_user)
+api.include_router(finance_router)
 
 
 # ---------- Startup ----------
@@ -416,7 +421,8 @@ async def seed_users():
 
 async def seed_all():
     # Skip transactional collections — workflow engine will produce them.
-    TRANSACTIONAL = {"primary_orders", "secondary_orders", "invoices", "dispatches", "grns", "batches", "inventory"}
+    TRANSACTIONAL = {"primary_orders", "secondary_orders", "invoices", "dispatches", "grns", "batches", "inventory",
+                     "payments", "ledger", "cashback"}
     for key, coll_name in COLLECTIONS.items():
         seed_key = coll_name
         if seed_key not in SEED:
@@ -432,6 +438,12 @@ async def seed_all():
     await db.distributor_inventory.create_index([("partner_id", 1), ("sku_id", 1), ("batch_id", 1)])
     await db.retailer_inventory.create_index([("partner_id", 1), ("sku_id", 1), ("batch_id", 1)])
     await db.stock_ledger.create_index([("sku_id", 1), ("timestamp", -1)])
+    await db.double_ledger.create_index([("party_id", 1), ("timestamp", 1)])
+    await db.double_ledger.create_index([("reference_id", 1)])
+    await db.outstanding.create_index([("party_id", 1), ("party_type", 1)], unique=True)
+    await db.wallets.create_index([("party_id", 1), ("party_type", 1)], unique=True)
+    await db.audit_log.create_index([("timestamp", -1)])
+    await db.coupon_redemptions.create_index([("code", 1), ("party_id", 1)])
 
 
 @app.on_event("startup")
@@ -440,6 +452,11 @@ async def on_startup():
     await seed_all()
     await seed_users()
     await run_seed_workflow(db)
+    # Phase 2 finance auto-post: ensure ledger + outstanding populated for existing invoices
+    try:
+        await finance_router.autopost_existing_invoices()
+    except Exception as e:
+        logger.warning(f"Finance autopost skipped: {e}")
     logger.info("Startup complete.")
 
 
