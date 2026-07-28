@@ -32,6 +32,12 @@ import {
   CustomerOrdersPage, WalletsPage, ReconciliationPage, AuditLogPage,
 } from "@/pages/modules/FinanceModules";
 
+import {
+  ReturnsPage, DamagePage, ClaimsPage,
+  CreditNotesPage, DebitNotesPage, ReplacementsPage,
+  ExpiryPage, ApprovalEnginePage, ExceptionsPage, ReportsHubPage,
+} from "@/pages/modules/ReverseModules";
+
 function Protected({ children }) {
   const { user } = useAuth();
   if (user === null) {
@@ -94,6 +100,17 @@ function AppRoutes() {
         ["analytics", <AnalyticsPage />],
         ["ai-assistant", <AiAssistantPage />],
         ["settings", <SettingsPage />],
+        // Phase 3 — Reverse Logistics
+        ["returns", <ReturnsPage />],
+        ["damage", <DamagePage />],
+        ["claims", <ClaimsPage />],
+        ["credit-notes", <CreditNotesPage />],
+        ["debit-notes", <DebitNotesPage />],
+        ["replacements", <ReplacementsPage />],
+        ["expiry", <ExpiryPage />],
+        ["approval-engine", <ApprovalEnginePage />],
+        ["exceptions", <ExceptionsPage />],
+        ["reports-hub", <ReportsHubPage />],
       ].map(([path, el]) => (
         <Route
           key={path}

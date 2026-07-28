@@ -20,6 +20,7 @@ from pydantic import BaseModel, EmailStr
 from seed_data import SEED
 from workflow import build_workflow_router
 from finance import build_finance_router
+from reverse import build_reverse_router
 from seed_workflow import run_seed_workflow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -315,6 +316,18 @@ COLLECTIONS = {
     "coupons": "coupons",
     "approvals": "approvals",
     "notifications": "notifications",
+    # Phase 3 collections (readable via generic list route)
+    "returns": "returns",
+    "damage": "damage",
+    "claims": "claims",
+    "credit-notes": "credit_notes",
+    "debit-notes": "debit_notes",
+    "replacements": "replacements",
+    "expiry-records": "expiry_records",
+    "approval-matrix": "approval_matrix",
+    "approval-requests": "approval_requests",
+    "exceptions": "exceptions",
+    "audit-log": "audit_log",
 }
 
 
@@ -395,6 +408,9 @@ api.include_router(build_workflow_router(db, get_current_user))
 # Finance router (Phase 2 financial engine)
 finance_router = build_finance_router(db, get_current_user)
 api.include_router(finance_router)
+# Reverse Logistics router (Phase 3: returns, claims, credit/debit notes, replacements, expiry, approvals, exceptions, audit)
+reverse_router = build_reverse_router(db, get_current_user, finance_router)
+api.include_router(reverse_router)
 
 
 # ---------- Startup ----------
@@ -443,7 +459,19 @@ async def seed_all():
     await db.outstanding.create_index([("party_id", 1), ("party_type", 1)], unique=True)
     await db.wallets.create_index([("party_id", 1), ("party_type", 1)], unique=True)
     await db.audit_log.create_index([("timestamp", -1)])
+    await db.audit_log.create_index([("entity_id", 1)])
     await db.coupon_redemptions.create_index([("code", 1), ("party_id", 1)])
+    # Phase 3 indexes
+    await db.returns.create_index([("created_at", -1)])
+    await db.returns.create_index([("party_id", 1)])
+    await db.claims.create_index([("created_at", -1)])
+    await db.credit_notes.create_index([("created_at", -1)])
+    await db.debit_notes.create_index([("created_at", -1)])
+    await db.replacements.create_index([("created_at", -1)])
+    await db.exceptions.create_index([("detected_at", -1)])
+    await db.exceptions.create_index([("status", 1), ("kind", 1)])
+    await db.approval_requests.create_index([("status", 1), ("requested_at", -1)])
+    await db.approval_matrix.create_index([("entity_type", 1), ("amount_min", 1)])
 
 
 @app.on_event("startup")

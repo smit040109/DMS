@@ -810,5 +810,7 @@ def build_finance_router(db, get_current_user):
 
     router.autopost_existing_invoices = autopost_existing_invoices  # expose to caller
     router.recompute_outstanding = recompute_outstanding
+    router.post_journal = post_journal
+    router.audit = audit
 
     return router

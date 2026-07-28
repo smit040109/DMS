@@ -64,6 +64,26 @@ export const NAV_GROUPS = [
     ],
   },
   {
+    label: "Reverse Logistics",
+    items: [
+      { key: "returns", label: "Returns", icon: "Undo2", to: "/app/returns", roles: ["super_admin", "company_admin", "regional_manager", "distributor", "retailer", "customer", "sales_executive"] },
+      { key: "damage", label: "Damage", icon: "ShieldAlert", to: "/app/damage", roles: ["super_admin", "company_admin", "regional_manager", "distributor"] },
+      { key: "claims", label: "Claims", icon: "HandCoins", to: "/app/claims", roles: ["super_admin", "company_admin", "regional_manager", "distributor", "retailer"] },
+      { key: "credit-notes", label: "Credit Notes", icon: "FileMinus", to: "/app/credit-notes", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
+      { key: "debit-notes", label: "Debit Notes", icon: "FilePlus", to: "/app/debit-notes", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
+      { key: "replacements", label: "Replacements", icon: "Repeat", to: "/app/replacements", roles: ["super_admin", "company_admin", "regional_manager", "distributor"] },
+      { key: "expiry", label: "Expiry", icon: "Timer", to: "/app/expiry", roles: ["super_admin", "company_admin", "regional_manager"] },
+    ],
+  },
+  {
+    label: "Compliance",
+    items: [
+      { key: "approval-engine", label: "Approval Engine", icon: "GitBranchPlus", to: "/app/approval-engine", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
+      { key: "exceptions", label: "Exception Engine", icon: "AlertOctagon", to: "/app/exceptions", roles: ["super_admin", "company_admin", "regional_manager"] },
+      { key: "reports-hub", label: "Reports Hub", icon: "FileBarChart2", to: "/app/reports-hub", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
+    ],
+  },
+  {
     label: "Insights",
     items: [
       { key: "reports", label: "Reports", icon: "FileBarChart2", to: "/app/reports", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },
