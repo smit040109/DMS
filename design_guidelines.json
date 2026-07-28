@@ -1,0 +1,127 @@
+{
+  "theme": "light",
+  "typography": {
+    "heading_font": "Manrope",
+    "body_font": "IBM Plex Sans",
+    "import_url": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=Manrope:wght@300;400;500;600;700;800&display=swap",
+    "scales": {
+      "h1": "text-4xl sm:text-5xl font-extrabold tracking-tight text-[#1F2937]",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight text-[#1F2937]",
+      "h3": "text-xl sm:text-2xl font-bold tracking-tight text-[#1F2937]",
+      "h4": "text-lg sm:text-xl font-semibold tracking-tight text-[#1F2937]",
+      "body": "text-base font-normal leading-relaxed text-[#6B7280]",
+      "small": "text-sm font-normal text-[#6B7280]",
+      "overline": "text-xs font-semibold uppercase tracking-[0.2em] text-[#6B7280]"
+    }
+  },
+  "colors": {
+    "primary": "#C9A227",
+    "primary_dark": "#A67C00",
+    "background": "#FAFAF8",
+    "surface": "#FFFFFF",
+    "text_primary": "#1F2937",
+    "text_secondary": "#6B7280",
+    "border": "#E5E7EB",
+    "success": "#16A34A",
+    "warning": "#F59E0B",
+    "danger": "#DC2626",
+    "info": "#2563EB"
+  },
+  "visual_enhancers": {
+    "shadows": {
+      "sm": "0 1px 2px 0 rgba(0, 0, 0, 0.05)",
+      "DEFAULT": "0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)",
+      "md": "0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025)",
+      "lg": "0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 10px 10px -5px rgba(0, 0, 0, 0.02)",
+      "xl": "0 25px 50px -12px rgba(0, 0, 0, 0.1)"
+    },
+    "radii": {
+      "sm": "0.125rem",
+      "DEFAULT": "0.25rem",
+      "md": "0.375rem",
+      "lg": "0.5rem",
+      "xl": "0.75rem",
+      "2xl": "1rem"
+    },
+    "spacing": {
+      "component_padding": "p-6",
+      "section_gap": "gap-8",
+      "page_padding": "p-8"
+    }
+  },
+  "components": {
+    "button": {
+      "primary": "bg-[#C9A227] hover:bg-[#A67C00] text-white font-medium rounded-md px-4 py-2 transition-colors duration-200 shadow-sm",
+      "secondary": "bg-white hover:bg-gray-50 text-[#1F2937] border border-[#E5E7EB] font-medium rounded-md px-4 py-2 transition-colors duration-200 shadow-sm",
+      "ghost": "bg-transparent hover:bg-gray-100 text-[#6B7280] hover:text-[#1F2937] font-medium rounded-md px-4 py-2 transition-colors duration-200"
+    },
+    "card": {
+      "container": "bg-[#FFFFFF] border border-[#E5E7EB] rounded-lg shadow-sm overflow-hidden",
+      "header": "px-6 py-5 border-b border-[#E5E7EB] bg-[#FFFFFF]",
+      "body": "p-6"
+    },
+    "table": {
+      "container": "w-full text-left border-collapse",
+      "header": "bg-[#FAFAF8] text-[#6B7280] text-xs uppercase tracking-wider font-semibold border-y border-[#E5E7EB] px-6 py-3",
+      "row": "border-b border-[#E5E7EB] hover:bg-gray-50 transition-colors duration-150",
+      "cell": "px-6 py-4 text-sm text-[#1F2937]"
+    },
+    "badge": {
+      "success": "bg-green-100 text-[#16A34A] px-2.5 py-0.5 rounded-full text-xs font-semibold",
+      "warning": "bg-yellow-100 text-[#F59E0B] px-2.5 py-0.5 rounded-full text-xs font-semibold",
+      "danger": "bg-red-100 text-[#DC2626] px-2.5 py-0.5 rounded-full text-xs font-semibold",
+      "info": "bg-blue-100 text-[#2563EB] px-2.5 py-0.5 rounded-full text-xs font-semibold",
+      "neutral": "bg-gray-100 text-[#6B7280] px-2.5 py-0.5 rounded-full text-xs font-semibold"
+    },
+    "sidebar": {
+      "container": "bg-[#FFFFFF] border-r border-[#E5E7EB] w-64 h-screen flex flex-col fixed top-0 left-0 z-40",
+      "item": "flex items-center px-4 py-2 text-sm font-medium rounded-md text-[#6B7280] hover:bg-[#FAFAF8] hover:text-[#1F2937] transition-colors mb-1",
+      "item_active": "flex items-center px-4 py-2 text-sm font-medium rounded-md bg-[#FAFAF8] text-[#C9A227] border-l-4 border-[#C9A227]"
+    },
+    "topbar": {
+      "container": "bg-[#FFFFFF]/90 backdrop-blur-md border-b border-[#E5E7EB] h-16 flex items-center justify-between px-8 sticky top-0 z-30"
+    }
+  },
+  "layouts": {
+    "app": "flex min-h-screen bg-[#FAFAF8] font-['IBM_Plex_Sans',sans-serif]",
+    "main_content": "ml-64 flex-1 flex flex-col",
+    "page_header": "flex items-center justify-between mb-8",
+    "bento_grid": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6"
+  },
+  "media": {
+    "image_urls": {
+      "login_background": {
+        "url": "https://images.unsplash.com/photo-1777195148867-68a6f0e9aa8f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA3MDR8MHwxfHNlYXJjaHwzfHxvaWwlMjByZWZpbmVyeSUyMHN1bnNldCUyMGluZHVzdHJpYWx8ZW58MHx8fHwxNzgzMTc0ODc0fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Industrial landscape with oil refineries by the water at sunset",
+        "category": "Hero Background / Login Page"
+      }
+    }
+  },
+  "motion": {
+    "hover": "transition-all duration-200 ease-in-out",
+    "page_transition": "animate-in fade-in duration-500",
+    "dropdown": "animate-in slide-in-from-top-2 fade-in duration-200"
+  },
+  "accessibility": {
+    "focus_ring": "focus:outline-none focus:ring-2 focus:ring-[#C9A227] focus:ring-offset-2",
+    "aria_guidelines": "Ensure all interactive elements have appropriate aria-labels. Use data-testid on all key elements for testing."
+  },
+  "instructions_to_main_agent": [
+    "Use Manrope for headings and IBM Plex Sans for body text. Update index.css to import these.",
+    "Do NOT use bright colors for backgrounds or panels. Keep it strictly minimal: #FAFAF8 for background, #FFFFFF for cards.",
+    "Use Gold (#C9A227) EXCLUSIVELY for accents: primary buttons, active sidebar indicators, or key notification badges. NO gradients.",
+    "Do not use card components everywhere; where appropriate, use border layouts to separate sections for an enterprise feel.",
+    "Data tables should be extremely clean with light grey text for headers, and bold dark text for data, using status badges where applicable.",
+    "Use Phosphor Icons or Lucide icons, styled minimally (e.g., stroke-width 1.5, text-[#6B7280]).",
+    "Add 'data-testid' to every interactive element.",
+    "Build the dashboard layout with a sticky top bar containing breadcrumbs, user role switcher, and AI assistant badge.",
+    "Render the timeline and approval queues with strict alignment and minimal vertical connecting lines."
+  ],
+  "UNIVERSAL_GUIDELINES_FOR_MAIN_AGENT": [
+    "Implement glass-morphism effects ONLY where appropriate (e.g., sticky top nav with backdrop-blur-md and bg-white/90). Never fully transparent.",
+    "Avoid generic centered layouts. Use left alignment for data and forms. Maintain crisp edges and generous spacing.",
+    "Create depth through subtle layered design elements with z-index hierarchy and soft box shadows.",
+    "NEVER use generic AI emoji icons.",
+    "Every interaction needs micro-animations - hover states, transitions, but keep it strictly professional and subtle."
+  ]
+}
