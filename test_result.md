@@ -1029,6 +1029,7 @@ metadata:
 
 test_plan:
   current_focus:
+    - "Login bug fix verification - COMPLETED"
     - "All Parts B/C/D verified and working"
     - "No regression in Part A functionality"
   stuck_tasks: []
@@ -1037,6 +1038,27 @@ test_plan:
   next_steps:
     - "Main agent should summarize and finish"
     - "All critical functionality verified"
+
+
+
+backend:
+  - task: "Login CORS bug fix - REACT_APP_BACKEND_URL correction"
+    implemented: true
+    working: true
+    file: "frontend/.env"
+    stuck_count: 0
+    priority: "critical"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "User reported login failing with 'Something went wrong. Please try again.' Root cause: REACT_APP_BACKEND_URL pointing to different preview URL causing CORS error with withCredentials: true in axios."
+      - working: true
+        agent: "main"
+        comment: "Fixed REACT_APP_BACKEND_URL in frontend/.env to https://oil-dms-prod.preview.emergentagent.com (same origin as frontend). Frontend service restarted."
+      - working: true
+        agent: "testing"
+        comment: "COMPREHENSIVE LOGIN BUG FIX VERIFICATION COMPLETED. All 8 verification checks PASSED: (1) Login with company@gooil.com/GoOil@2026 successful - redirected to /app, (2) Dashboard renders with 12 KPI cards, (3) No 'Something went wrong' error, (4) JWT token stored in localStorage under key 'go_oil_token' (223 chars, valid 3-part JWT structure), (5) One-click demo buttons working (Company Admin, Distributor tested), (6) POST /api/auth/login returns 200 with {user, token} payload, (7) No CORS errors in console, (8) CORS headers present (access-control-allow-origin: *). Tested 3 personas successfully: company@gooil.com, admin@gooil.com, distributor@gooil.com. Only console errors are expected 401s from /api/auth/me during initial page load (normal behavior). Login flow fully functional."
 
 
 
@@ -1248,3 +1270,130 @@ agent_communication:
       ENTERPRISE READINESS: CONFIRMED ✅
       
       The GO OIL DMS system is ready for enterprise production deployment.
+
+
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      LOGIN BUG FIX VERIFICATION — COMPLETED ✅
+      
+      Comprehensive testing of the login CORS bug fix completed with ALL 8 verification checks PASSED.
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      TEST RESULTS SUMMARY
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      ✅ CHECK 1: Login with company@gooil.com / GoOil@2026
+         - Status: PASSED
+         - Result: Successfully authenticated and redirected to /app
+         - No "Something went wrong" error displayed
+      
+      ✅ CHECK 2: Dashboard rendering
+         - Status: PASSED
+         - Result: Dashboard loaded successfully with 12 KPI cards
+         - All charts and data visible
+      
+      ✅ CHECK 3: JWT token storage
+         - Status: PASSED
+         - Result: Token stored in localStorage under key 'go_oil_token'
+         - Token length: 223 characters
+         - Token structure: Valid 3-part JWT (header.payload.signature)
+      
+      ✅ CHECK 4: Network request verification
+         - Status: PASSED
+         - Result: POST /api/auth/login returned 200 OK
+         - Response contains both 'user' and 'token' fields
+         - User email and role correctly returned in response
+      
+      ✅ CHECK 5: One-click demo buttons
+         - Status: PASSED
+         - Result: Tested Company Admin and Distributor demo buttons
+         - Both successfully logged in and redirected to dashboard
+      
+      ✅ CHECK 6: CORS error check
+         - Status: PASSED
+         - Result: NO CORS errors detected in console
+         - CORS headers present: access-control-allow-origin: *
+      
+      ✅ CHECK 7: Console error analysis
+         - Status: PASSED
+         - Result: Only expected 401 errors from /api/auth/me during initial page load
+         - These are normal behavior (auth check before login)
+      
+      ✅ CHECK 8: Multiple persona testing
+         - Status: PASSED
+         - Result: Tested 3 personas successfully:
+           * company@gooil.com (Company Admin) ✅
+           * admin@gooil.com (Super Admin) ✅
+           * distributor@gooil.com (Distributor) ✅
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      ROOT CAUSE CONFIRMATION
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      The issue was correctly identified:
+      - REACT_APP_BACKEND_URL was pointing to a different preview URL
+      - This caused CORS errors with credentialed requests (withCredentials: true)
+      - Browser blocked the cross-origin request
+      
+      FIX APPLIED:
+      - REACT_APP_BACKEND_URL set to https://oil-dms-prod.preview.emergentagent.com
+      - Same origin as frontend (no cross-origin issues)
+      - Frontend service restarted successfully
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      DETAILED NETWORK ANALYSIS
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      Request Details:
+      - URL: https://oil-dms-prod.preview.emergentagent.com/api/auth/login
+      - Method: POST
+      - Content-Type: application/json
+      - Origin: https://oil-dms-prod.preview.emergentagent.com
+      
+      Response Details:
+      - Status: 200 OK
+      - Content-Type: application/json
+      - CORS Headers: access-control-allow-origin: *
+      
+      Response Payload Structure:
+      {
+        "user": {
+          "id": "usr-...",
+          "email": "company@gooil.com",
+          "name": "Olivia Adeyemi",
+          "role": "company_admin",
+          ...
+        },
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+      }
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      SCREENSHOTS CAPTURED
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      1. 01_login_page.png - Login page loaded successfully
+      2. 03_dashboard_after_login.png - Dashboard after company@gooil.com login
+      3. 04_admin_demo_dashboard.png - Dashboard after Company Admin demo login
+      4. 06_distributor_dashboard.png - Dashboard after Distributor demo login
+      5. 08_final_verification.png - Final verification with admin@gooil.com
+      
+      ═══════════════════════════════════════════════════════════════════════════
+      CONCLUSION
+      ═══════════════════════════════════════════════════════════════════════════
+      
+      ✅ LOGIN BUG FIX FULLY VERIFIED AND WORKING
+      ✅ All requested verification checks passed
+      ✅ No CORS errors detected
+      ✅ Multiple personas tested successfully
+      ✅ Dashboard renders correctly with KPI cards
+      ✅ JWT token storage working as expected
+      
+      The login functionality is now fully operational. Users can:
+      - Login with email/password credentials
+      - Use one-click demo buttons for quick access
+      - Access role-based dashboards
+      - Navigate the application without errors
+      
+      RECOMMENDATION: The login bug fix is complete and ready for production use.
