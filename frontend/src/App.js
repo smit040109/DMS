@@ -1,56 +1,106 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import React from "react";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import { Toaster } from "@/components/ui/sonner";
+import AppShell from "@/components/layout/AppShell";
+import Login from "@/pages/Login";
+import Dashboard from "@/pages/Dashboard";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+import {
+  ProductsPage, SkusPage, BatchesPage,
+  InventoryPage, WarehousesPage,
+  DistributorsPage, RetailersPage, CustomersPage,
+  PrimaryOrdersPage, SecondaryOrdersPage, InvoicesPage,
+  DispatchesPage, GitPage, GrnPage,
+  PaymentsPage, LedgerPage, ExpensesPage,
+  CashbackPage, CouponsPage,
+  ApprovalsPage, NotificationsPage,
+} from "@/pages/modules/ListModules";
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
+import {
+  UsersPage, RolesPage, MasterDataPage,
+  ReportsPage, AnalyticsPage,
+  AiAssistantPage, SettingsPage,
+} from "@/pages/modules/AdminModules";
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
+function Protected({ children }) {
+  const { user } = useAuth();
+  if (user === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-canvas" data-testid="auth-loading">
+        <div className="text-ink-muted text-sm">Loading command center…</div>
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
+}
 
+function AppRoutes() {
   return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
-
-function App() {
-  return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </div>
+    <Routes>
+      <Route path="/login" element={<Login />} />
+      <Route
+        path="/app"
+        element={
+          <Protected>
+            <AppShell><Dashboard /></AppShell>
+          </Protected>
+        }
+      />
+      {[
+        ["products", <ProductsPage />],
+        ["skus", <SkusPage />],
+        ["batches", <BatchesPage />],
+        ["inventory", <InventoryPage />],
+        ["warehouses", <WarehousesPage />],
+        ["distributors", <DistributorsPage />],
+        ["retailers", <RetailersPage />],
+        ["customers", <CustomersPage />],
+        ["primary-orders", <PrimaryOrdersPage />],
+        ["secondary-orders", <SecondaryOrdersPage />],
+        ["invoices", <InvoicesPage />],
+        ["dispatches", <DispatchesPage />],
+        ["goods-in-transit", <GitPage />],
+        ["grns", <GrnPage />],
+        ["payments", <PaymentsPage />],
+        ["ledger", <LedgerPage />],
+        ["expenses", <ExpensesPage />],
+        ["cashback", <CashbackPage />],
+        ["coupons", <CouponsPage />],
+        ["approvals", <ApprovalsPage />],
+        ["notifications", <NotificationsPage />],
+        ["users", <UsersPage />],
+        ["roles", <RolesPage />],
+        ["master-data", <MasterDataPage />],
+        ["reports", <ReportsPage />],
+        ["analytics", <AnalyticsPage />],
+        ["ai-assistant", <AiAssistantPage />],
+        ["settings", <SettingsPage />],
+      ].map(([path, el]) => (
+        <Route
+          key={path}
+          path={`/app/${path}`}
+          element={
+            <Protected>
+              <AppShell>{el}</AppShell>
+            </Protected>
+          }
+        />
+      ))}
+      <Route path="/" element={<Navigate to="/app" replace />} />
+      <Route path="*" element={<Navigate to="/app" replace />} />
+    </Routes>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <BrowserRouter>
+      <AuthProvider>
+        <AppRoutes />
+        <Toaster richColors position="top-right" />
+      </AuthProvider>
+    </BrowserRouter>
+  );
+}
