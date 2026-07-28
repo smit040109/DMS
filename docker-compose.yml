@@ -1,0 +1,85 @@
+#
+# GO OIL DMS — docker-compose for local / staging deployment.
+#
+# Usage:
+#   docker compose --env-file .env.production up -d --build
+#
+# .env.production expected keys:
+#   MONGO_URL, DB_NAME, JWT_SECRET, CORS_ORIGINS, ADMIN_EMAIL, ADMIN_PASSWORD,
+#   EMERGENT_LLM_KEY (optional), REACT_APP_BACKEND_URL
+#
+services:
+  mongo:
+    image: mongo:7
+    container_name: gooil-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+      - mongo-config:/data/configdb
+      - ./scripts/mongo-init:/docker-entrypoint-initdb.d:ro
+    environment:
+      MONGO_INITDB_DATABASE: ${DB_NAME:-go_oil_dms}
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [gooil-net]
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: gooil-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URL: mongodb://mongo:27017
+      DB_NAME: ${DB_NAME:-go_oil_dms}
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@gooil.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-ChangeMePlease}
+      EMERGENT_LLM_KEY: ${EMERGENT_LLM_KEY:-}
+      AI_PROVIDER: ${AI_PROVIDER:-openai}
+      AI_MODEL: ${AI_MODEL:-gpt-5.4}
+      ENABLE_HSTS: ${ENABLE_HSTS:-false}
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks: [gooil-net]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        REACT_APP_BACKEND_URL: ${REACT_APP_BACKEND_URL:-http://localhost:8001}
+    container_name: gooil-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    networks: [gooil-net]
+
+volumes:
+  mongo-data:
+  mongo-config:
+
+networks:
+  gooil-net:
+    driver: bridge

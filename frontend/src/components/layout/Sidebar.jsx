@@ -6,18 +6,29 @@ import GoldLogo from "@/components/common/GoldLogo";
 import { useAuth } from "@/context/AuthContext";
 import { ChevronsLeft } from "lucide-react";
 
-export default function Sidebar({ collapsed, onToggle }) {
+export default function Sidebar({ collapsed, onToggle, mobileOpen = false, onCloseMobile }) {
   const { user } = useAuth();
   const location = useLocation();
   const groups = useMemo(() => filterNavForRole(user?.role || "customer"), [user?.role]);
 
   return (
-    <aside
-      className={`bg-white border-r border-[#E5E7EB] h-screen sticky top-0 flex flex-col transition-all duration-200 ${
-        collapsed ? "w-[74px]" : "w-[260px]"
-      }`}
-      data-testid="sidebar"
-    >
+    <>
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/40 md:hidden"
+          onClick={onCloseMobile}
+          data-testid="sidebar-backdrop"
+        />
+      )}
+      <aside
+        className={`bg-white border-r border-[#E5E7EB] flex flex-col transition-all duration-200
+          md:h-screen md:sticky md:top-0 md:translate-x-0
+          fixed inset-y-0 left-0 z-50 md:z-auto
+          ${collapsed ? "md:w-[74px]" : "md:w-[260px]"}
+          w-[260px] ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}`}
+        data-testid="sidebar"
+      >
       <div className="px-4 h-16 flex items-center border-b border-[#E5E7EB] justify-between">
         {!collapsed ? (
           <GoldLogo size={34} />
@@ -53,6 +64,7 @@ export default function Sidebar({ collapsed, onToggle }) {
                     <NavLink
                       to={it.to}
                       end={it.to === "/app"}
+                      onClick={() => { if (mobileOpen && onCloseMobile) onCloseMobile(); }}
                       className={`group relative flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                         isActive
                           ? "bg-gold-tint/60 text-ink"
@@ -84,5 +96,6 @@ export default function Sidebar({ collapsed, onToggle }) {
         </div>
       )}
     </aside>
+    </>
   );
 }

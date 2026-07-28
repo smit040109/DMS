@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Bell, Search, Sparkles, ChevronDown, LogOut, User as UserIcon } from "lucide-react";
+import { Search, Sparkles, ChevronDown, LogOut, User as UserIcon, Menu } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,8 +13,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAuth } from "@/context/AuthContext";
 import { ROLE_LABELS } from "@/lib/nav";
+import NotificationBell from "@/components/common/NotificationBell";
 
-export default function Topbar({ onOpenAi }) {
+export default function Topbar({ onOpenAi, onOpenMobileNav }) {
   const { user, logout, switchRole } = useAuth();
   const [q, setQ] = useState("");
 
@@ -22,10 +23,19 @@ export default function Topbar({ onOpenAi }) {
 
   return (
     <header
-      className="sticky top-0 z-20 h-16 bg-white/85 backdrop-blur-md border-b border-[#E5E7EB] flex items-center gap-4 px-6"
+      className="sticky top-0 z-20 h-16 bg-white/85 backdrop-blur-md border-b border-[#E5E7EB] flex items-center gap-2 sm:gap-4 px-3 sm:px-6"
       data-testid="topbar"
     >
-      <div className="text-sm text-ink-muted flex items-center gap-2">
+      <button
+        onClick={onOpenMobileNav}
+        className="md:hidden h-10 w-10 rounded-lg border border-[#E5E7EB] bg-white flex items-center justify-center text-ink-muted hover:text-ink transition"
+        aria-label="Open menu"
+        data-testid="topbar-hamburger"
+      >
+        <Menu size={18} />
+      </button>
+
+      <div className="text-sm text-ink-muted hidden sm:flex items-center gap-2">
         <span>Dashboard</span>
         <span className="text-ink-muted/50">/</span>
         <span>Operations</span>
@@ -46,7 +56,8 @@ export default function Topbar({ onOpenAi }) {
         />
       </div>
 
-      {/* Role switcher */}
+      {/* Role switcher — hide on mobile */}
+      <div className="hidden sm:block">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -75,22 +86,16 @@ export default function Topbar({ onOpenAi }) {
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+      </div>
 
-      <button
-        className="relative h-10 w-10 rounded-full border border-[#E5E7EB] bg-white flex items-center justify-center text-ink-muted hover:text-ink hover:bg-canvas transition"
-        data-testid="topbar-notifications"
-        aria-label="Notifications"
-      >
-        <Bell size={16} />
-        <span className="absolute top-2 right-2 w-1.5 h-1.5 rounded-full bg-rose-500" />
-      </button>
+      <NotificationBell />
 
       <button
         onClick={onOpenAi}
-        className="h-10 rounded-full pl-3 pr-4 border border-gold/40 bg-gold/10 text-gold-dark flex items-center gap-2 hover:bg-gold/20 transition font-semibold text-sm"
+        className="h-10 rounded-full pl-3 pr-3 sm:pr-4 border border-gold/40 bg-gold/10 text-gold-dark flex items-center gap-2 hover:bg-gold/20 transition font-semibold text-sm"
         data-testid="topbar-ai"
       >
-        <Sparkles size={15} /> AI
+        <Sparkles size={15} /> <span className="hidden sm:inline">AI</span>
       </button>
 
       {/* User */}

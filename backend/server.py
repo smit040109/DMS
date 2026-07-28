@@ -23,6 +23,9 @@ from finance import build_finance_router
 from reverse import build_reverse_router
 from analytics import build_analytics_router
 from exports import build_exports_router
+from notifications import build_notifications_router
+from ai_copilot import build_ai_copilot_router
+from integrations import build_integrations_router
 from seed_workflow import run_seed_workflow
 from security import (
     validate_env, parse_cors_origins, limiter, SecurityHeadersMiddleware, role_guard,
@@ -468,6 +471,15 @@ api.include_router(analytics_router)
 # Exports router (Part D: CSV / Excel / PDF / Print View for every collection)
 exports_router = build_exports_router(db, get_current_user)
 api.include_router(exports_router)
+# Notifications router (Part E: in-app + email/whatsapp/sms scaffold + preferences)
+notifications_router = build_notifications_router(db, get_current_user)
+api.include_router(notifications_router)
+# AI Business Copilot router (Part F: emergentintegrations + business-analyst persona)
+ai_copilot_router = build_ai_copilot_router(db, get_current_user, analytics_router)
+api.include_router(ai_copilot_router)
+# Integrations router (Part G: Razorpay/Stripe/GST/Tally/Barcode/QR/Excel-import/Webhooks — scaffold)
+integrations_router = build_integrations_router(db, get_current_user)
+api.include_router(integrations_router)
 
 
 # ---------- Startup ----------

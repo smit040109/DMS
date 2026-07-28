@@ -1,0 +1,23 @@
+FROM node:20-alpine AS build
+WORKDIR /app/frontend
+COPY frontend/package.json frontend/yarn.lock ./
+RUN yarn install --frozen-lockfile --network-timeout 600000
+COPY frontend/ ./
+# Build takes REACT_APP_BACKEND_URL from env at build time
+ARG REACT_APP_BACKEND_URL=http://localhost:8001
+ENV REACT_APP_BACKEND_URL=${REACT_APP_BACKEND_URL}
+RUN yarn build
+
+# ---- runtime ----
+FROM nginx:1.27-alpine AS runtime
+LABEL org.opencontainers.image.title="gooil-dms-frontend"
+LABEL org.opencontainers.image.version="5.0.0-enterprise"
+
+# Serve the static build
+COPY --from=build /app/frontend/build /usr/share/nginx/html
+# Nginx template — SPA routing + gzip + long cache on assets
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+    CMD wget -q --spider http://localhost/ || exit 1

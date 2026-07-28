@@ -1,21 +1,76 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Sparkles, Send, Bot, Loader2 } from "lucide-react";
+import { Sparkles, Send, Bot, Loader2, RotateCcw, AlertCircle, ChevronRight } from "lucide-react";
 import api, { formatApiErrorDetail } from "@/lib/api";
 
-const SUGGESTIONS = [
+/**
+ * AI Business Copilot — talks to /api/ai/copilot/*.
+ * Backwards-compat: falls back to /api/ai/ask if copilot endpoint is unreachable.
+ */
+
+const FALLBACK_SUGGESTIONS = [
   "Which SKUs are at risk of stock-out this week?",
   "Summarize collections performance for the last 30 days",
   "Which distributors have the highest overdue receivables?",
   "Recommend actions to improve fill rate in the South-West region",
 ];
 
+const SESSION_KEY = "go_oil_ai_session_id";
+
+function newSessionId() {
+  return `sess-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export default function AiAssistant({ open, onOpenChange }) {
   const [prompt, setPrompt] = useState("");
-  const [messages, setMessages] = useState([]); // [{role, text}]
+  const [messages, setMessages] = useState([]); // [{role, text, sources?, intent?, model?}]
   const [loading, setLoading] = useState(false);
+  const [status, setStatus] = useState({ ready: null }); // null=unknown, true/false
+  const [statusMsg, setStatusMsg] = useState("");
+  const [suggestions, setSuggestions] = useState(FALLBACK_SUGGESTIONS);
+  const [sessionId, setSessionId] = useState(() => {
+    return typeof window !== "undefined"
+      ? (window.sessionStorage.getItem(SESSION_KEY) || newSessionId())
+      : newSessionId();
+  });
+
+  const persistSession = useCallback((sid) => {
+    setSessionId(sid);
+    try { window.sessionStorage.setItem(SESSION_KEY, sid); } catch (e) { /* ignore */ }
+  }, []);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const { data } = await api.get("/ai/copilot/status");
+      setStatus({ ready: !!data.ready });
+      setStatusMsg(data.message || "");
+    } catch (e) {
+      // status endpoint missing → probably offline or old build
+      setStatus({ ready: false });
+      setStatusMsg("AI Copilot is offline. Contact administrator.");
+    }
+  }, []);
+
+  const loadSuggestions = useCallback(async () => {
+    try {
+      const { data } = await api.get("/ai/copilot/suggestions");
+      if (data?.data?.length) setSuggestions(data.data);
+    } catch (e) { /* keep fallback */ }
+  }, []);
+
+  useEffect(() => {
+    if (open) {
+      loadStatus();
+      loadSuggestions();
+    }
+  }, [open, loadStatus, loadSuggestions]);
+
+  const reset = () => {
+    setMessages([]);
+    persistSession(newSessionId());
+  };
 
   const send = async (text) => {
     const msg = (text ?? prompt).trim();
@@ -24,44 +79,105 @@ export default function AiAssistant({ open, onOpenChange }) {
     setPrompt("");
     setLoading(true);
     try {
-      const { data } = await api.post("/ai/ask", { prompt: msg });
-      setMessages((m) => [...m, { role: "assistant", text: data.reply || "…" }]);
+      const { data } = await api.post("/ai/copilot/ask", {
+        question: msg,
+        session_id: sessionId,
+      });
+      if (data.session_id) persistSession(data.session_id);
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          text: data.answer || "…",
+          sources: data.sources || [],
+          intent: data.intent,
+          model: data.model,
+        },
+      ]);
     } catch (e) {
-      const err = formatApiErrorDetail(e.response?.data?.detail) || e.message;
-      setMessages((m) => [...m, { role: "assistant", text: `⚠️ ${err}` }]);
+      const detail = formatApiErrorDetail(e.response?.data?.detail) || e.message;
+      const is503 = e.response?.status === 503;
+      setMessages((m) => [
+        ...m,
+        {
+          role: "assistant",
+          text: is503
+            ? `AI Copilot is not ready:\n\n${detail}\n\nOnce your Emergent Universal Key is configured, this assistant will come online without any code changes.`
+            : `Sorry, I couldn't process that. Error: ${detail}`,
+          error: true,
+        },
+      ]);
     } finally {
       setLoading(false);
     }
   };
 
+  const notReadyBanner = useMemo(() => {
+    if (status.ready === false && statusMsg) {
+      return (
+        <div className="mx-6 mt-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900" data-testid="ai-not-ready">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          <div>
+            <div className="font-semibold">AI Copilot offline</div>
+            <div className="mt-0.5">{statusMsg}</div>
+          </div>
+        </div>
+      );
+    }
+    return null;
+  }, [status.ready, statusMsg]);
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-full sm:max-w-lg bg-white border-l border-[#E5E7EB] p-0 flex flex-col">
+      <SheetContent side="right" className="w-full sm:max-w-lg bg-white border-l border-[#E5E7EB] p-0 flex flex-col" data-testid="ai-copilot-sheet">
         <SheetHeader className="px-6 py-5 border-b border-[#E5E7EB]">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-lg bg-gold/15 flex items-center justify-center">
               <Sparkles size={18} className="text-gold-dark" />
             </div>
-            <div>
-              <SheetTitle className="font-display font-bold text-ink">GO OIL AI Copilot</SheetTitle>
-              <SheetDescription className="text-xs">Ask about orders, inventory, ledger, KPIs.</SheetDescription>
+            <div className="flex-1">
+              <SheetTitle className="font-display font-bold text-ink flex items-center gap-2">
+                Business Copilot
+                {status.ready === true && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">
+                    Live
+                  </span>
+                )}
+                {status.ready === false && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold">
+                    Offline
+                  </span>
+                )}
+              </SheetTitle>
+              <SheetDescription className="text-xs">Executive-grade answers on sales, finance, inventory, returns.</SheetDescription>
             </div>
+            <button
+              onClick={reset}
+              className="text-xs text-ink-muted hover:text-ink flex items-center gap-1 px-2 py-1 rounded hover:bg-canvas"
+              data-testid="ai-reset"
+            >
+              <RotateCcw size={12} /> New chat
+            </button>
           </div>
         </SheetHeader>
+
+        {notReadyBanner}
 
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
           {messages.length === 0 && (
             <div>
               <div className="text-sm text-ink-muted mb-3">Try one of these:</div>
               <div className="grid grid-cols-1 gap-2">
-                {SUGGESTIONS.map((s) => (
+                {suggestions.map((s, i) => (
                   <button
-                    key={s}
+                    key={i}
                     onClick={() => send(s)}
-                    className="text-left text-sm rounded-lg border border-[#E5E7EB] p-3 hover:bg-canvas transition"
-                    data-testid={`ai-suggestion-${s.slice(0, 12)}`}
+                    disabled={loading}
+                    className="text-left text-sm rounded-lg border border-[#E5E7EB] p-3 hover:bg-canvas transition flex items-center justify-between group disabled:opacity-50"
+                    data-testid={`ai-suggestion-${i}`}
                   >
-                    {s}
+                    <span>{s}</span>
+                    <ChevronRight size={14} className="text-ink-muted opacity-0 group-hover:opacity-100 transition" />
                   </button>
                 ))}
               </div>
@@ -78,14 +194,34 @@ export default function AiAssistant({ open, onOpenChange }) {
                   <Bot size={16} className="text-gold-dark" />
                 </div>
               )}
-              <div
-                className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-                  m.role === "user"
-                    ? "bg-ink text-white"
-                    : "bg-canvas border border-[#E5E7EB] text-ink whitespace-pre-wrap"
-                }`}
-              >
-                {m.text}
+              <div className={`max-w-[80%] flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
+                <div
+                  className={`rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                    m.role === "user"
+                      ? "bg-ink text-white"
+                      : m.error
+                        ? "bg-amber-50 border border-amber-200 text-ink whitespace-pre-wrap"
+                        : "bg-canvas border border-[#E5E7EB] text-ink whitespace-pre-wrap"
+                  }`}
+                >
+                  {m.text}
+                </div>
+                {m.role === "assistant" && m.sources && m.sources.length > 0 && (
+                  <div className="mt-1.5 text-[10px] text-ink-muted space-y-0.5">
+                    <div className="font-semibold uppercase tracking-wider">Sources</div>
+                    {m.sources.map((s, si) => (
+                      <div key={si} className="flex items-center gap-1">
+                        <span className="opacity-70">·</span>
+                        <span className="font-mono">{s.endpoint}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {m.role === "assistant" && m.model && (
+                  <div className="mt-1 text-[10px] text-ink-muted">
+                    Model: {m.model}{m.intent ? ` · Intent: ${m.intent}` : ""}
+                  </div>
+                )}
               </div>
             </div>
           ))}
@@ -108,7 +244,7 @@ export default function AiAssistant({ open, onOpenChange }) {
                   send();
                 }
               }}
-              placeholder="Ask the AI copilot..."
+              placeholder="Ask about sales, finance, inventory, returns…"
               className="min-h-[46px] max-h-32 bg-white border-[#E5E7EB] resize-none"
               data-testid="ai-prompt"
             />
