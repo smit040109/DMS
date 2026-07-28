@@ -84,6 +84,20 @@ export const NAV_GROUPS = [
     ],
   },
   {
+    label: "Business Intelligence",
+    items: [
+      { key: "executive-center", label: "Executive Center", icon: "Activity", to: "/app/executive-center", roles: ["super_admin", "company_admin", "regional_manager"] },
+      { key: "order-trace", label: "Order Trace", icon: "GitBranchPlus", to: "/app/order-trace", roles: ["super_admin", "company_admin", "regional_manager", "distributor", "sales_executive"] },
+      { key: "party-360", label: "Party 360°", icon: "Users", to: "/app/party-360", roles: ["super_admin", "company_admin", "regional_manager"] },
+      { key: "sales-analytics", label: "Sales Analytics", icon: "TrendingUp", to: "/app/sales-analytics", roles: ["super_admin", "company_admin", "regional_manager", "sales_executive"] },
+      { key: "inventory-analytics", label: "Inventory Analytics", icon: "Package", to: "/app/inventory-analytics", roles: ["super_admin", "company_admin", "regional_manager"] },
+      { key: "finance-analytics", label: "Finance Analytics", icon: "DollarSign", to: "/app/finance-analytics", roles: ["super_admin", "company_admin", "distributor_accountant", "regional_manager"] },
+      { key: "executive-analytics", label: "Executive Analytics", icon: "BarChart3", to: "/app/executive-analytics", roles: ["super_admin", "company_admin", "regional_manager"] },
+      { key: "business-alerts", label: "Business Alerts", icon: "AlertOctagon", to: "/app/business-alerts", roles: ["super_admin", "company_admin", "regional_manager"] },
+      { key: "scorecards", label: "Scorecards", icon: "Award", to: "/app/scorecards", roles: ["super_admin", "company_admin", "regional_manager"] },
+    ],
+  },
+  {
     label: "Insights",
     items: [
       { key: "reports", label: "Reports", icon: "FileBarChart2", to: "/app/reports", roles: ["super_admin", "company_admin", "regional_manager", "distributor_accountant"] },

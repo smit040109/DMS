@@ -38,6 +38,12 @@ import {
   ExpiryPage, ApprovalEnginePage, ExceptionsPage, ReportsHubPage,
 } from "@/pages/modules/ReverseModules";
 
+import {
+  ExecutiveCommandCenter, OrderTracePage, Party360Page,
+  SalesAnalyticsPage, InventoryAnalyticsPage, FinanceAnalyticsPage,
+  BusinessAlertsPage, ScorecardsPage, ExecutiveAnalyticsHub,
+} from "@/pages/modules/AnalyticsModules";
+
 function Protected({ children }) {
   const { user } = useAuth();
   if (user === null) {
@@ -111,6 +117,17 @@ function AppRoutes() {
         ["approval-engine", <ApprovalEnginePage />],
         ["exceptions", <ExceptionsPage />],
         ["reports-hub", <ReportsHubPage />],
+        // Phase 4 — Business Intelligence
+        ["executive-center", <ExecutiveCommandCenter />],
+        ["order-trace", <OrderTracePage />],
+        ["party-360", <Party360Page />],
+        ["party360/:type/:id", <Party360Page />],
+        ["sales-analytics", <SalesAnalyticsPage />],
+        ["inventory-analytics", <InventoryAnalyticsPage />],
+        ["finance-analytics", <FinanceAnalyticsPage />],
+        ["executive-analytics", <ExecutiveAnalyticsHub />],
+        ["business-alerts", <BusinessAlertsPage />],
+        ["scorecards", <ScorecardsPage />],
       ].map(([path, el]) => (
         <Route
           key={path}

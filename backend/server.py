@@ -21,6 +21,7 @@ from seed_data import SEED
 from workflow import build_workflow_router
 from finance import build_finance_router
 from reverse import build_reverse_router
+from analytics import build_analytics_router
 from seed_workflow import run_seed_workflow
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -411,6 +412,9 @@ api.include_router(finance_router)
 # Reverse Logistics router (Phase 3: returns, claims, credit/debit notes, replacements, expiry, approvals, exceptions, audit)
 reverse_router = build_reverse_router(db, get_current_user, finance_router)
 api.include_router(reverse_router)
+# Analytics & BI router (Phase 4: executive KPIs, trace, party360, alerts, scorecards, AI-ready)
+analytics_router = build_analytics_router(db, get_current_user)
+api.include_router(analytics_router)
 
 
 # ---------- Startup ----------

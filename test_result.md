@@ -98,7 +98,234 @@
 
 
 user_problem_statement: |
-  Phase 3 — Reverse Logistics, Claims & Approval Engine for GO OIL DMS.
+  Phase 4 — Enterprise Business Intelligence & Executive Analytics for GO OIL DMS.
+  Modules: Executive Command Center (15 KPIs), Live Order Trace (20-node journey),
+  Party 360° (unified profile), Executive Analytics (returns/claims/profitability),
+  Sales/Inventory/Finance Analytics, Live KPI engine with time-range + branch/distributor/SKU filters,
+  Business Alert Engine (12 alert types), Business Scorecards (distributor/retailer/branch/executive/warehouse/company),
+  AI-ready data layer. Everything computed live from existing MongoDB collections — no mocks.
+
+backend:
+  - task: "Phase 4 backend analytics module (analytics.py)"
+    implemented: true
+    working: true
+    file: "backend/analytics.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Built /api/analytics/* router with dimensions, kpi/executive (15 KPIs), trace/order/{id} (20-node journey + trace/search), party360/{type}/{id}, sales, inventory, finance, returns, claims, profitability (waterfall), alerts (12 types), scorecards/{entity_type}, ai-context/{scope}. Time-range parsing supports today/yesterday/week/month/quarter/year/custom with hour/day/week/month granularity. All data live from existing collections."
+      - working: true
+        agent: "testing"
+        comment: "Comprehensive testing completed. All 12 test scenarios passed (100% success rate). Tested: dimensions (5 branches, 15 distributors, 75 SKUs), executive KPI (all 15 KPIs with range filters: today/week/month/quarter/year/custom), order trace (20-node timeline verified), party360 (all 4 types: distributor/retailer/customer/company), sales/inventory/finance analytics, returns/claims/profitability, business alerts (23 alerts found), scorecards (all 6 entity types), AI-ready context (all 4 scopes). All data is LIVE from MongoDB - no mocks. All responses JSON-serializable."
+
+  - task: "Executive KPI live computation"
+    implemented: true
+    working: true
+    file: "backend/analytics.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Verified via curl: revenue=$64.6M, sales=30, inventory_value=$833M, order_pipeline populated, outstanding derived from invoices, collections from payments, cash_flow=collections-expenses, claims/returns amount, replacement_cost, approval_queue count, exception_count, business_risk_score (weighted composite), company_health_score. All 15 KPIs live-computed."
+      - working: true
+        agent: "testing"
+        comment: "All 15 KPIs verified: revenue=$64.7M (30 sales), inventory_value=$823.4M, inventory_health=100%, outstanding=$64.5M, collections=$0, cash_flow=$0, claims=$3K (2), returns=$149K (5), business_risk_score=49, company_health_score=50.6. Tested all range filters (today/week/month/quarter/year/custom) - all working. Branch and distributor filters applied correctly. Series data returned with correct granularity."
+
+  - task: "Order trace 20-node journey"
+    implemented: true
+    working: true
+    file: "backend/analytics.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "GET /analytics/trace/order/{id} returns 20-step timeline: Product→SKU→Batch→Company Inventory→Primary Order→Invoice→Dispatch→GIT→GRN→Distributor Inventory→Secondary Order→Retailer Inventory→Customer Order→Coupon→Cashback→Payment→Ledger→Reports→Audit→Returns/Claims. Also returns full related docs. Search endpoint /analytics/trace/search?q= finds orders across all 3 order types + invoices."
+      - working: true
+        agent: "testing"
+        comment: "Verified 20-node timeline with all required fields (step, node, status, at, label, id). Each node has correct status (ok/pending/n/a). Related docs verified: invoice, dispatch, grn, payments, credit_notes, returns, secondary_orders, customer_orders, product, sku, batches, ledger_entries, audit_trail. Search endpoint returns matching orders. Invalid order returns 404 as expected."
+
+  - task: "Party 360° unified profile"
+    implemented: true
+    working: true
+    file: "backend/analytics.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /analytics/party360/{type}/{id} — for distributor/retailer/customer/company. Combines profile + financials (billed/paid/credited/debited/outstanding/utilization/overdue) + performance (return_rate/avg_order/claim_count) + risk_score + health_score + timeline (merged events) + invoices + payments + orders + returns + claims + credit_notes + debit_notes + wallet + cashback + ledger + inventory + audit_trail."
+      - working: true
+        agent: "testing"
+        comment: "Tested all 4 party types successfully. Distributor: Apex Marine with $17.7M billed, $17.5M outstanding, risk_score=89, health_score=11, 20 timeline events. Retailer/Customer/Company: all return correct structure with profile, financials (8 fields), performance (7 fields), risk_score, health_score, timeline. Invalid party_type returns 400, invalid ID returns 404 as expected."
+
+  - task: "Business Alert Engine (12 types)"
+    implemented: true
+    working: true
+    file: "backend/analytics.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "GET /analytics/alerts — returned 23 active alerts on seed data: high_outstanding(16), credit_limit_exceeded(5), high_returns(1), exceptions(1). Also covers low_inventory, payment_delay, pending_approvals, near_expiry, dispatch_delay, exceptions. Each alert has drill link to related module page."
+      - working: true
+        agent: "testing"
+        comment: "Verified 23 alerts returned with correct structure. Alert kinds found: high_outstanding(16), credit_limit_exceeded(5), high_returns(1), exceptions(1). Each alert has required fields: id, kind, severity (high/medium/low), title, description, drill. By severity: high=22, medium=1. All drill URLs point to valid frontend paths. Max 60 alerts enforced."
+
+  - task: "Business Scorecards"
+    implemented: true
+    working: true
+    file: "backend/analytics.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "GET /analytics/scorecards/{entity_type} — distributor (sales/collection/return/claim scores → overall + A/B/C/D grade), retailer, branch, sales_executive (aggregates from created_by on invoices), warehouse (GRN accuracy), company (aggregate). Verified 15 distributor scorecards returned with real numbers."
+      - working: true
+        agent: "testing"
+        comment: "All 6 entity types working: distributor (15 rows, top: Nexa Energy, Grade B, Score 70), retailer (40 rows, top: Star Fuel Station #8, Grade B, Score 70), branch (5 rows, top: Abuja Depot, Score 100), sales_executive (1 row), warehouse (1 row, accuracy 100%), company (1 row, Score 88.5). Rows sorted by overall desc. Distributor/retailer have grade field (A/B/C/D), others don't. Invalid entity_type returns 400."
+
+  - task: "Sales/Inventory/Finance Analytics"
+    implemented: true
+    working: true
+    file: "backend/analytics.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "/analytics/sales returns time series + top_skus + by_branch + by_distributor + funnel + totals. /analytics/inventory returns bucket breakdown + scope value + top SKUs + near_expiry batches + damaged%. /analytics/finance returns cash flow series + payment method mix + AR aging (0-30/31-60/61-90/90+) + collection rate. /analytics/profitability returns waterfall (revenue → COGS → returns → claims → expenses → net profit) with margin%. All verified working."
+      - working: true
+        agent: "testing"
+        comment: "Sales: series data, top 10 SKUs, by_branch (5), by_distributor (max 10), 5-stage funnel (orders_placed/invoiced/dispatched/received/settled), totals (revenue=$64.7M, count=30, avg=$2.2M). Inventory: 6 buckets (available/reserved/in_transit/damaged/returned/expired), top 12 SKUs, near_expiry batches, totals (51K units, $833.7M value, 0.01% damaged). Finance: series, payment methods, 4 aging buckets (0-30/31-60/61-90/90+), totals (cash_in=$0, cash_out=$3K, collection_rate=0%, outstanding=$64.7M). Returns: 5 returns ($149K), by_reason sorted desc, top 10 SKUs. Claims: 2 claims ($3K), by_type with settled value. Profitability: 6-stage waterfall (Revenue $54.8M → COGS $32.9M → Returns $149K → Claims $3K → Expenses $0 → Net Profit $21.8M), margin=39.72%. All filters (branch_id, sku_id) working."
+
+  - task: "AI-ready data layer"
+    implemented: true
+    working: true
+    file: "backend/analytics.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "GET /analytics/ai-context/{executive|sales|finance|inventory} returns structured, LLM-ingestible snapshot with generated_at timestamp + hint metadata."
+      - working: true
+        agent: "testing"
+        comment: "All 4 scopes working: executive (returns KPIs summary + alerts_summary + recent_alerts + hint), sales (returns full sales analytics with generated_at), finance (returns full finance analytics with generated_at), inventory (returns full inventory analytics with generated_at). All generated_at timestamps are ISO-8601 format. Invalid scope returns 400 as expected."
+
+frontend:
+  - task: "AnalyticsModules.jsx — 8 BI pages (Exec Center/Order Trace/Party360/Sales/Inv/Finance/Exec Analytics/Alerts/Scorecards)"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/modules/AnalyticsModules.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "9 pages built with Recharts (line/area/bar/pie/treemap/radial). Reused existing PageHeader/DataTable/KpiCard/Tabs — no new layouts. GlobalFilters component drives range+branch+distributor+SKU+region filters across pages. Every KPI card and alert is drill-through (navigates to source module). Frontend compiled cleanly."
+
+  - task: "Nav + Routes for Phase 4"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/lib/nav.js, frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Added 'Business Intelligence' nav group with 9 items. Routes: /app/executive-center, /app/order-trace, /app/party-360, /app/sales-analytics, /app/inventory-analytics, /app/finance-analytics, /app/executive-analytics, /app/business-alerts, /app/scorecards. Role filtering respects existing pattern."
+
+metadata:
+  created_by: "main_agent"
+  version: "4.0"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Phase 4 implemented. All new endpoints under /api/analytics/*. Live from real MongoDB data — no mocks anywhere.
+
+      Test targets (see test_plan.current_focus):
+      1. /analytics/dimensions - filter dropdowns for branches/distributors/retailers/SKUs/products/regions/categories/ranges
+      2. /analytics/kpi/executive?range=today|week|month|... — 15 KPI dict + series
+      3. /analytics/trace/order/{order_id} — verify 20-step timeline + related docs
+      4. /analytics/trace/search?q=... — find orders by order_no
+      5. /analytics/party360/{distributor|retailer|customer|company}/{id} — profile + financials + performance + risk + timeline
+      6. /analytics/sales — series + top_skus + funnel + by_branch + by_distributor
+      7. /analytics/inventory — buckets + top SKUs + near_expiry
+      8. /analytics/finance — cash flow series + AR aging + collection rate
+      9. /analytics/returns / /analytics/claims / /analytics/profitability
+     10. /analytics/alerts — 12 alert types
+     11. /analytics/scorecards/{distributor|retailer|branch|sales_executive|warehouse|company}
+     12. /analytics/ai-context/{executive|sales|finance|inventory}
+
+      Focus on:
+      - Range filter parsing (today/yesterday/week/month/quarter/year/custom with from&to)
+      - Party filter application (branch_id, distributor_id, sku_id) actually narrows data
+      - Party360 across all 4 party types
+      - Alert drill fields point to valid frontend routes
+      - Trace endpoint handles orders with/without invoice/dispatch/grn gracefully
+
+      Test credentials at /app/memory/test_credentials.md (all password: GoOil@2026).
+  - agent: "testing"
+    message: |
+      Phase 4 backend testing completed. Comprehensive test suite with 12 test scenarios covering all analytics endpoints.
+      
+      RESULTS: 12/12 tests PASSED (100% success rate)
+      
+      ✅ ALL WORKING:
+      1. Dimensions - Returns 5 branches, 15 distributors, 40 retailers, 60 customers, 26 products, 75 SKUs, 4 regions, 8 categories, 7 range options
+      2. Executive KPI (15 KPIs) - All KPIs verified: revenue=$64.7M (30 sales), inventory_value=$823.4M, inventory_health=100%, outstanding=$64.5M, collections=$0, cash_flow=$0, claims=$3K (2), returns=$149K (5), replacement_cost, approval_queue, exception_count, business_risk_score=49, company_health_score=50.6. All range filters working (today/week/month/quarter/year/custom). Branch and distributor filters applied correctly.
+      3. Order Trace (20-node journey) - Verified 20-node timeline with all required fields. Each node has correct status (ok/pending/n/a). Related docs verified: invoice, dispatch, grn, payments, credit_notes, returns, secondary_orders, customer_orders, product, sku, batches, ledger_entries, audit_trail. Search endpoint working. Invalid order returns 404.
+      4. Party 360 (4 party types) - All 4 types working: distributor (Apex Marine: $17.7M billed, $17.5M outstanding, risk=89, health=11, 20 timeline events), retailer, customer, company. All return correct structure with profile, financials (8 fields), performance (7 fields), risk_score, health_score, timeline. Invalid party_type returns 400, invalid ID returns 404.
+      5. Sales Analytics - Series data, top 10 SKUs, by_branch (5), by_distributor (max 10), 5-stage funnel (orders_placed/invoiced/dispatched/received/settled), totals (revenue=$64.7M, count=30, avg=$2.2M). Branch and SKU filters working.
+      6. Inventory Analytics - 6 buckets (available/reserved/in_transit/damaged/returned/expired), top 12 SKUs, near_expiry batches, totals (51K units, $833.7M value, 0.01% damaged). SKU filter working.
+      7. Finance Analytics - Series data, payment methods, 4 aging buckets (0-30/31-60/61-90/90+), totals (cash_in=$0, cash_out=$3K, collection_rate=0%, outstanding=$64.7M).
+      8. Returns Analytics - 5 returns ($149K), by_reason sorted desc, by_scope, by_status, top 10 SKUs, series.
+      9. Claims Analytics - 2 claims ($3K), by_type with settled value, by_status, series.
+      10. Profitability Analytics - 6-stage waterfall (Revenue $54.8M → COGS $32.9M → Returns $149K → Claims $3K → Expenses $0 → Net Profit $21.8M), margin=39.72%.
+      11. Business Alerts (12 types) - 23 alerts returned: high_outstanding(16), credit_limit_exceeded(5), high_returns(1), exceptions(1). Each alert has required fields: id, kind, severity (high/medium/low), title, description, drill. By severity: high=22, medium=1.
+      12. Scorecards (6 entity types) - All working: distributor (15 rows, top: Nexa Energy, Grade B, Score 70), retailer (40 rows, top: Star Fuel Station #8, Grade B, Score 70), branch (5 rows, top: Abuja Depot, Score 100), sales_executive (1 row), warehouse (1 row, accuracy 100%), company (1 row, Score 88.5). Rows sorted by overall desc. Invalid entity_type returns 400.
+      13. AI-ready Context (4 scopes) - All working: executive (KPIs summary + alerts_summary + recent_alerts + hint), sales (full sales analytics), finance (full finance analytics), inventory (full inventory analytics). All generated_at timestamps ISO-8601. Invalid scope returns 400.
+      14. JSON Serialization - All responses JSON-serializable, no ObjectId leakage.
+      
+      CRITICAL VALIDATION:
+      ✅ All Phase 4 data is LIVE from real MongoDB collections — NO MOCKS
+      ✅ All 15 KPIs computed from live data
+      ✅ 20-node order trace with full traceability
+      ✅ Party360 unified profile across all 4 party types
+      ✅ Time-range filtering working (today/yesterday/week/month/quarter/year/custom)
+      ✅ Party filters (branch_id, distributor_id, sku_id) actually narrow data
+      ✅ Alert drill URLs point to valid frontend paths
+      ✅ All timestamps ISO-8601 format
+      ✅ Numeric aggregates rounded to 2 decimals
+      ✅ Party360 timeline events sorted DESC by timestamp
+      
+      All Phase 4 analytics endpoints are working correctly with LIVE MongoDB data.
+
   Modules: Returns (customer/retailer/distributor/company with 8 reason types),
   Damage tracking (5 scopes), Claims (5 types), Credit Notes (auto + manual),
   Debit Notes, Replacement engine (approved return → dispatch → GIT → GRN chain),
