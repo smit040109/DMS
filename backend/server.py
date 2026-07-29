@@ -56,6 +56,7 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "GoOil@2026")
 PLATFORM_OWNER_EMAIL = os.environ.get("PLATFORM_OWNER_EMAIL", "owner@vayuerp.com")
 PLATFORM_OWNER_PASSWORD = os.environ.get("PLATFORM_OWNER_PASSWORD", "VayuERP@2026")
 PLATFORM_NAME = os.environ.get("PLATFORM_NAME", "VayuERP")
+SEED_DEMO_DATA = os.environ.get("SEED_DEMO_DATA", "false").lower() in {"1", "true", "yes"}
 
 
 def hash_password(pw: str) -> str:
@@ -721,7 +722,11 @@ async def on_startup():
         logger.info("[tenancy] migration: all docs already had tenant_id — noop")
 
     # --- Seed baseline data (inside GO OIL tenant scope so wrapper stamps tenant_id) ---
-    await seed_all()
+    if SEED_DEMO_DATA:
+        await seed_all()
+        logger.info("[seed] Demo business data seeded (SEED_DEMO_DATA=true)")
+    else:
+        logger.info("[seed] Skipping business demo data seed (SEED_DEMO_DATA=false — production-clean start)")
     await seed_users()
 
     # --- Tenant indexes ---
@@ -729,14 +734,17 @@ async def on_startup():
     logger.info(f"[tenancy] tenant_id indexes ensured on {len(idx)} collections")
 
     # --- Business workflow seed (must run inside GO OIL tenant scope) ---
-    from tenancy import scope_tenant
-    with scope_tenant(DEFAULT_TENANT_ID):
-        await run_seed_workflow(db)
-        # Phase 2 finance auto-post
-        try:
-            await finance_router.autopost_existing_invoices()
-        except Exception as e:
-            logger.warning(f"Finance autopost skipped: {e}")
+    if SEED_DEMO_DATA:
+        from tenancy import scope_tenant
+        with scope_tenant(DEFAULT_TENANT_ID):
+            await run_seed_workflow(db)
+            # Phase 2 finance auto-post
+            try:
+                await finance_router.autopost_existing_invoices()
+            except Exception as e:
+                logger.warning(f"Finance autopost skipped: {e}")
+    else:
+        logger.info("[seed] Skipping workflow / transactional seed (production-clean start)")
 
     logger.info(f"{PLATFORM_NAME} startup complete.")
 
