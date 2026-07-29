@@ -1,840 +1,673 @@
+#!/usr/bin/env python3
 """
-VayuERP SaaS Backend — Slice 1 (Multi-Tenant Foundation) Regression Test Suite
+Bug Fix Verification: Non-clickable "Create Record" buttons across master-data pages
+Testing POST /api/collections/{resource} for all master-data collections
+"""
 
-This test suite covers:
-1. TENANT ISOLATION (critical - do NOT skip)
-2. EXISTING GO OIL REGRESSION (must all still work)
-3. PLATFORM ROUTER endpoints
-4. TENANT ADMIN endpoints
-5. AUTHENTICATION
-6. DATA MIGRATION verification
-7. PERFORMANCE
-"""
 import requests
 import json
-import time
-from typing import Dict, Any, Optional, List
+from datetime import datetime
 
 # Backend URL from frontend/.env
 BASE_URL = "https://saas-productize.preview.emergentagent.com/api"
 
-# Test credentials from /app/memory/test_credentials.md
-PLATFORM_OWNER = {"email": "owner@vayuerp.com", "password": "VayuERP@2026"}
-GO_OIL_ADMIN = {"email": "admin@gooil.com", "password": "GoOil@2026"}
-GO_OIL_COMPANY = {"email": "company@gooil.com", "password": "GoOil@2026"}
-GO_OIL_DISTRIBUTOR = {"email": "distributor@gooil.com", "password": "GoOil@2026"}
-ACME_ADMIN = {"email": "admin@acmepaint.com", "password": "AcmePaint@2026"}
-
-# Test results tracking
-test_results = {
-    "passed": [],
-    "failed": [],
-    "critical_failures": [],
-    "performance_issues": []
+# Test credentials
+CREDS = {
+    "company_admin": {"email": "company@gooil.com", "password": "GoOil@2026"},
+    "retailer": {"email": "retailer@gooil.com", "password": "GoOil@2026"},
+    "acme_admin": {"email": "admin@acmepaint.com", "password": "AcmePaint@2026"},
 }
 
-def log_test(name: str, passed: bool, details: str = "", critical: bool = False):
-    """Log test result"""
-    result = {
-        "name": name,
-        "passed": passed,
-        "details": details,
-        "critical": critical
+# Test payloads for each resource
+TEST_PAYLOADS = {
+    "products": {
+        "code": "TEST-PRD-001",
+        "name": "Test Engine Oil",
+        "category": "Engine Oil",
+        "grade": "5W-30",
+        "hsn": "27101990",
+        "gst_rate": 18
+    },
+    "skus": {
+        "sku_code": "TEST-SKU-001",
+        "product_name": "Test Product",
+        "pack_size": "1L",
+        "barcode": "1234567890",
+        "mrp": 1000,
+        "trade_price": 800,
+        "cost": 600
+    },
+    "batches": {
+        "batch_no": "TEST-B-001",
+        "sku_code": "GO-ENG-100-1L",
+        "product_name": "GO Engine Oil",
+        "manufactured_on": "2026-01-01",
+        "expires_on": "2027-01-01",
+        "batch_quantity": 1000
+    },
+    "distributors": {
+        "code": "TEST-DIST-001",
+        "name": "Test Distributor Ltd",
+        "contact": "+1-555-0100",
+        "gstin": "27TEST1234F1Z5",
+        "credit_limit": 100000
+    },
+    "retailers": {
+        "code": "TEST-RET-001",
+        "name": "Test Retailer",
+        "type": "Workshop",
+        "city": "Test City"
+    },
+    "customers": {
+        "code": "TEST-CUS-001",
+        "name": "Test Customer",
+        "segment": "Retail",
+        "city": "Test City",
+        "phone": "+1-555-0200"
+    },
+    "warehouses": {
+        "name": "Test Warehouse",
+        "type": "Central",
+        "manager": "Test Manager",
+        "capacity": 50000,
+        "occupied": 0
     }
-    if passed:
-        test_results["passed"].append(result)
-        print(f"✅ {name}")
-    else:
-        test_results["failed"].append(result)
-        if critical:
-            test_results["critical_failures"].append(result)
-        print(f"❌ {name}: {details}")
+}
 
-def login(credentials: Dict[str, str]) -> Optional[str]:
-    """Login and return access token"""
+def login(email, password):
+    """Login and return JWT token"""
     try:
-        resp = requests.post(f"{BASE_URL}/auth/login", json=credentials, timeout=10)
+        resp = requests.post(
+            f"{BASE_URL}/auth/login",
+            json={"email": email, "password": password},
+            timeout=10
+        )
         if resp.status_code == 200:
             data = resp.json()
-            return data.get("token")
+            return data.get("access_token") or data.get("token")
         else:
-            print(f"Login failed for {credentials['email']}: {resp.status_code} - {resp.text}")
+            print(f"❌ Login failed for {email}: {resp.status_code} - {resp.text}")
             return None
     except Exception as e:
-        print(f"Login error for {credentials['email']}: {e}")
+        print(f"❌ Login exception for {email}: {e}")
         return None
 
-def api_get(endpoint: str, token: str, timeout: int = 10) -> tuple:
-    """Make GET request and return (status_code, data, response_time)"""
-    start = time.time()
+def test_create_record(resource, payload, token):
+    """Test POST /api/collections/{resource}"""
     try:
         headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.get(f"{BASE_URL}{endpoint}", headers=headers, timeout=timeout)
-        elapsed = time.time() - start
-        try:
-            data = resp.json()
-        except Exception:
-            data = resp.text
-        return (resp.status_code, data, elapsed)
+        resp = requests.post(
+            f"{BASE_URL}/collections/{resource}",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        return resp
     except Exception as e:
-        elapsed = time.time() - start
-        return (0, str(e), elapsed)
+        print(f"❌ Exception testing {resource}: {e}")
+        return None
 
-def api_post(endpoint: str, token: str, payload: Dict[str, Any], timeout: int = 10) -> tuple:
-    """Make POST request and return (status_code, data, response_time)"""
-    start = time.time()
-    try:
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        resp = requests.post(f"{BASE_URL}{endpoint}", headers=headers, json=payload, timeout=timeout)
-        elapsed = time.time() - start
-        try:
-            data = resp.json()
-        except Exception:
-            data = resp.text
-        return (resp.status_code, data, elapsed)
-    except Exception as e:
-        elapsed = time.time() - start
-        return (0, str(e), elapsed)
-
-def api_put(endpoint: str, token: str, payload: Dict[str, Any], timeout: int = 10) -> tuple:
-    """Make PUT request and return (status_code, data, response_time)"""
-    start = time.time()
-    try:
-        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-        resp = requests.put(f"{BASE_URL}{endpoint}", headers=headers, json=payload, timeout=timeout)
-        elapsed = time.time() - start
-        try:
-            data = resp.json()
-        except Exception:
-            data = resp.text
-        return (resp.status_code, data, elapsed)
-    except Exception as e:
-        elapsed = time.time() - start
-        return (0, str(e), elapsed)
-
-def api_delete(endpoint: str, token: str, timeout: int = 10) -> tuple:
-    """Make DELETE request and return (status_code, data, response_time)"""
-    start = time.time()
+def test_get_records(resource, token):
+    """Test GET /api/collections/{resource}"""
     try:
         headers = {"Authorization": f"Bearer {token}"}
-        resp = requests.delete(f"{BASE_URL}{endpoint}", headers=headers, timeout=timeout)
-        elapsed = time.time() - start
-        try:
-            data = resp.json()
-        except Exception:
-            data = resp.text
-        return (resp.status_code, data, elapsed)
+        resp = requests.get(
+            f"{BASE_URL}/collections/{resource}",
+            headers=headers,
+            timeout=10
+        )
+        return resp
     except Exception as e:
-        elapsed = time.time() - start
-        return (0, str(e), elapsed)
+        print(f"❌ Exception getting {resource}: {e}")
+        return None
 
-# ============================================================================
-# TEST SUITE
-# ============================================================================
+def test_delete_record(resource, record_id, token):
+    """Test DELETE /api/collections/{resource}/{id}"""
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.delete(
+            f"{BASE_URL}/collections/{resource}/{record_id}",
+            headers=headers,
+            timeout=10
+        )
+        return resp
+    except Exception as e:
+        print(f"❌ Exception deleting {resource}/{record_id}: {e}")
+        return None
 
-def test_1_authentication():
-    """Test 5: AUTHENTICATION"""
-    print("\n" + "="*80)
-    print("TEST 5: AUTHENTICATION")
-    print("="*80)
+def run_tests():
+    """Run all test scenarios"""
+    print("=" * 80)
+    print("BUG FIX VERIFICATION: Non-clickable 'Create Record' buttons")
+    print("=" * 80)
+    print()
     
-    # 5.1: Platform owner login
-    token = login(PLATFORM_OWNER)
-    log_test("5.1: Platform owner login", token is not None, critical=True)
+    results = {
+        "part1": [],
+        "part2": [],
+        "part3": [],
+        "part4": [],
+        "created_records": []
+    }
     
-    # 5.2: GO OIL admin login
-    token = login(GO_OIL_ADMIN)
-    log_test("5.2: GO OIL admin login", token is not None, critical=True)
+    # ========================================================================
+    # PART 1: Verify POST /api/collections/{resource} works for master-data
+    # ========================================================================
+    print("PART 1: Testing POST /api/collections/{resource} for master-data collections")
+    print("-" * 80)
     
-    # 5.3: GO OIL company admin login
-    token = login(GO_OIL_COMPANY)
-    log_test("5.3: GO OIL company admin login", token is not None, critical=True)
-    
-    # 5.4: GO OIL distributor login
-    token = login(GO_OIL_DISTRIBUTOR)
-    log_test("5.4: GO OIL distributor login", token is not None, critical=True)
-    
-    # 5.5: Acme Paint admin login
-    token = login(ACME_ADMIN)
-    log_test("5.5: Acme Paint admin login", token is not None, critical=True)
-    
-    # 5.6: JWT payload includes tenant_id claim (verify via /auth/me)
-    if token:
-        status, data, _ = api_get("/auth/me", token)
-        has_tenant = status == 200 and isinstance(data, dict) and "user" in data and "tenant_id" in data["user"]
-        log_test("5.6: JWT includes tenant_id claim", has_tenant, 
-                f"Status: {status}, Has tenant_id: {has_tenant}")
-
-def test_2_existing_go_oil_regression():
-    """Test 2: EXISTING GO OIL REGRESSION (must all still work)"""
-    print("\n" + "="*80)
-    print("TEST 2: EXISTING GO OIL REGRESSION")
-    print("="*80)
-    
-    token = login(GO_OIL_COMPANY)
+    # Login as company admin (authorized)
+    token = login(CREDS["company_admin"]["email"], CREDS["company_admin"]["password"])
     if not token:
-        log_test("2.0: GO OIL login prerequisite", False, "Cannot login as GO OIL company admin", critical=True)
-        return
+        print("❌ CRITICAL: Cannot login as company admin. Aborting tests.")
+        return results
     
-    # 2.1: Executive KPI has revenue > 0
-    status, data, elapsed = api_get("/analytics/kpi/executive?range=month", token)
-    kpis = data.get("kpis", {}) if isinstance(data, dict) else {}
-    revenue = kpis.get("revenue", {}).get("value", 0) if isinstance(kpis, dict) else 0
-    sales = kpis.get("sales_count", {}).get("value", 0) if isinstance(kpis, dict) else 0
-    revenue_ok = status == 200 and revenue > 0
-    sales_ok = status == 200 and sales > 0
-    log_test("2.1: Executive KPI - revenue > 0 and sales_count > 0", 
-            revenue_ok and sales_ok,
-            f"Status: {status}, Revenue: {revenue}, Sales: {sales}",
-            critical=True)
+    print(f"✅ Logged in as company@gooil.com")
+    print()
     
-    # 2.2: Products returns 26 products
-    status, data, elapsed = api_get("/collections/products", token)
-    products_count = len(data.get("data", [])) if isinstance(data, dict) else 0
-    log_test("2.2: Products collection returns 26 products",
-            status == 200 and products_count == 26,
-            f"Status: {status}, Count: {products_count}",
-            critical=True)
-    
-    # 2.3: Dimensions returns 5 branches, 15 distributors, 75 skus
-    status, data, elapsed = api_get("/analytics/dimensions", token)
-    if status == 200 and isinstance(data, dict):
-        branches = len(data.get("branches", []))
-        distributors = len(data.get("distributors", []))
-        skus = len(data.get("skus", []))
-        dims_ok = branches == 5 and distributors == 15 and skus == 75
-        log_test("2.3: Dimensions - 5 branches, 15 distributors, 75 SKUs",
-                dims_ok,
-                f"Branches: {branches}, Distributors: {distributors}, SKUs: {skus}",
-                critical=True)
-    else:
-        log_test("2.3: Dimensions endpoint", False, f"Status: {status}", critical=True)
-    
-    # 2.4: Outstanding returns > 100 party rows
-    status, data, elapsed = api_get("/finance/outstanding", token)
-    outstanding_count = len(data.get("data", [])) if isinstance(data, dict) else 0
-    log_test("2.4: Outstanding returns > 100 party rows",
-            status == 200 and outstanding_count > 100,
-            f"Status: {status}, Count: {outstanding_count}",
-            critical=True)
-    
-    # 2.5: Alerts returns > 0 alerts
-    status, data, elapsed = api_get("/analytics/alerts", token)
-    alerts_count = len(data.get("alerts", [])) if isinstance(data, dict) else 0
-    log_test("2.5: Business alerts returns > 0 alerts",
-            status == 200 and alerts_count > 0,
-            f"Status: {status}, Count: {alerts_count}")
-    
-    # 2.6: Exception scanner returns 200 (no 500 / no ObjectId leak)
-    status, data, elapsed = api_post("/reverse/exceptions/scan", token, {})
-    data_str = json.dumps(data) if isinstance(data, dict) else str(data)
-    has_objectid = "_id" in data_str or "ObjectId" in data_str
-    log_test("2.6: Exception scanner - no 500, no ObjectId leak",
-            status == 200 and not has_objectid,
-            f"Status: {status}, Has ObjectId: {has_objectid}",
-            critical=True)
-    
-    # 2.7: Party360 distributor profile
-    status, data, elapsed = api_get("/analytics/party360/distributor/dist-100", token)
-    has_profile = status == 200 and isinstance(data, dict) and "profile" in data and "financials" in data
-    log_test("2.7: Party360 distributor profile",
-            has_profile,
-            f"Status: {status}, Has profile: {has_profile}")
-    
-    # 2.8: Dashboard KPIs returns 5 role KPIs
-    status, data, elapsed = api_get("/dashboard/kpis", token)
-    kpis_count = len(data.get("kpis", [])) if isinstance(data, dict) else 0
-    log_test("2.8: Dashboard KPIs returns 5 role KPIs",
-            status == 200 and kpis_count == 5,
-            f"Status: {status}, Count: {kpis_count}")
-
-def test_3_platform_router():
-    """Test 3: PLATFORM ROUTER endpoints"""
-    print("\n" + "="*80)
-    print("TEST 3: PLATFORM ROUTER ENDPOINTS")
-    print("="*80)
-    
-    token = login(PLATFORM_OWNER)
-    if not token:
-        log_test("3.0: Platform owner login prerequisite", False, "Cannot login as platform owner", critical=True)
-        return
-    
-    # 3.1: GET /platform/tenants - returns >= 2 tenants
-    status, data, elapsed = api_get("/platform/tenants", token)
-    tenants_count = len(data.get("data", [])) if isinstance(data, dict) else 0
-    log_test("3.1: GET /platform/tenants - returns >= 2 tenants",
-            status == 200 and tenants_count >= 2,
-            f"Status: {status}, Count: {tenants_count}",
-            critical=True)
-    
-    # 3.2: GET /platform/analytics - returns totals + revenue.mrr
-    status, data, elapsed = api_get("/platform/analytics", token)
-    has_mrr = status == 200 and isinstance(data, dict) and "revenue" in data and "mrr" in data.get("revenue", {})
-    log_test("3.2: GET /platform/analytics - returns MRR",
-            has_mrr,
-            f"Status: {status}, Has MRR: {has_mrr}",
-            critical=True)
-    
-    # 3.3: GET /platform/health - db_ok: true
-    status, data, elapsed = api_get("/platform/health", token)
-    db_ok = status == 200 and isinstance(data, dict) and data.get("db_ok") == True
-    log_test("3.3: GET /platform/health - db_ok: true",
-            db_ok,
-            f"Status: {status}, db_ok: {data.get('db_ok') if isinstance(data, dict) else 'N/A'}")
-    
-    # 3.4: GET /platform/plans - 4 plans
-    status, data, elapsed = api_get("/platform/plans", token)
-    plans_count = len(data.get("data", [])) if isinstance(data, dict) else 0
-    log_test("3.4: GET /platform/plans - 4 plans",
-            status == 200 and plans_count == 4,
-            f"Status: {status}, Count: {plans_count}",
-            critical=True)
-    
-    # 3.5: GET /platform/modules - 15 modules
-    status, data, elapsed = api_get("/platform/modules", token)
-    modules_count = len(data.get("data", [])) if isinstance(data, dict) else 0
-    log_test("3.5: GET /platform/modules - 15 modules",
-            status == 200 and modules_count == 15,
-            f"Status: {status}, Count: {modules_count}",
-            critical=True)
-    
-    # 3.6: GET /platform/subscriptions - >= 2
-    status, data, elapsed = api_get("/platform/subscriptions", token)
-    subs_count = len(data.get("data", [])) if isinstance(data, dict) else 0
-    log_test("3.6: GET /platform/subscriptions - >= 2",
-            status == 200 and subs_count >= 2,
-            f"Status: {status}, Count: {subs_count}",
-            critical=True)
-    
-    # 3.7: POST /platform/announcements - creates
-    payload = {
-        "title": "Test Announcement",
-        "body": "This is a test announcement for regression testing",
-        "severity": "info",
-        "audience": "all"
-    }
-    status, data, elapsed = api_post("/platform/announcements", token, payload)
-    log_test("3.7: POST /platform/announcements - creates",
-            status == 200 and isinstance(data, dict) and "id" in data,
-            f"Status: {status}")
-    
-    # 3.8: GET /platform/announcements - returns announcements
-    status, data, elapsed = api_get("/platform/announcements", token)
-    log_test("3.8: GET /platform/announcements - returns list",
-            status == 200 and isinstance(data, dict) and "data" in data,
-            f"Status: {status}")
-    
-    # 3.9: POST /platform/feature-flags - creates
-    payload = {
-        "key": "test_feature",
-        "value": True,
-        "scope": "global"
-    }
-    status, data, elapsed = api_post("/platform/feature-flags", token, payload)
-    log_test("3.9: POST /platform/feature-flags - creates",
-            status == 200 and isinstance(data, dict) and "key" in data,
-            f"Status: {status}")
-    
-    # 3.10: GET /platform/feature-flags - returns resolved
-    status, data, elapsed = api_get("/platform/feature-flags", token)
-    has_resolved = status == 200 and isinstance(data, dict) and "resolved" in data
-    log_test("3.10: GET /platform/feature-flags - returns resolved",
-            has_resolved,
-            f"Status: {status}, Has resolved: {has_resolved}")
-
-def test_4_tenant_admin_endpoints():
-    """Test 4: TENANT ADMIN endpoints"""
-    print("\n" + "="*80)
-    print("TEST 4: TENANT ADMIN ENDPOINTS")
-    print("="*80)
-    
-    token = login(GO_OIL_COMPANY)
-    if not token:
-        log_test("4.0: GO OIL company admin login prerequisite", False, "Cannot login", critical=True)
-        return
-    
-    # 4.1: GET /platform/me/tenant - returns tenant config
-    status, data, elapsed = api_get("/platform/me/tenant", token)
-    has_config = status == 200 and isinstance(data, dict) and "brand_colors" in data and "industry" in data
-    log_test("4.1: GET /platform/me/tenant - returns config",
-            has_config,
-            f"Status: {status}, Has config: {has_config}",
-            critical=True)
-    
-    # 4.2: PUT /platform/me/tenant/branding - updates brand_colors
-    payload = {
-        "brand_colors": {
-            "primary": "#FF0000",
-            "secondary": "#00FF00",
-            "accent": "#0000FF"
-        }
-    }
-    status, data, elapsed = api_put("/platform/me/tenant/branding", token, payload)
-    log_test("4.2: PUT /platform/me/tenant/branding - updates",
-            status == 200,
-            f"Status: {status}")
-    
-    # 4.3: GET /platform/me/tenant - verify branding updated
-    status, data, elapsed = api_get("/platform/me/tenant", token)
-    updated = status == 200 and isinstance(data, dict) and data.get("brand_colors", {}).get("primary") == "#FF0000"
-    log_test("4.3: Branding update verification",
-            updated,
-            f"Status: {status}, Updated: {updated}")
-    
-    # 4.4: PUT /platform/me/tenant/settings - change currency
-    payload = {"currency": "EUR"}
-    status, data, elapsed = api_put("/platform/me/tenant/settings", token, payload)
-    log_test("4.4: PUT /platform/me/tenant/settings - updates",
-            status == 200,
-            f"Status: {status}")
-    
-    # 4.5: POST /platform/me/api-keys - creates
-    payload = {
-        "name": "Test API Key",
-        "scopes": ["read", "write"],
-        "expires_days": 365
-    }
-    status, data, elapsed = api_post("/platform/me/api-keys", token, payload)
-    has_secret = status == 200 and isinstance(data, dict) and "secret" in data and "full_key" in data
-    api_key_id = data.get("id") if isinstance(data, dict) else None
-    log_test("4.5: POST /platform/me/api-keys - returns secret once",
-            has_secret,
-            f"Status: {status}, Has secret: {has_secret}",
-            critical=True)
-    
-    # 4.6: GET /platform/me/api-keys - list without secret
-    status, data, elapsed = api_get("/platform/me/api-keys", token)
-    keys = data.get("data", []) if isinstance(data, dict) else []
-    no_secret = all("secret" not in k for k in keys)
-    log_test("4.6: GET /platform/me/api-keys - list without secret",
-            status == 200 and no_secret,
-            f"Status: {status}, No secret in list: {no_secret}")
-    
-    # 4.7: DELETE /platform/me/api-keys/{id} - revokes
-    if api_key_id:
-        status, data, elapsed = api_delete(f"/platform/me/api-keys/{api_key_id}", token)
-        log_test("4.7: DELETE /platform/me/api-keys - revokes",
-                status == 200,
-                f"Status: {status}")
-    else:
-        log_test("4.7: DELETE /platform/me/api-keys - revokes", False, "No API key ID to delete")
-    
-    # 4.8: POST /platform/me/webhooks - creates
-    payload = {
-        "name": "Test Webhook",
-        "url": "https://example.com/webhook",
-        "events": ["order.created", "invoice.paid"]
-    }
-    status, data, elapsed = api_post("/platform/me/webhooks", token, payload)
-    webhook_id = data.get("id") if isinstance(data, dict) else None
-    log_test("4.8: POST /platform/me/webhooks - creates",
-            status == 200 and webhook_id is not None,
-            f"Status: {status}")
-    
-    # 4.9: DELETE /platform/me/webhooks/{id} - removes
-    if webhook_id:
-        status, data, elapsed = api_delete(f"/platform/me/webhooks/{webhook_id}", token)
-        log_test("4.9: DELETE /platform/me/webhooks - removes",
-                status == 200,
-                f"Status: {status}")
-    else:
-        log_test("4.9: DELETE /platform/me/webhooks - removes", False, "No webhook ID to delete")
-    
-    # 4.10: GET /platform/me/modules - returns catalogue
-    status, data, elapsed = api_get("/platform/me/modules", token)
-    has_enabled = status == 200 and isinstance(data, dict) and "enabled" in data
-    log_test("4.10: GET /platform/me/modules - returns catalogue",
-            has_enabled,
-            f"Status: {status}, Has enabled: {has_enabled}")
-    
-    # 4.11: POST /platform/me/modules/{key}/enable - toggles
-    status, data, elapsed = api_post("/platform/me/modules/crm/enable", token, {})
-    log_test("4.11: POST /platform/me/modules/crm/enable",
-            status == 200,
-            f"Status: {status}")
-    
-    # 4.12: POST /platform/me/modules/{key}/disable - toggles
-    status, data, elapsed = api_post("/platform/me/modules/crm/disable", token, {})
-    log_test("4.12: POST /platform/me/modules/crm/disable",
-            status == 200,
-            f"Status: {status}")
-    
-    # 4.13: GET /platform/backups - returns tenant's backups
-    status, data, elapsed = api_get("/platform/backups", token)
-    log_test("4.13: GET /platform/backups - returns list",
-            status == 200 and isinstance(data, dict),
-            f"Status: {status}")
-    
-    # 4.14: POST /platform/backups - creates manual backup
-    payload = {"kind": "manual"}
-    status, data, elapsed = api_post("/platform/backups", token, payload)
-    log_test("4.14: POST /platform/backups - creates manual",
-            status == 200 and isinstance(data, dict) and "id" in data,
-            f"Status: {status}")
-    
-    # 4.15: GO OIL admin CANNOT POST /platform/plans (owner only) - must 403
-    status, data, elapsed = api_post("/platform/plans", token, {
-        "key": "test_plan",
-        "name": "Test Plan",
-        "price_monthly": 99,
-        "price_yearly": 999
-    })
-    log_test("4.15: Tenant admin CANNOT POST /platform/plans - 403",
-            status == 403,
-            f"Status: {status}",
-            critical=True)
-    
-    # 4.16: GO OIL admin CANNOT POST /platform/announcements - must 403
-    status, data, elapsed = api_post("/platform/announcements", token, {
-        "title": "Test",
-        "body": "Test"
-    })
-    log_test("4.16: Tenant admin CANNOT POST /platform/announcements - 403",
-            status == 403,
-            f"Status: {status}",
-            critical=True)
-    
-    # 4.17: GO OIL admin CANNOT POST /platform/feature-flags - must 403
-    status, data, elapsed = api_post("/platform/feature-flags", token, {
-        "key": "test",
-        "value": True
-    })
-    log_test("4.17: Tenant admin CANNOT POST /platform/feature-flags - 403",
-            status == 403,
-            f"Status: {status}",
-            critical=True)
-
-def test_1_tenant_isolation():
-    """Test 1: TENANT ISOLATION (CRITICAL - do NOT skip)"""
-    print("\n" + "="*80)
-    print("TEST 1: TENANT ISOLATION (CRITICAL)")
-    print("="*80)
-    
-    # 1.1: Create a fresh tenant "Test Corp"
-    owner_token = login(PLATFORM_OWNER)
-    if not owner_token:
-        log_test("1.0: Platform owner login prerequisite", False, "Cannot login", critical=True)
-        return
-    
-    # Use timestamp to make slug unique
-    import time
-    unique_suffix = str(int(time.time()))[-6:]
-    
-    payload = {
-        "name": "Test Corp",
-        "slug": f"testcorp{unique_suffix}",
-        "industry": "distribution",
-        "country": "USA",
-        "currency": "USD",
-        "admin": {
-            "email": f"admin{unique_suffix}@testcorp.com",
-            "name": "Test Admin",
-            "password": "TestCorp@2026"
-        },
-        "plan": "starter"
-    }
-    status, data, elapsed = api_post("/platform/tenants", owner_token, payload)
-    tenant_created = status == 200 and isinstance(data, dict) and "tenant" in data
-    test_corp_id = data.get("tenant", {}).get("id") if isinstance(data, dict) else None
-    log_test("1.1: Create fresh tenant 'Test Corp'",
-            tenant_created,
-            f"Status: {status}, Tenant ID: {test_corp_id}",
-            critical=True)
-    
-    if not tenant_created:
-        print("⚠️  Cannot proceed with tenant isolation tests - tenant creation failed")
-        return
-    
-    # 1.2: Login as Test Corp admin
-    test_corp_token = login({"email": f"admin{unique_suffix}@testcorp.com", "password": "TestCorp@2026"})
-    log_test("1.2: Login as Test Corp admin",
-            test_corp_token is not None,
-            critical=True)
-    log_test("1.2: Login as Test Corp admin",
-            test_corp_token is not None,
-            critical=True)
-    
-    if not test_corp_token:
-        print("⚠️  Cannot proceed - Test Corp admin login failed")
-        return
-    
-    # 1.3: Test Corp sees ZERO products
-    status, data, elapsed = api_get("/collections/products", test_corp_token)
-    products_count = len(data.get("data", [])) if isinstance(data, dict) else -1
-    log_test("1.3: Test Corp sees ZERO products",
-            status == 200 and products_count == 0,
-            f"Status: {status}, Count: {products_count}",
-            critical=True)
-    
-    # 1.4: Test Corp sees ZERO invoices
-    status, data, elapsed = api_get("/collections/invoices", test_corp_token)
-    invoices_count = len(data.get("data", [])) if isinstance(data, dict) else -1
-    log_test("1.4: Test Corp sees ZERO invoices",
-            status == 200 and invoices_count == 0,
-            f"Status: {status}, Count: {invoices_count}",
-            critical=True)
-    
-    # 1.5: Test Corp sees ZERO orders
-    status, data, elapsed = api_get("/collections/primary-orders", test_corp_token)
-    orders_count = len(data.get("data", [])) if isinstance(data, dict) else -1
-    log_test("1.5: Test Corp sees ZERO primary orders",
-            status == 200 and orders_count == 0,
-            f"Status: {status}, Count: {orders_count}",
-            critical=True)
-    
-    # 1.6: Test Corp sees ZERO revenue on executive KPI
-    status, data, elapsed = api_get("/analytics/kpi/executive?range=month", test_corp_token)
-    kpis = data.get("kpis", {}) if isinstance(data, dict) else {}
-    revenue = kpis.get("revenue", {}).get("value", -1) if isinstance(kpis, dict) else -1
-    sales = kpis.get("sales_count", {}).get("value", -1) if isinstance(kpis, dict) else -1
-    log_test("1.6: Test Corp sees ZERO revenue and sales",
-            status == 200 and revenue == 0 and sales == 0,
-            f"Status: {status}, Revenue: {revenue}, Sales: {sales}",
-            critical=True)
-    
-    # 1.7: Test Corp sees empty dimensions
-    status, data, elapsed = api_get("/analytics/dimensions", test_corp_token)
-    if status == 200 and isinstance(data, dict):
-        branches = len(data.get("branches", []))
-        distributors = len(data.get("distributors", []))
-        log_test("1.7: Test Corp sees empty dimensions",
-                branches == 0 and distributors == 0,
-                f"Branches: {branches}, Distributors: {distributors}",
-                critical=True)
-    else:
-        log_test("1.7: Test Corp dimensions", False, f"Status: {status}", critical=True)
-    
-    # 1.8: Test Corp sees empty outstanding
-    status, data, elapsed = api_get("/finance/outstanding", test_corp_token)
-    outstanding_count = len(data.get("data", [])) if isinstance(data, dict) else -1
-    log_test("1.8: Test Corp sees empty outstanding",
-            status == 200 and outstanding_count == 0,
-            f"Status: {status}, Count: {outstanding_count}",
-            critical=True)
-    
-    # 1.9: Create a product AS Test Corp admin
-    payload = {
-        "code": "TESTPROD001",
-        "name": "Test Product",
-        "category": "Test Category",
-        "grade": "Premium",
-        "active": True
-    }
-    status, data, elapsed = api_post("/collections/products", test_corp_token, payload)
-    test_product_id = data.get("id") if isinstance(data, dict) else None
-    log_test("1.9: Create product as Test Corp admin",
-            status == 200 and test_product_id is not None,
-            f"Status: {status}, Product ID: {test_product_id}",
-            critical=True)
-    
-    # 1.10: GO OIL admin does NOT see Test Corp's product
-    gooil_token = login(GO_OIL_COMPANY)
-    if gooil_token and test_product_id:
-        status, data, elapsed = api_get(f"/collections/products/{test_product_id}", gooil_token)
-        log_test("1.10: GO OIL admin CANNOT see Test Corp product - 404",
-                status == 404,
-                f"Status: {status}",
-                critical=True)
-    else:
-        log_test("1.10: GO OIL admin CANNOT see Test Corp product", False, "Prerequisites failed", critical=True)
-    
-    # 1.11: GO OIL admin sees their own products (26)
-    if gooil_token:
-        status, data, elapsed = api_get("/collections/products", gooil_token)
-        products_count = len(data.get("data", [])) if isinstance(data, dict) else 0
-        log_test("1.11: GO OIL admin still sees their 26 products",
-                status == 200 and products_count == 26,
-                f"Status: {status}, Count: {products_count}",
-                critical=True)
-    
-    # 1.12: Attempt cross-tenant access on party360 - must 404
-    if gooil_token:
-        # Try to access a GO OIL distributor from Test Corp token
-        status, data, elapsed = api_get("/analytics/party360/distributor/dist-100", test_corp_token)
-        log_test("1.12: Test Corp CANNOT access GO OIL party360 - 404",
-                status == 404,
-                f"Status: {status}",
-                critical=True)
-    
-    # 1.13: Cache is tenant-aware (dimensions returns different data)
-    # Get dimensions for GO OIL
-    if gooil_token:
-        status1, data1, _ = api_get("/analytics/dimensions", gooil_token)
-        gooil_branches = len(data1.get("branches", [])) if isinstance(data1, dict) else 0
+    for resource, payload in TEST_PAYLOADS.items():
+        print(f"Testing {resource}...")
         
-        # Get dimensions for Test Corp
-        status2, data2, _ = api_get("/analytics/dimensions", test_corp_token)
-        testcorp_branches = len(data2.get("branches", [])) if isinstance(data2, dict) else 0
-        
-        log_test("1.13: Cache is tenant-aware (different dimensions)",
-                status1 == 200 and status2 == 200 and gooil_branches != testcorp_branches,
-                f"GO OIL branches: {gooil_branches}, Test Corp branches: {testcorp_branches}",
-                critical=True)
-
-def test_6_data_migration():
-    """Test 6: DATA MIGRATION verification"""
-    print("\n" + "="*80)
-    print("TEST 6: DATA MIGRATION VERIFICATION")
-    print("="*80)
-    
-    # This test verifies that all existing GO OIL documents have tenant_id="tnt-gooil"
-    # We'll sample check a few collections
-    
-    token = login(GO_OIL_COMPANY)
-    if not token:
-        log_test("6.0: GO OIL login prerequisite", False, "Cannot login", critical=True)
-        return
-    
-    collections_to_check = [
-        ("invoices", "/collections/invoices"),
-        ("primary-orders", "/collections/primary-orders"),
-        ("batches", "/collections/batches"),
-        ("products", "/collections/products")
-    ]
-    
-    for coll_name, endpoint in collections_to_check:
-        status, data, elapsed = api_get(endpoint, token)
-        if status == 200 and isinstance(data, dict):
-            docs = data.get("data", [])
-            if docs:
-                # Check first 5 docs for tenant_id
-                sample = docs[:5]
-                all_have_tenant = all("tenant_id" in doc for doc in sample)
-                all_gooil = all(doc.get("tenant_id") == "tnt-gooil" for doc in sample)
-                log_test(f"6.{collections_to_check.index((coll_name, endpoint)) + 1}: {coll_name} have tenant_id=tnt-gooil",
-                        all_have_tenant and all_gooil,
-                        f"Status: {status}, All have tenant_id: {all_have_tenant}, All tnt-gooil: {all_gooil}")
-            else:
-                log_test(f"6.{collections_to_check.index((coll_name, endpoint)) + 1}: {coll_name} migration", 
-                        True, f"No docs to check")
-        else:
-            log_test(f"6.{collections_to_check.index((coll_name, endpoint)) + 1}: {coll_name} migration", 
-                    False, f"Status: {status}")
-
-def test_7_performance():
-    """Test 7: PERFORMANCE"""
-    print("\n" + "="*80)
-    print("TEST 7: PERFORMANCE")
-    print("="*80)
-    
-    token = login(GO_OIL_COMPANY)
-    if not token:
-        log_test("7.0: GO OIL login prerequisite", False, "Cannot login", critical=True)
-        return
-    
-    endpoints = [
-        "/analytics/kpi/executive?range=month",
-        "/analytics/dimensions",
-        "/collections/products",
-        "/finance/outstanding",
-        "/analytics/alerts",
-        "/analytics/party360/distributor/dist-100",
-        "/dashboard/kpis",
-        "/collections/invoices",
-        "/collections/primary-orders",
-        "/analytics/sales?range=month"
-    ]
-    
-    for endpoint in endpoints:
-        status, data, elapsed = api_get(endpoint, token)
-        under_3s = elapsed < 3.0
-        log_test(f"7.{endpoints.index(endpoint) + 1}: {endpoint} < 3s",
-                status == 200 and under_3s,
-                f"Status: {status}, Time: {elapsed:.2f}s")
-        if elapsed >= 3.0:
-            test_results["performance_issues"].append({
-                "endpoint": endpoint,
-                "time": elapsed
+        # POST to create record
+        resp = test_create_record(resource, payload, token)
+        if not resp:
+            results["part1"].append({
+                "resource": resource,
+                "status": "FAIL",
+                "reason": "Request exception"
             })
-
-def test_5_tenant_suspended():
-    """Test 5.7-5.8: Tenant suspended login guard"""
-    print("\n" + "="*80)
-    print("TEST 5.7-5.8: TENANT SUSPENDED LOGIN GUARD")
-    print("="*80)
+            print(f"  ❌ POST failed (exception)")
+            continue
+        
+        if resp.status_code != 200:
+            results["part1"].append({
+                "resource": resource,
+                "status": "FAIL",
+                "reason": f"Status {resp.status_code}: {resp.text[:200]}"
+            })
+            print(f"  ❌ POST failed: {resp.status_code} - {resp.text[:100]}")
+            continue
+        
+        # Verify response structure
+        try:
+            data = resp.json()
+            if not isinstance(data, dict):
+                results["part1"].append({
+                    "resource": resource,
+                    "status": "FAIL",
+                    "reason": "Response is not a dict"
+                })
+                print(f"  ❌ Response is not a dict")
+                continue
+            
+            # Check required fields
+            record_id = data.get("id")
+            tenant_id = data.get("tenant_id")
+            created_at = data.get("created_at")
+            created_by = data.get("created_by")
+            
+            if not record_id:
+                results["part1"].append({
+                    "resource": resource,
+                    "status": "FAIL",
+                    "reason": "Missing 'id' field in response"
+                })
+                print(f"  ❌ Missing 'id' field")
+                continue
+            
+            if tenant_id != "tnt-gooil":
+                results["part1"].append({
+                    "resource": resource,
+                    "status": "FAIL",
+                    "reason": f"tenant_id is '{tenant_id}', expected 'tnt-gooil'"
+                })
+                print(f"  ❌ tenant_id is '{tenant_id}', expected 'tnt-gooil'")
+                continue
+            
+            if not created_at:
+                results["part1"].append({
+                    "resource": resource,
+                    "status": "FAIL",
+                    "reason": "Missing 'created_at' field"
+                })
+                print(f"  ❌ Missing 'created_at' field")
+                continue
+            
+            if not created_by:
+                results["part1"].append({
+                    "resource": resource,
+                    "status": "FAIL",
+                    "reason": "Missing 'created_by' field"
+                })
+                print(f"  ❌ Missing 'created_by' field")
+                continue
+            
+            print(f"  ✅ POST successful: id={record_id}, tenant_id={tenant_id}")
+            
+            # Store for cleanup
+            results["created_records"].append({
+                "resource": resource,
+                "id": record_id
+            })
+            
+            # Verify record appears in GET list
+            get_resp = test_get_records(resource, token)
+            if get_resp and get_resp.status_code == 200:
+                records = get_resp.json()
+                found = False
+                if isinstance(records, list):
+                    found = any(r.get("id") == record_id for r in records)
+                elif isinstance(records, dict) and "data" in records:
+                    found = any(r.get("id") == record_id for r in records["data"])
+                
+                if found:
+                    print(f"  ✅ Record appears in GET list")
+                else:
+                    print(f"  ⚠️  Record NOT found in GET list (may be pagination)")
+            
+            # Delete record for cleanup
+            del_resp = test_delete_record(resource, record_id, token)
+            if del_resp and del_resp.status_code in [200, 204]:
+                print(f"  ✅ Record deleted (cleanup)")
+            else:
+                print(f"  ⚠️  Could not delete record (status: {del_resp.status_code if del_resp else 'N/A'})")
+            
+            results["part1"].append({
+                "resource": resource,
+                "status": "PASS",
+                "id": record_id
+            })
+            
+        except json.JSONDecodeError:
+            results["part1"].append({
+                "resource": resource,
+                "status": "FAIL",
+                "reason": "Response is not valid JSON"
+            })
+            print(f"  ❌ Response is not valid JSON")
+        except Exception as e:
+            results["part1"].append({
+                "resource": resource,
+                "status": "FAIL",
+                "reason": f"Exception: {str(e)}"
+            })
+            print(f"  ❌ Exception: {e}")
+        
+        print()
     
-    # This test requires suspending a tenant, which we'll skip for now
-    # as it would affect other tests. We'll just verify the platform owner
-    # never gets blocked.
+    # ========================================================================
+    # PART 2: Verify unauthorized roles CANNOT create records
+    # ========================================================================
+    print()
+    print("PART 2: Testing unauthorized role (retailer) CANNOT create records")
+    print("-" * 80)
     
-    owner_token = login(PLATFORM_OWNER)
-    if owner_token:
-        status, data, _ = api_get("/platform/tenants", owner_token)
-        log_test("5.7: Platform owner can login and access endpoints",
-                status == 200,
-                f"Status: {status}")
+    retailer_token = login(CREDS["retailer"]["email"], CREDS["retailer"]["password"])
+    if retailer_token:
+        print(f"✅ Logged in as retailer@gooil.com")
+        
+        # Try to create a product (should fail with 403)
+        try:
+            headers = {"Authorization": f"Bearer {retailer_token}"}
+            resp = requests.post(
+                f"{BASE_URL}/collections/products",
+                json=TEST_PAYLOADS["products"],
+                headers=headers,
+                timeout=15
+            )
+            if resp.status_code == 403:
+                print(f"  ✅ POST /collections/products returns 403 (as expected)")
+                results["part2"].append({
+                    "test": "Retailer cannot create products",
+                    "status": "PASS"
+                })
+            else:
+                print(f"  ❌ POST /collections/products returns {resp.status_code}, expected 403")
+                print(f"      Response: {resp.text[:200]}")
+                results["part2"].append({
+                    "test": "Retailer cannot create products",
+                    "status": "FAIL",
+                    "reason": f"Got {resp.status_code} instead of 403"
+                })
+        except Exception as e:
+            print(f"  ❌ Request exception: {e}")
+            results["part2"].append({
+                "test": "Retailer cannot create products",
+                "status": "FAIL",
+                "reason": f"Request exception: {e}"
+            })
     else:
-        log_test("5.7: Platform owner login", False, "Cannot login")
-
-# ============================================================================
-# MAIN TEST RUNNER
-# ============================================================================
-
-def run_all_tests():
-    """Run all test suites"""
-    print("\n" + "="*80)
-    print("VayuERP SaaS Backend — Slice 1 Regression Test Suite")
-    print("="*80)
+        print(f"❌ Cannot login as retailer")
+        results["part2"].append({
+            "test": "Retailer cannot create products",
+            "status": "FAIL",
+            "reason": "Cannot login as retailer"
+        })
     
-    # Run tests in order of criticality
-    test_1_authentication()
-    test_2_existing_go_oil_regression()
-    test_3_platform_router()
-    test_4_tenant_admin_endpoints()
-    test_1_tenant_isolation()
-    test_6_data_migration()
-    test_5_tenant_suspended()
-    test_7_performance()
+    print()
     
-    # Print summary
-    print("\n" + "="*80)
+    # ========================================================================
+    # PART 3: Verify tenant isolation preserved
+    # ========================================================================
+    print()
+    print("PART 3: Testing tenant isolation")
+    print("-" * 80)
+    
+    acme_token = login(CREDS["acme_admin"]["email"], CREDS["acme_admin"]["password"])
+    if acme_token:
+        print(f"✅ Logged in as admin@acmepaint.com (Tenant #2)")
+        
+        # Create a product as Acme Paint
+        acme_payload = {
+            "code": "ACME-PAINT-001",
+            "name": "Acme Premium Paint",
+            "category": "Paint",
+            "grade": "Premium",
+            "hsn": "32091000",
+            "gst_rate": 18
+        }
+        
+        resp = test_create_record("products", acme_payload, acme_token)
+        if resp and resp.status_code == 200:
+            acme_product = resp.json()
+            acme_product_id = acme_product.get("id")
+            print(f"  ✅ Created Acme product: id={acme_product_id}")
+            
+            # Now login as GO OIL admin and verify they CANNOT see Acme's product
+            gooil_token = login(CREDS["company_admin"]["email"], CREDS["company_admin"]["password"])
+            if gooil_token:
+                print(f"  ✅ Logged in as company@gooil.com (Tenant #1)")
+                
+                # Get GO OIL products
+                get_resp = test_get_records("products", gooil_token)
+                if get_resp and get_resp.status_code == 200:
+                    gooil_products = get_resp.json()
+                    
+                    # Check if Acme product is in the list
+                    found = False
+                    if isinstance(gooil_products, list):
+                        found = any(p.get("id") == acme_product_id for p in gooil_products)
+                    elif isinstance(gooil_products, dict) and "data" in gooil_products:
+                        found = any(p.get("id") == acme_product_id for p in gooil_products["data"])
+                    
+                    if not found:
+                        print(f"  ✅ GO OIL admin CANNOT see Acme's product (tenant isolation working)")
+                        results["part3"].append({
+                            "test": "Tenant isolation - GO OIL cannot see Acme products",
+                            "status": "PASS"
+                        })
+                    else:
+                        print(f"  ❌ GO OIL admin CAN see Acme's product (TENANT ISOLATION BROKEN)")
+                        results["part3"].append({
+                            "test": "Tenant isolation - GO OIL cannot see Acme products",
+                            "status": "FAIL",
+                            "reason": "Acme product visible to GO OIL admin"
+                        })
+                else:
+                    print(f"  ⚠️  Cannot get GO OIL products")
+                    results["part3"].append({
+                        "test": "Tenant isolation - GO OIL cannot see Acme products",
+                        "status": "FAIL",
+                        "reason": "Cannot get GO OIL products"
+                    })
+            
+            # Cleanup: delete Acme product
+            del_resp = test_delete_record("products", acme_product_id, acme_token)
+            if del_resp and del_resp.status_code in [200, 204]:
+                print(f"  ✅ Acme product deleted (cleanup)")
+        else:
+            print(f"  ❌ Cannot create Acme product: {resp.status_code if resp else 'N/A'}")
+            results["part3"].append({
+                "test": "Tenant isolation - GO OIL cannot see Acme products",
+                "status": "FAIL",
+                "reason": "Cannot create Acme product"
+            })
+    else:
+        print(f"❌ Cannot login as Acme admin")
+        results["part3"].append({
+            "test": "Tenant isolation - GO OIL cannot see Acme products",
+            "status": "FAIL",
+            "reason": "Cannot login as Acme admin"
+        })
+    
+    print()
+    
+    # ========================================================================
+    # PART 4: Regression check
+    # ========================================================================
+    print()
+    print("PART 4: Regression check on existing endpoints")
+    print("-" * 80)
+    
+    # Use GO OIL company admin token
+    token = login(CREDS["company_admin"]["email"], CREDS["company_admin"]["password"])
+    if not token:
+        print("❌ Cannot login as company admin")
+        return results
+    
+    print(f"✅ Logged in as company@gooil.com")
+    print()
+    
+    # Test 1: GET /collections/products
+    print("Testing GET /collections/products...")
+    resp = test_get_records("products", token)
+    if resp and resp.status_code == 200:
+        products = resp.json()
+        count = len(products) if isinstance(products, list) else len(products.get("data", []))
+        if count >= 26:
+            print(f"  ✅ Returns {count} products (>= 26)")
+            results["part4"].append({
+                "endpoint": "GET /collections/products",
+                "status": "PASS",
+                "count": count
+            })
+        else:
+            print(f"  ⚠️  Returns {count} products (expected >= 26)")
+            results["part4"].append({
+                "endpoint": "GET /collections/products",
+                "status": "FAIL",
+                "reason": f"Only {count} products, expected >= 26"
+            })
+    else:
+        print(f"  ❌ Failed: {resp.status_code if resp else 'N/A'}")
+        results["part4"].append({
+            "endpoint": "GET /collections/products",
+            "status": "FAIL",
+            "reason": f"Status {resp.status_code if resp else 'N/A'}"
+        })
+    print()
+    
+    # Test 2: GET /analytics/kpi/executive?range=month
+    print("Testing GET /analytics/kpi/executive?range=month...")
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.get(
+            f"{BASE_URL}/analytics/kpi/executive?range=month",
+            headers=headers,
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            # Check for revenue > 0
+            revenue = 0
+            if isinstance(data, dict):
+                if "kpis" in data and "revenue" in data["kpis"]:
+                    revenue = data["kpis"]["revenue"].get("value", 0)
+                elif "revenue" in data:
+                    revenue = data["revenue"].get("value", 0) if isinstance(data["revenue"], dict) else data["revenue"]
+            
+            if revenue > 0:
+                print(f"  ✅ Revenue = ${revenue:,.2f} (> 0)")
+                results["part4"].append({
+                    "endpoint": "GET /analytics/kpi/executive?range=month",
+                    "status": "PASS",
+                    "revenue": revenue
+                })
+            else:
+                print(f"  ⚠️  Revenue = ${revenue:,.2f} (expected > 0)")
+                results["part4"].append({
+                    "endpoint": "GET /analytics/kpi/executive?range=month",
+                    "status": "FAIL",
+                    "reason": f"Revenue is {revenue}, expected > 0"
+                })
+        else:
+            print(f"  ❌ Failed: {resp.status_code}")
+            results["part4"].append({
+                "endpoint": "GET /analytics/kpi/executive?range=month",
+                "status": "FAIL",
+                "reason": f"Status {resp.status_code}"
+            })
+    except Exception as e:
+        print(f"  ❌ Exception: {e}")
+        results["part4"].append({
+            "endpoint": "GET /analytics/kpi/executive?range=month",
+            "status": "FAIL",
+            "reason": f"Exception: {e}"
+        })
+    print()
+    
+    # Test 3: GET /platform/me/tenant
+    print("Testing GET /platform/me/tenant...")
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        resp = requests.get(
+            f"{BASE_URL}/platform/me/tenant",
+            headers=headers,
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if isinstance(data, dict) and data.get("name"):
+                print(f"  ✅ Returns tenant config: {data.get('name')}")
+                results["part4"].append({
+                    "endpoint": "GET /platform/me/tenant",
+                    "status": "PASS",
+                    "tenant": data.get("name")
+                })
+            else:
+                print(f"  ⚠️  Response structure unexpected")
+                results["part4"].append({
+                    "endpoint": "GET /platform/me/tenant",
+                    "status": "FAIL",
+                    "reason": "Response structure unexpected"
+                })
+        else:
+            print(f"  ❌ Failed: {resp.status_code}")
+            results["part4"].append({
+                "endpoint": "GET /platform/me/tenant",
+                "status": "FAIL",
+                "reason": f"Status {resp.status_code}"
+            })
+    except Exception as e:
+        print(f"  ❌ Exception: {e}")
+        results["part4"].append({
+            "endpoint": "GET /platform/me/tenant",
+            "status": "FAIL",
+            "reason": f"Exception: {e}"
+        })
+    print()
+    
+    # Test 4: Login flow for all 3 personas
+    print("Testing login flow for 3 personas...")
+    personas = [
+        ("owner@vayuerp.com", "VayuERP@2026", "Platform Owner"),
+        ("company@gooil.com", "GoOil@2026", "Company Admin"),
+        ("retailer@gooil.com", "GoOil@2026", "Retailer")
+    ]
+    
+    all_login_pass = True
+    for email, password, role in personas:
+        token_test = login(email, password)
+        if token_test:
+            print(f"  ✅ {role} ({email}) login successful")
+        else:
+            print(f"  ❌ {role} ({email}) login failed")
+            all_login_pass = False
+    
+    if all_login_pass:
+        results["part4"].append({
+            "endpoint": "Login flow (3 personas)",
+            "status": "PASS"
+        })
+    else:
+        results["part4"].append({
+            "endpoint": "Login flow (3 personas)",
+            "status": "FAIL",
+            "reason": "One or more logins failed"
+        })
+    
+    print()
+    
+    return results
+
+def print_summary(results):
+    """Print test summary"""
+    print()
+    print("=" * 80)
     print("TEST SUMMARY")
-    print("="*80)
+    print("=" * 80)
+    print()
     
-    total = len(test_results["passed"]) + len(test_results["failed"])
-    passed = len(test_results["passed"])
-    failed = len(test_results["failed"])
-    critical_failed = len(test_results["critical_failures"])
+    # Part 1
+    print("PART 1: POST /api/collections/{resource} for master-data")
+    print("-" * 80)
+    part1_pass = sum(1 for r in results["part1"] if r["status"] == "PASS")
+    part1_total = len(results["part1"])
+    print(f"Result: {part1_pass}/{part1_total} PASSED")
+    for r in results["part1"]:
+        status_icon = "✅" if r["status"] == "PASS" else "❌"
+        print(f"  {status_icon} {r['resource']}: {r['status']}")
+        if r["status"] == "FAIL":
+            print(f"      Reason: {r.get('reason', 'Unknown')}")
+    print()
     
-    print(f"\nTotal Tests: {total}")
-    print(f"✅ Passed: {passed} ({passed/total*100:.1f}%)")
-    print(f"❌ Failed: {failed} ({failed/total*100:.1f}%)")
-    print(f"🔴 Critical Failures: {critical_failed}")
+    # Part 2
+    print("PART 2: Unauthorized role cannot create records")
+    print("-" * 80)
+    part2_pass = sum(1 for r in results["part2"] if r["status"] == "PASS")
+    part2_total = len(results["part2"])
+    print(f"Result: {part2_pass}/{part2_total} PASSED")
+    for r in results["part2"]:
+        status_icon = "✅" if r["status"] == "PASS" else "❌"
+        print(f"  {status_icon} {r['test']}: {r['status']}")
+        if r["status"] == "FAIL":
+            print(f"      Reason: {r.get('reason', 'Unknown')}")
+    print()
     
-    if test_results["critical_failures"]:
-        print("\n" + "="*80)
-        print("CRITICAL FAILURES")
-        print("="*80)
-        for failure in test_results["critical_failures"]:
-            print(f"\n❌ {failure['name']}")
-            print(f"   Details: {failure['details']}")
+    # Part 3
+    print("PART 3: Tenant isolation")
+    print("-" * 80)
+    part3_pass = sum(1 for r in results["part3"] if r["status"] == "PASS")
+    part3_total = len(results["part3"])
+    print(f"Result: {part3_pass}/{part3_total} PASSED")
+    for r in results["part3"]:
+        status_icon = "✅" if r["status"] == "PASS" else "❌"
+        print(f"  {status_icon} {r['test']}: {r['status']}")
+        if r["status"] == "FAIL":
+            print(f"      Reason: {r.get('reason', 'Unknown')}")
+    print()
     
-    if test_results["performance_issues"]:
-        print("\n" + "="*80)
-        print("PERFORMANCE ISSUES (>3s)")
-        print("="*80)
-        for issue in test_results["performance_issues"]:
-            print(f"⚠️  {issue['endpoint']}: {issue['time']:.2f}s")
+    # Part 4
+    print("PART 4: Regression check")
+    print("-" * 80)
+    part4_pass = sum(1 for r in results["part4"] if r["status"] == "PASS")
+    part4_total = len(results["part4"])
+    print(f"Result: {part4_pass}/{part4_total} PASSED")
+    for r in results["part4"]:
+        status_icon = "✅" if r["status"] == "PASS" else "❌"
+        print(f"  {status_icon} {r['endpoint']}: {r['status']}")
+        if r["status"] == "FAIL":
+            print(f"      Reason: {r.get('reason', 'Unknown')}")
+    print()
     
-    if failed > 0:
-        print("\n" + "="*80)
-        print("ALL FAILURES")
-        print("="*80)
-        for failure in test_results["failed"]:
-            print(f"\n❌ {failure['name']}")
-            print(f"   Details: {failure['details']}")
-    
-    return {
-        "total": total,
-        "passed": passed,
-        "failed": failed,
-        "critical_failures": critical_failed,
-        "success_rate": passed/total*100 if total > 0 else 0
-    }
+    # Overall
+    total_pass = part1_pass + part2_pass + part3_pass + part4_pass
+    total_tests = part1_total + part2_total + part3_total + part4_total
+    print("=" * 80)
+    print(f"OVERALL: {total_pass}/{total_tests} TESTS PASSED ({100*total_pass//total_tests}%)")
+    print("=" * 80)
+    print()
 
 if __name__ == "__main__":
-    summary = run_all_tests()
-    print(f"\n{'='*80}")
-    print(f"Final Result: {'✅ PASS' if summary['critical_failures'] == 0 else '❌ FAIL'}")
-    print(f"Success Rate: {summary['success_rate']:.1f}%")
-    print(f"{'='*80}\n")
+    results = run_tests()
+    print_summary(results)

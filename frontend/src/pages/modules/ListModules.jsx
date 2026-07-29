@@ -1,4 +1,5 @@
 import React from "react";
+import { Plus } from "lucide-react";
 import ModulePage from "@/components/common/ModulePage";
 import WorkflowActions from "@/components/common/WorkflowActions";
 
@@ -8,6 +9,9 @@ const status = (key = "status") => ({ key, label: "Status", type: "status" });
 const date = (key, label) => ({ key, label, type: "date" });
 const chip = (key, label) => ({ key, label, type: "chip" });
 const text = (key, label) => ({ key, label });
+
+// ---------- Catalog ----------
+const PlusIcon = (p) => <Plus {...p} />;
 
 // ---------- Catalog ----------
 export function ProductsPage() {
@@ -22,7 +26,7 @@ export function ProductsPage() {
         { key: "gst_rate", label: "GST", render: (r) => `${r.gst_rate}%` },
         { key: "active", label: "Status", render: (r) => r.active ? "Active" : "Inactive", type: "status" },
       ]}
-      primaryAction={{ label: "New product", icon: (p) => <span {...p}>+</span> }}
+      primaryAction={{ label: "New product", icon: PlusIcon }}
     />
   );
 }
@@ -68,6 +72,7 @@ export function InventoryPage() {
       resource="inventory"
       title="Inventory"
       subtitle="Live stock positions across warehouses with reorder alerts"
+      disableCreate={true}
       columns={[
         text("sku_code", "SKU"), text("product_name", "Product"),
         text("warehouse_name", "Warehouse"), chip("pack_size", "Pack"),
@@ -182,6 +187,7 @@ export function PrimaryOrdersPage() {
       resource="primary-orders"
       title="Primary Orders"
       subtitle="Distributor → Company — approve to auto-reserve FIFO stock + generate invoice"
+      disableCreate={true}
       columns={[
         ...orderColumnsBase,
         { key: "actions", label: "Actions", render: (r) => <WorkflowActions entity="primary-order" row={r} onDone={() => setReload((v) => v + 1)} /> },
@@ -198,6 +204,7 @@ export function SecondaryOrdersPage() {
       resource="secondary-orders"
       title="Secondary Orders"
       subtitle="Retailer → Distributor — approve reserves distributor stock + issues invoice"
+      disableCreate={true}
       columns={[
         ...orderColumnsBase,
         { key: "actions", label: "Actions", render: (r) => <WorkflowActions entity="secondary-order" row={r} onDone={() => setReload((v) => v + 1)} /> },
@@ -214,6 +221,7 @@ export function InvoicesPage() {
       resource="invoices"
       title="Invoices"
       subtitle="Primary + Secondary invoices — click Dispatch to move stock into GIT"
+      disableCreate={true}
       columns={[
         text("invoice_no", "Invoice"), text("party_name", "Party"), chip("type", "Type"),
         money("subtotal", "Subtotal"), money("tax", "Tax"), money("total", "Total"),
@@ -235,6 +243,7 @@ export function DispatchesPage() {
       resource="dispatches"
       title="Dispatch"
       subtitle="Vehicles on the road — click Receive to auto-create GRN and update partner inventory"
+      disableCreate={true}
       columns={[
         text("dispatch_no", "Dispatch"), text("party_name", "Party"), chip("type", "Type"),
         text("vehicle_no", "Vehicle"), text("driver", "Driver"),
@@ -254,6 +263,7 @@ export function GitPage() {
       resource="dispatches"
       title="Goods In Transit"
       subtitle="Currently loaded and in-transit dispatches"
+      disableCreate={true}
       columns={[
         text("dispatch_no", "Dispatch"), text("party_name", "Party"),
         text("vehicle_no", "Vehicle"), text("route", "Route"),
@@ -270,6 +280,7 @@ export function GrnPage() {
       resource="grns"
       title="Goods Received Note"
       subtitle="Receipts against dispatches with variance and dispute tracking"
+      disableCreate={true}
       columns={[
         text("grn_no", "GRN"), text("dispatch_id", "Dispatch"),
         text("received_by", "Received by"), date("received_on", "Received on"),
@@ -288,6 +299,7 @@ export function PaymentsPage() {
       resource="payments"
       title="Payments"
       subtitle="Incoming payments across all channels with reconciliation status"
+      disableCreate={true}
       columns={[
         text("payment_no", "Payment"), text("party_name", "Party"),
         chip("mode", "Mode"), text("reference", "Reference"),
@@ -305,6 +317,7 @@ export function LedgerPage() {
       resource="ledger"
       title="Ledger"
       subtitle="Party ledger with debits, credits and running balance"
+      disableCreate={true}
       columns={[
         date("date", "Date"), text("party_name", "Party"),
         chip("particulars", "Particulars"), text("reference", "Reference"),
@@ -336,6 +349,7 @@ export function CashbackPage() {
       resource="cashback"
       title="Cashback"
       subtitle="Retailer cashback campaigns, earnings and redemptions"
+      disableCreate={true}
       columns={[
         text("retailer_name", "Retailer"), chip("campaign", "Campaign"),
         money("earned", "Earned"), money("redeemed", "Redeemed"),
@@ -369,6 +383,7 @@ export function ApprovalsPage() {
       resource="approvals"
       title="Approval Engine"
       subtitle="Configurable approval workflows with SLA tracking"
+      disableCreate={true}
       columns={[
         text("id", "ID"), text("title", "Request"),
         chip("module", "Module"), text("requested_by", "Requested by"),
@@ -387,6 +402,7 @@ export function NotificationsPage() {
       resource="notifications"
       title="Notifications"
       subtitle="Platform-wide alerts and system events"
+      disableCreate={true}
       columns={[
         text("title", "Title"), chip("severity", "Severity"), chip("module", "Module"),
         date("created_at", "Received"),
