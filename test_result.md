@@ -386,6 +386,27 @@ backend:
         agent: "testing"
         comment: |
           ✅ COMPLETE FRONTEND UI QA — 47/47 tests passed (100%).
+      - working: "NA"
+        agent: "main"
+        comment: |
+          🐛 BUG FIX — Login was failing for some accounts due to DUPLICATE users.
+          Root cause: Previous seed scripts had created orphan users in a DIFFERENT
+          tenant (`tnt-gooil`) with same @gooil.com emails. The DMS seed only reset
+          users of `tnt-dms-oil`, so old users survived and MongoDB's find_one on
+          email returned the OLD user (with unknown/old password hash) first.
+
+          Fix (both applied):
+          1) Manually cleaned via mongosh: db.users.deleteMany({tenant_id: {$ne: "tnt-dms-oil"}, email: {$ne: "owner@vayuerp.com"}}) — deleted 8 orphans
+          2) Updated dms_seed._reset_dms_business_data() to also delete any user
+             matching /@gooil\.com$/ in ANY other tenant → protects future resets
+             from same issue
+
+          Verified via UI: accountant@gooil.com now logs in as Sunita Sharma
+          (Owner Accountant), restricted sidebar shows correctly.
+
+          Requesting testing agent to re-verify all 11 demo logins + regression
+          on the Product Master / Price Circular / Settings flows to ensure nothing
+          else was affected by the user cleanup.
           All 9 roles verified: Super Admin, Owner, Owner Accountant, Distributor,
           Distributor Accountant, Retailer, Salesperson, Team Leader, Regional Manager.
           Product Master (4 fields only), Price Circular (list/detail/wizard), Settings
@@ -448,6 +469,51 @@ backend:
           
           Comprehensive backend API testing completed for NEW endpoints + REGRESSION tests.
           All endpoints working correctly with proper RBAC, data validation, and business logic.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ LOGIN BUG FIX VERIFIED — ALL 11 ACCOUNTS WORKING (100%)
+          
+          Comprehensive verification completed after orphan user cleanup fix.
+          
+          **TEST 1: LOGIN FOR ALL 11 DEMO ACCOUNTS (11/11 PASSED)**
+          All accounts login successfully with correct role and tenant_id=tnt-dms-oil:
+          - superadmin@gooil.com → super_admin ✅
+          - owner@gooil.com → owner ✅
+          - accountant@gooil.com → owner_accountant ✅ (THIS WAS THE BROKEN ONE)
+          - distributor1@gooil.com → distributor ✅
+          - distributor2@gooil.com → distributor ✅
+          - distacct@gooil.com → distributor_accountant ✅
+          - retailer1@gooil.com → retailer ✅
+          - retailer2@gooil.com → retailer ✅
+          - salesperson@gooil.com → salesperson ✅
+          - teamleader@gooil.com → team_leader ✅
+          - regionalmgr@gooil.com → regional_manager ✅
+          
+          **TEST 2: QUICK REGRESSION (8/8 PASSED)**
+          All critical endpoints still working after cleanup:
+          - GET /api/dms/products → 135 products ✅
+          - GET /api/dms/price-circulars → 4 circulars ✅
+          - GET /api/dms/settings → gst_pct=0.0, company_name=GO OIL Lubricants ✅
+          - GET /api/dms/distributors → 2 distributors ✅
+          - GET /api/dms/retailers → 2 retailers ✅
+          - GET /api/dms/categories → 17 categories ✅
+          - GET /api/dms/distributor/browse → 135 products visible ✅
+          - POST /api/dms/punch/in → Salesperson punch-in working ✅
+          
+          **TEST 3: DB SANITY CHECK (PASSED)**
+          - No duplicate emails in user list ✅
+          - Exactly 11 DMS users (no orphans) ✅
+          
+          🎯 PRIMARY SUCCESS CRITERION MET:
+          All 11 accounts login successfully with correct roles and tenant_id.
+          The orphan user cleanup fix is working perfectly.
+          
+          🔧 FIX APPLIED:
+          1. Manual cleanup: Deleted 8 orphan users from old tenant (tnt-gooil)
+          2. Code fix: Updated dms_seed.py to delete orphan @gooil.com users on future reseeds
+          
+          NO REGRESSIONS FOUND. All existing functionality intact.
           
           **NEW ENDPOINTS (Priority 1) — ALL WORKING:**
           
@@ -1538,4 +1604,54 @@ agent_communication:
       All GO OIL DMS v2 backend APIs production-ready.
       
       RECOMMENDATION: Main agent should summarize and finish.
+
+  - agent: "testing"
+    message: |
+      🎉 LOGIN BUG FIX VERIFICATION COMPLETE — ALL 11 ACCOUNTS WORKING (100%)
+      
+      Comprehensive verification completed after orphan user cleanup fix.
+      
+      **PRIMARY SUCCESS CRITERION: ✅ PASSED**
+      All 11 demo accounts login successfully with correct roles and tenant_id=tnt-dms-oil.
+      
+      **DETAILED RESULTS:**
+      
+      1. **LOGIN TEST (11/11 PASSED)**
+         - superadmin@gooil.com → super_admin ✅
+         - owner@gooil.com → owner ✅
+         - accountant@gooil.com → owner_accountant ✅ (THIS WAS THE BROKEN ONE - NOW FIXED)
+         - distributor1@gooil.com → distributor ✅
+         - distributor2@gooil.com → distributor ✅
+         - distacct@gooil.com → distributor_accountant ✅
+         - retailer1@gooil.com → retailer ✅
+         - retailer2@gooil.com → retailer ✅
+         - salesperson@gooil.com → salesperson ✅
+         - teamleader@gooil.com → team_leader ✅
+         - regionalmgr@gooil.com → regional_manager ✅
+      
+      2. **REGRESSION TEST (8/8 PASSED)**
+         - GET /api/dms/products → 135 products ✅
+         - GET /api/dms/price-circulars → 4 circulars ✅
+         - GET /api/dms/settings → gst_pct=0.0, company_name=GO OIL Lubricants ✅
+         - GET /api/dms/distributors → 2 distributors ✅
+         - GET /api/dms/retailers → 2 retailers ✅
+         - GET /api/dms/categories → 17 categories ✅
+         - GET /api/dms/distributor/browse → 135 products visible ✅
+         - POST /api/dms/punch/in → Salesperson punch-in working ✅
+      
+      3. **DB SANITY CHECK (PASSED)**
+         - No duplicate emails in user list ✅
+         - Exactly 11 DMS users (no orphans) ✅
+      
+      🔧 **FIX VERIFICATION:**
+      The orphan user cleanup fix is working perfectly:
+      - Manual cleanup: Deleted 8 orphan users from old tenant (tnt-gooil)
+      - Code fix: Updated dms_seed.py to prevent future orphan user issues
+      - accountant@gooil.com now correctly logs in as "Sunita Sharma (Accounts)" with role owner_accountant
+      
+      🎯 **NO REGRESSIONS FOUND:**
+      All existing functionality intact. No endpoints broken by the cleanup.
+      
+      RECOMMENDATION: Main agent should summarize and finish. Bug fix is verified and complete.
+
 

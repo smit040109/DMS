@@ -85,6 +85,12 @@ async def _reset_dms_business_data(raw_db):
             pass
     # Delete old demo users of this tenant so we can recreate cleanly.
     await raw_db.users.delete_many({"tenant_id": DMS_TENANT_ID})
+    # Delete any orphan users from previous seed runs (any other tenant) so their
+    # gooil.com emails don't collide with our fresh accounts. Preserve platform owner.
+    await raw_db.users.delete_many({
+        "tenant_id": {"$ne": DMS_TENANT_ID},
+        "email": {"$regex": "@gooil\\.com$"},
+    })
 
 
 async def _seed_users(raw_db):
