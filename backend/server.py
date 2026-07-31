@@ -181,10 +181,16 @@ app.add_middleware(ApiUsageMiddleware)
 
 # CORS — driven from env for production. Falls back to '*' for dev.
 _cors_origins = parse_cors_origins()
+# Allow any preview.emergentagent.com subdomain so dev previews with credentials work
+_cors_regex = os.environ.get(
+    "CORS_ORIGIN_REGEX",
+    r"https://.*\.preview\.emergentagent\.com",
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True if _cors_origins != ["*"] else False,
-    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_origins=_cors_origins if _cors_origins != ["*"] else [],
+    allow_origin_regex=_cors_regex,
     allow_methods=["*"],
     allow_headers=["*"],
 )
