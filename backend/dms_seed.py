@@ -148,12 +148,37 @@ async def seed_dms(raw_db):
     products = await raw_db.dms_products.find({"tenant_id": DMS_TENANT_ID}, {"_id": 0}).to_list(1000)
 
     # --- distributors ---
+    # backfill: existing seed rows created before gps fields — inject Delhi/Mumbai coords
+    _dist_coords = {
+        "dist1@dms.com": (28.6139, 77.2090),
+        "dist2@dms.com": (19.0760, 72.8777),
+    }
+    async for d in raw_db.dms_distributors.find({"tenant_id": DMS_TENANT_ID}, {"_id": 0}):
+        if d.get("gps_lat") is None and d.get("email") in _dist_coords:
+            lat, lng = _dist_coords[d["email"]]
+            await raw_db.dms_distributors.update_one(
+                {"id": d["id"]},
+                {"$set": {
+                    "gps_lat": lat, "gps_lng": lng,
+                    "location_link": f"https://maps.google.com/?q={lat},{lng}",
+                }},
+            )
+    # backfill: existing retailers — add location_link if missing
+    _ret_link_needed = raw_db.dms_retailers.find(
+        {"tenant_id": DMS_TENANT_ID, "gps_lat": {"$ne": None}, "location_link": {"$in": [None, ""]}},
+        {"_id": 0},
+    )
+    async for r in _ret_link_needed:
+        await raw_db.dms_retailers.update_one(
+            {"id": r["id"]},
+            {"$set": {"location_link": f"https://maps.google.com/?q={r['gps_lat']},{r['gps_lng']}"}},
+        )
     if await raw_db.dms_distributors.count_documents({"tenant_id": DMS_TENANT_ID}) == 0:
         dist_pairs = [
-            ("dist1@dms.com", "Amit Distributor",  "Delhi",  "07AAACD1234M1Z5"),
-            ("dist2@dms.com", "Priya Traders",     "Mumbai", "27AAACP4321F1Z0"),
+            ("dist1@dms.com", "Amit Distributor",  "Delhi",  "07AAACD1234M1Z5", 28.6139, 77.2090),
+            ("dist2@dms.com", "Priya Traders",     "Mumbai", "27AAACP4321F1Z0", 19.0760, 72.8777),
         ]
-        for email, name, region, gstin in dist_pairs:
+        for email, name, region, gstin, lat, lng in dist_pairs:
             uid = user_ids_by_email.get(email)
             if not uid:
                 continue
@@ -166,6 +191,9 @@ async def seed_dms(raw_db):
                 "phone": "+91-9876500011",
                 "address": f"{region}, India",
                 "region": region,
+                "gps_lat": lat,
+                "gps_lng": lng,
+                "location_link": f"https://maps.google.com/?q={lat},{lng}",
                 "user_id": uid,
                 "accountant_user_id": user_ids_by_email.get("distacct@dms.com") if email == "dist1@dms.com" else None,
                 "kyc": {

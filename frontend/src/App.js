@@ -23,6 +23,8 @@ import {
   TlDistributorsPage, TlAssignmentsPage,
 } from "@/pages/dms/SalesTeamPages";
 import { SuperAdminUsersPage } from "@/pages/dms/SuperAdminPages";
+import { OwnerUsersPage } from "@/pages/dms/OwnerUsersPage";
+import { LiveTrackingPage } from "@/pages/dms/LiveTrackingPage";
 import { PrintEbillPage, PrintRetailerBillPage } from "@/pages/dms/PrintPages";
 
 function Protected({ children }) {
@@ -73,6 +75,10 @@ function AppRoutes() {
       <Route path="/dms/owner/inventory"           element={<DmsPage Component={OwnerInventoryPage} />} />
       <Route path="/dms/owner/ledger"              element={<DmsPage Component={PrimaryLedgerPage} />} />
       <Route path="/dms/owner/retailer-prices"     element={<DmsPage Component={CategoriesPage} />} />
+      <Route path="/dms/owner/users"               element={<DmsPage Component={OwnerUsersPage} />} />
+      <Route path="/dms/owner/live-tracking"       element={<DmsPage Component={LiveTrackingPage} />} />
+      <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
+      <Route path="/dms/regional-manager/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
 
       {/* Distributor */}
       <Route path="/dms/distributor/browse"           element={<DmsPage Component={DistributorBrowsePage} />} />

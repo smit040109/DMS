@@ -379,6 +379,10 @@ def build_dms_router(db, get_current_user):
             "region": body.get("region", ""),
             "user_id": uid,
             "accountant_user_id": accountant_uid,
+            # geo — for Owner live map
+            "location_link": body.get("location_link", ""),
+            "gps_lat": body.get("gps_lat"),
+            "gps_lng": body.get("gps_lng"),
             # KYC
             "kyc": {
                 "gstin": body.get("gstin", ""),
@@ -407,7 +411,8 @@ def build_dms_router(db, get_current_user):
     @router.put("/distributors/{did}")
     async def update_distributor(did: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
         upd: Dict[str, Any] = {}
-        for k in ["name", "phone", "address", "region", "credit_limit", "active"]:
+        for k in ["name", "phone", "address", "region", "credit_limit", "active",
+                  "location_link", "gps_lat", "gps_lng"]:
             if k in body:
                 upd[k] = body[k]
         if "kyc" in body:
@@ -1058,6 +1063,7 @@ def build_dms_router(db, get_current_user):
             "region": body.get("region", ""),
             "gps_lat": body.get("gps_lat"),
             "gps_lng": body.get("gps_lng"),
+            "location_link": body.get("location_link", ""),
             "distributor_id": did,
             "onboarded_by": user["id"],
             "onboarded_by_role": user["role"],
@@ -1085,7 +1091,7 @@ def build_dms_router(db, get_current_user):
     @router.put("/retailers/{rid}")
     async def update_retailer(rid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
         upd: Dict[str, Any] = {}
-        for k in ["name", "phone", "address", "region", "gps_lat", "gps_lng", "credit_limit", "active", "documents"]:
+        for k in ["name", "phone", "address", "region", "gps_lat", "gps_lng", "location_link", "credit_limit", "active", "documents"]:
             if k in body:
                 upd[k] = body[k]
         if "kyc" in body:
@@ -1767,6 +1773,381 @@ def build_dms_router(db, get_current_user):
                 "primary_orders": n_po, "secondary_orders": n_so,
             }
         }
+
+    # =========================================================================
+    # LIVE TRACKING — Salesperson GPS pings (Phase 2 + 3)
+    # =========================================================================
+    def _haversine_km(lat1, lng1, lat2, lng2) -> float:
+        """Great-circle distance between two lat/lng points in KM."""
+        from math import radians, sin, cos, asin, sqrt
+        try:
+            lat1, lng1, lat2, lng2 = map(float, (lat1, lng1, lat2, lng2))
+        except Exception:
+            return 0.0
+        R = 6371.0
+        dLat = radians(lat2 - lat1)
+        dLng = radians(lng2 - lng1)
+        a = sin(dLat/2)**2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dLng/2)**2
+        return 2 * R * asin(sqrt(a))
+
+    def _yyyy_mm_dd(iso_or_dt) -> str:
+        if isinstance(iso_or_dt, str):
+            return iso_or_dt[:10]
+        return iso_or_dt.strftime("%Y-%m-%d")
+
+    def _today() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def _tl_can_see_sp(tl_id: str, sp_user: dict, db_ref) -> bool:
+        # placeholder — narrower check happens inline; kept for readability
+        return True
+
+    async def _sp_visible_ids_for(user: dict) -> List[str]:
+        """
+        Return the list of salesperson user_ids the given user is allowed to see.
+        owner / super_admin → all
+        regional_manager → SPs assigned to TLs under this RM
+        team_leader → SPs assigned to distributors under this TL
+        """
+        role = user.get("role")
+        if role in ("owner", "super_admin"):
+            ids = [u["id"] async for u in db.users.find({"role": "salesperson"}, {"_id": 0, "id": 1})]
+            return ids
+        if role == "team_leader":
+            tl_dists = [a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0, "distributor_id": 1})]
+            if not tl_dists:
+                return []
+            ids = set()
+            async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": tl_dists}}, {"_id": 0, "salesperson_id": 1}):
+                ids.add(a["salesperson_id"])
+            return list(ids)
+        if role == "regional_manager":
+            tls = [a["team_leader_id"] async for a in db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0, "team_leader_id": 1})]
+            dists = set()
+            async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tls}}, {"_id": 0, "distributor_id": 1}):
+                dists.add(a["distributor_id"])
+            ids = set()
+            async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": list(dists)}}, {"_id": 0, "salesperson_id": 1}):
+                ids.add(a["salesperson_id"])
+            return list(ids)
+        if role == "salesperson":
+            return [user["id"]]
+        return []
+
+    @router.post("/tracking/ping")
+    async def tracking_ping(body: Dict[str, Any] = Body(...), user: dict = Depends(salesperson_only)):
+        """Salesperson posts current GPS every 60s."""
+        lat = body.get("lat"); lng = body.get("lng")
+        if lat is None or lng is None:
+            raise HTTPException(status_code=400, detail="lat and lng required")
+        now = _now()
+        doc = {
+            "id": _nid("png"),
+            "salesperson_id": user["id"],
+            "lat": float(lat),
+            "lng": float(lng),
+            "accuracy": body.get("accuracy"),
+            "speed": body.get("speed"),
+            "date": _today(),
+            "created_at": now,
+        }
+        await db.dms_sp_pings.insert_one(doc)
+        # also stamp "last_active_at" on the user so live status reflects
+        await db.users.update_one({"id": user["id"]}, {"$set": {
+            "last_active_at": now,
+            "last_gps": {"lat": doc["lat"], "lng": doc["lng"], "at": now},
+        }})
+        return {"ok": True}
+
+    @router.get("/tracking/live")
+    async def tracking_live(user: dict = Depends(get_current_user)):
+        """
+        Current live map data for Owner / TL / RM.
+        Returns:
+          - salespersons: [{id, name, phone, lat, lng, last_ping_at, online}]
+          - distributors: [{id, name, lat, lng, address}]
+          - retailers:    [{id, name, lat, lng, address, distributor_id}]
+        """
+        role = user.get("role")
+        if role not in ("owner", "super_admin", "team_leader", "regional_manager"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        sp_ids = await _sp_visible_ids_for(user)
+        sps = []
+        async for u in db.users.find({"role": "salesperson", "id": {"$in": sp_ids}}, {"_id": 0, "password_hash": 0}):
+            gps = u.get("last_gps") or {}
+            last_at = gps.get("at") or u.get("last_active_at")
+            online = False
+            try:
+                if last_at:
+                    dt = datetime.fromisoformat(last_at.replace("Z", "+00:00"))
+                    online = (datetime.now(timezone.utc) - dt).total_seconds() < 300
+            except Exception:
+                pass
+            sps.append({
+                "id": u["id"], "name": u.get("name"), "phone": u.get("phone"),
+                "lat": gps.get("lat"), "lng": gps.get("lng"),
+                "last_ping_at": last_at,
+                "online": online,
+            })
+
+        # distributors — filter by role hierarchy
+        dq: Dict[str, Any] = {"active": True}
+        if role == "team_leader":
+            dids = [a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0, "distributor_id": 1})]
+            dq["id"] = {"$in": dids}
+        elif role == "regional_manager":
+            tls = [a["team_leader_id"] async for a in db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0, "team_leader_id": 1})]
+            dids = [a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tls}}, {"_id": 0, "distributor_id": 1})]
+            dq["id"] = {"$in": dids}
+        dists = []
+        async for d in db.dms_distributors.find(dq, {"_id": 0}):
+            dists.append({
+                "id": d["id"], "name": d.get("name"),
+                "lat": d.get("gps_lat"), "lng": d.get("gps_lng"),
+                "location_link": d.get("location_link"),
+                "address": d.get("address"), "region": d.get("region"),
+            })
+
+        # retailers — under those distributors
+        rq: Dict[str, Any] = {"active": True}
+        if "id" in dq:
+            rq["distributor_id"] = dq["id"]
+        rets = []
+        async for r in db.dms_retailers.find(rq, {"_id": 0}):
+            rets.append({
+                "id": r["id"], "name": r.get("name"),
+                "lat": r.get("gps_lat"), "lng": r.get("gps_lng"),
+                "location_link": r.get("location_link"),
+                "address": r.get("address"),
+                "distributor_id": r.get("distributor_id"),
+            })
+
+        return {"salespersons": sps, "distributors": dists, "retailers": rets}
+
+    @router.get("/tracking/salesperson/{sid}")
+    async def tracking_salesperson_detail(
+        sid: str,
+        date: Optional[str] = Query(None, description="YYYY-MM-DD; defaults to today"),
+        user: dict = Depends(get_current_user),
+    ):
+        """
+        Full detail for one salesperson on one date:
+          - profile + current live location
+          - punch in / out + working hours
+          - full route (ordered pings)
+          - total distance travelled
+          - visited distributors / retailers (proximity < 200m to any ping)
+        """
+        # RBAC — same visibility rules as /tracking/live
+        allowed = await _sp_visible_ids_for(user)
+        if sid not in allowed:
+            raise HTTPException(status_code=403, detail="Not permitted to view this salesperson")
+
+        day = date or _today()
+        sp = await db.users.find_one({"id": sid, "role": "salesperson"}, {"_id": 0, "password_hash": 0})
+        if not sp:
+            raise HTTPException(status_code=404, detail="Salesperson not found")
+
+        # punch
+        punch = await db.dms_punch.find_one({"salesperson_id": sid, "date": day}, {"_id": 0})
+        working_hours = 0.0
+        if punch and punch.get("in_at"):
+            try:
+                a = datetime.fromisoformat(punch["in_at"].replace("Z", "+00:00"))
+                b = datetime.fromisoformat((punch.get("out_at") or _now()).replace("Z", "+00:00"))
+                working_hours = max(0.0, (b - a).total_seconds() / 3600.0)
+            except Exception:
+                pass
+
+        # pings for the day
+        pings = await db.dms_sp_pings.find(
+            {"salesperson_id": sid, "date": day}, {"_id": 0}
+        ).sort("created_at", 1).to_list(5000)
+
+        # distance
+        distance_km = 0.0
+        for i in range(1, len(pings)):
+            distance_km += _haversine_km(pings[i-1]["lat"], pings[i-1]["lng"], pings[i]["lat"], pings[i]["lng"])
+
+        # visited shops = distributors/retailers with a ping within 200m
+        def _near(pt_lat, pt_lng) -> bool:
+            for p in pings:
+                if _haversine_km(pt_lat, pt_lng, p["lat"], p["lng"]) < 0.20:
+                    return True
+            return False
+
+        visited_dists = []
+        async for d in db.dms_distributors.find({"active": True, "gps_lat": {"$ne": None}}, {"_id": 0}):
+            if d.get("gps_lat") is None or d.get("gps_lng") is None: continue
+            if _near(d["gps_lat"], d["gps_lng"]):
+                visited_dists.append({"id": d["id"], "name": d["name"], "lat": d.get("gps_lat"), "lng": d.get("gps_lng")})
+
+        visited_rets = []
+        async for r in db.dms_retailers.find({"active": True, "gps_lat": {"$ne": None}}, {"_id": 0}):
+            if r.get("gps_lat") is None or r.get("gps_lng") is None: continue
+            if _near(r["gps_lat"], r["gps_lng"]):
+                visited_rets.append({"id": r["id"], "name": r["name"], "lat": r.get("gps_lat"), "lng": r.get("gps_lng")})
+
+        return {
+            "salesperson": {
+                "id": sp["id"], "name": sp.get("name"), "phone": sp.get("phone"),
+                "current_gps": sp.get("last_gps"),
+                "last_active_at": sp.get("last_active_at"),
+            },
+            "date": day,
+            "punch": punch,
+            "working_hours": _round(working_hours, 2),
+            "distance_km": _round(distance_km, 2),
+            "route": pings,
+            "visited": {"distributors": visited_dists, "retailers": visited_rets},
+        }
+
+    @router.get("/tracking/salesperson/{sid}/history")
+    async def tracking_history(
+        sid: str,
+        days: int = Query(30, ge=1, le=365),
+        user: dict = Depends(get_current_user),
+    ):
+        """Date-wise summary (last N days) for the salesperson."""
+        allowed = await _sp_visible_ids_for(user)
+        if sid not in allowed:
+            raise HTTPException(status_code=403, detail="Not permitted")
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=days)
+        # group pings by date
+        pipe = [
+            {"$match": {"salesperson_id": sid, "created_at": {"$gte": start.isoformat()}}},
+            {"$group": {"_id": "$date", "count": {"$sum": 1}}},
+            {"$sort": {"_id": -1}},
+        ]
+        counts = {r["_id"]: r["count"] async for r in db.dms_sp_pings.aggregate(pipe)}
+        punches = {p["date"]: p async for p in db.dms_punch.find({"salesperson_id": sid, "date": {"$gte": start.strftime("%Y-%m-%d")}}, {"_id": 0})}
+        out = []
+        for date_str, cnt in sorted(counts.items(), reverse=True):
+            p = punches.get(date_str)
+            hrs = 0.0
+            if p and p.get("in_at"):
+                try:
+                    a = datetime.fromisoformat(p["in_at"].replace("Z", "+00:00"))
+                    b = datetime.fromisoformat((p.get("out_at") or _now()).replace("Z", "+00:00"))
+                    hrs = (b - a).total_seconds() / 3600.0
+                except Exception:
+                    pass
+            out.append({
+                "date": date_str, "pings": cnt,
+                "in_at": (p or {}).get("in_at"), "out_at": (p or {}).get("out_at"),
+                "working_hours": _round(hrs, 2),
+            })
+        return {"data": out}
+
+    # =========================================================================
+    # OWNER — Complete User Management + Impersonation (Phase 1)
+    # =========================================================================
+    OWNER_MANAGEABLE_ROLES = [
+        "owner_accountant", "distributor", "distributor_accountant",
+        "retailer", "salesperson", "team_leader", "regional_manager",
+    ]
+
+    def _is_online(u: dict) -> bool:
+        """A user is considered online if last activity ping / login was <5min ago."""
+        last = u.get("last_login_at") or u.get("last_active_at")
+        if not last:
+            return False
+        try:
+            dt = datetime.fromisoformat(last.replace("Z", "+00:00"))
+            return (datetime.now(timezone.utc) - dt).total_seconds() < 300
+        except Exception:
+            return False
+
+    @router.get("/owner/users")
+    async def owner_list_users(role: Optional[str] = None, user: dict = Depends(owner_only)):
+        q: Dict[str, Any] = {"tenant_id": DMS_TENANT_ID}
+        if role:
+            q["role"] = role
+        docs = await db.users.find(q, {"_id": 0, "password_hash": 0}).sort("role", 1).to_list(2000)
+        for u in docs:
+            u["online"] = _is_online(u)
+        return {"data": docs, "count": len(docs)}
+
+    @router.post("/owner/users")
+    async def owner_create_user(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        import bcrypt
+        for k in ("email", "password", "name", "role"):
+            if not body.get(k):
+                raise HTTPException(status_code=400, detail=f"{k} required")
+        role = body["role"]
+        if role not in OWNER_MANAGEABLE_ROLES:
+            raise HTTPException(status_code=400, detail=f"Cannot create role={role} from owner panel")
+        email = body["email"].lower().strip()
+        if await db.users.find_one({"email": email}):
+            raise HTTPException(status_code=400, detail=f"Email {email} already exists")
+        uid = _nid("usr")
+        doc = {
+            "id": uid,
+            "tenant_id": DMS_TENANT_ID,
+            "email": email,
+            "name": body["name"],
+            "role": role,
+            "phone": body.get("phone", ""),
+            "password_hash": bcrypt.hashpw(body["password"].encode(), bcrypt.gensalt()).decode(),
+            "active": True,
+            "created_at": _now(),
+            "avatar": "".join([w[0] for w in body["name"].split()[:2]]).upper(),
+            "created_by": user["id"],
+        }
+        # optional linkage
+        for k in ("distributor_id", "retailer_id"):
+            if body.get(k):
+                doc[k] = body[k]
+        await db.users.insert_one(doc)
+        doc.pop("password_hash", None)
+        return {"ok": True, "user": doc}
+
+    @router.patch("/owner/users/{uid}")
+    async def owner_update_user(uid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        target = await db.users.find_one({"id": uid, "tenant_id": DMS_TENANT_ID})
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        updatable = {"name", "phone", "active", "distributor_id", "retailer_id"}
+        upd = {k: v for k, v in body.items() if k in updatable}
+        if not upd:
+            raise HTTPException(status_code=400, detail="Nothing to update")
+        await db.users.update_one({"id": uid}, {"$set": upd})
+        return {"ok": True}
+
+    @router.post("/owner/users/{uid}/reset-password")
+    async def owner_reset_password(uid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        import bcrypt
+        new_pw = (body.get("new_password") or "").strip()
+        if len(new_pw) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        target = await db.users.find_one({"id": uid, "tenant_id": DMS_TENANT_ID})
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        await db.users.update_one(
+            {"id": uid},
+            {"$set": {"password_hash": bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt()).decode()}},
+        )
+        return {"ok": True}
+
+    @router.post("/owner/impersonate/{uid}")
+    async def owner_impersonate(uid: str, user: dict = Depends(owner_only)):
+        target = await db.users.find_one({"id": uid, "tenant_id": DMS_TENANT_ID}, {"_id": 0, "password_hash": 0})
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.get("role") == "owner":
+            raise HTTPException(status_code=400, detail="Cannot impersonate another owner")
+        import jwt as _jwt, os as _os
+        payload = {
+            "sub": target["id"], "email": target["email"], "role": target["role"],
+            "tenant_id": target.get("tenant_id"),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=2),
+            "type": "access",
+            "impersonated_by": user["id"],
+        }
+        tok = _jwt.encode(payload, _os.environ["JWT_SECRET"], algorithm="HS256")
+        return {"token": tok, "user": target, "impersonated_by": {"id": user["id"], "name": user.get("name"), "email": user.get("email")}}
 
     # =========================================================================
     # SUPER ADMIN — login-as (impersonation)

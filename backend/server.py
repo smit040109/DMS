@@ -251,6 +251,14 @@ async def login(request: Request, response: Response, body: LoginIn):
         t = await _raw_db.tenants.find_one({"id": tid}, {"_id": 0, "status": 1})
         if t and t.get("status") == "suspended":
             raise HTTPException(status_code=403, detail="Tenant suspended — contact platform administrator")
+    # record last login for the master user panel
+    try:
+        await _raw_db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"last_login_at": datetime.now(timezone.utc).isoformat()}},
+        )
+    except Exception:
+        pass
     token = create_access_token(user["id"], user["email"], user["role"], tenant_id=tid)
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
     user.pop("password_hash", None); user.pop("_id", None)

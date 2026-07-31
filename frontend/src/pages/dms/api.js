@@ -107,6 +107,19 @@ export const dms = {
   adminUsers: () => api.get("/dms/admin/users").then(r => r.data),
   impersonate: (uid) => api.post(`/dms/admin/impersonate/${uid}`).then(r => r.data),
 
+  // owner — complete user management (Phase 1)
+  ownerListUsers: (role) => api.get("/dms/owner/users", { params: role ? { role } : {} }).then(r => r.data),
+  ownerCreateUser: (body) => api.post("/dms/owner/users", body).then(r => r.data),
+  ownerUpdateUser: (uid, body) => api.patch(`/dms/owner/users/${uid}`, body).then(r => r.data),
+  ownerResetPassword: (uid, new_password) => api.post(`/dms/owner/users/${uid}/reset-password`, { new_password }).then(r => r.data),
+  ownerImpersonate: (uid) => api.post(`/dms/owner/impersonate/${uid}`).then(r => r.data),
+
+  // live tracking (Phase 2 + 3)
+  trackingPing: (body) => api.post("/dms/tracking/ping", body).then(r => r.data),
+  trackingLive: () => api.get("/dms/tracking/live").then(r => r.data),
+  trackingSalesperson: (sid, date) => api.get(`/dms/tracking/salesperson/${sid}`, { params: date ? { date } : {} }).then(r => r.data),
+  trackingHistory: (sid, days = 30) => api.get(`/dms/tracking/salesperson/${sid}/history`, { params: { days } }).then(r => r.data),
+
   // print
   printEbill: (id) => api.get(`/dms/print/ebill/${id}`).then(r => r.data),
   printRetailerBill: (id) => api.get(`/dms/print/retailer-bill/${id}`).then(r => r.data),

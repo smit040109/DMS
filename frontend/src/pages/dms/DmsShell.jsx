@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { dms } from "./api";
+import { ImpersonationBanner } from "./OwnerUsersPage";
+import SalespersonGpsPinger from "@/components/SalespersonGpsPinger";
 import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight } from "lucide-react";
 
 const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp };
@@ -16,6 +18,8 @@ const NAV_BY_ROLE = {
     { label: "Owner Inventory", to: "/dms/owner/inventory",     icon: "Warehouse" },
     { label: "Primary Ledger",  to: "/dms/owner/ledger",        icon: "ScrollText" },
     { label: "Retailer Prices", to: "/dms/owner/retailer-prices", icon: "TrendingUp" },
+    { label: "User Management", to: "/dms/owner/users",         icon: "Users" },
+    { label: "Live Tracking",   to: "/dms/owner/live-tracking", icon: "MapPin" },
   ],
   owner_accountant: [
     { label: "Dashboard",       to: "/dms",                     icon: "LayoutDashboard" },
@@ -151,7 +155,10 @@ export default function DmsShell({ children }) {
   const isActive = (to) => (to === "/dms" ? location.pathname === "/dms" : location.pathname.startsWith(to));
 
   return (
-    <div className="min-h-screen bg-slate-50 flex">
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <ImpersonationBanner />
+      <SalespersonGpsPinger />
+      <div className="flex-1 flex">
       {/* Sidebar - Desktop */}
       <aside className="hidden lg:flex flex-col w-60 bg-white border-r border-slate-200 sticky top-0 h-screen">
         <div className="h-16 flex items-center px-5 border-b border-slate-100">
@@ -233,6 +240,7 @@ export default function DmsShell({ children }) {
           </div>
         </header>
         <main className="flex-1 p-4 lg:p-6">{children}</main>
+      </div>
       </div>
     </div>
   );

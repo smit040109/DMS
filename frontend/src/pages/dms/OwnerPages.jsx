@@ -377,6 +377,18 @@ export function DistributorsPage() {
                 <div><Label>IFSC</Label><Input value={form.bank_ifsc || ""} onChange={e => setForm({ ...form, bank_ifsc: e.target.value })} /></div>
               </div>
             </div>
+            <div>
+              <div className="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 flex items-center gap-1">📍 Shop Location (for Live Map)</div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2"><Label>Google Maps Link (paste maps.google.com URL)</Label><Input placeholder="https://maps.google.com/?q=28.61,77.20" value={form.location_link || ""} onChange={e => {
+                  const link = e.target.value;
+                  const m = link.match(/@?(-?\d+\.\d+),\s*(-?\d+\.\d+)/);
+                  setForm({ ...form, location_link: link, gps_lat: m ? Number(m[1]) : form.gps_lat, gps_lng: m ? Number(m[2]) : form.gps_lng });
+                }} data-testid="d-map-link" /></div>
+                <div><Label>OR — Latitude</Label><Input type="number" step="0.000001" value={form.gps_lat ?? ""} onChange={e => setForm({ ...form, gps_lat: e.target.value === "" ? null : Number(e.target.value) })} data-testid="d-lat" /></div>
+                <div><Label>Longitude</Label><Input type="number" step="0.000001" value={form.gps_lng ?? ""} onChange={e => setForm({ ...form, gps_lng: e.target.value === "" ? null : Number(e.target.value) })} data-testid="d-lng" /></div>
+              </div>
+            </div>
           </div>
           <DialogFooter><Button onClick={save} className="bg-teal-700 hover:bg-teal-800" data-testid="save-dist-btn">Create Distributor</Button></DialogFooter>
         </DialogContent>
