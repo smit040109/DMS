@@ -3,7 +3,7 @@
 import requests
 import time
 
-BASE_URL = "https://login-debug-61.preview.emergentagent.com/api"
+BASE_URL = "https://dms-premium.preview.emergentagent.com/api"
 
 print("Testing rate limiting on /auth/login (10/minute)...")
 print("Making 12 rapid login attempts with bad credentials...")
