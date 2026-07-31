@@ -416,6 +416,13 @@ backend:
       - working: true
         agent: "testing"
         comment: |
+          ✅ RATE LIMIT FIX VERIFIED — 15 rapid logins all HTTP 200 (0 rate limit
+          errors). All 11 demo accounts login successfully with correct roles.
+          Wrong password still returns 401 (security intact). Regression pass:
+          products=135, price-circulars OK, settings OK.
+      - working: true
+        agent: "testing"
+        comment: |
           ✅ LOGIN RATE LIMIT FIX VERIFIED — ALL CRITICAL TESTS PASSED (100%)
           
           Comprehensive verification completed for the rate limit bug fix.
