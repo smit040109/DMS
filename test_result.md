@@ -719,7 +719,7 @@ agent_communication:
       Blocker fixed before test-run: backend/.env and frontend/.env files were missing on disk.
       Recreated with:
         - MONGO_URL=mongodb://localhost:27017, DB_NAME=go_oil_dms, JWT_SECRET regenerated
-        - REACT_APP_BACKEND_URL=https://saas-productize.preview.emergentagent.com
+        - REACT_APP_BACKEND_URL=https://sales-network-10.preview.emergentagent.com
       Backend now boots, auto-seeded all Phase 1-4 data (5 branches, 15 distributors, 40 retailers,
       60 batches, 24 primary orders, 13 secondary orders). test_credentials.md rewritten with all 8 personas.
 
@@ -1494,7 +1494,7 @@ backend:
         comment: "User reported login failing with 'Something went wrong. Please try again.' Root cause: REACT_APP_BACKEND_URL pointing to different preview URL causing CORS error with withCredentials: true in axios."
       - working: true
         agent: "main"
-        comment: "Fixed REACT_APP_BACKEND_URL in frontend/.env to https://saas-productize.preview.emergentagent.com (same origin as frontend). Frontend service restarted."
+        comment: "Fixed REACT_APP_BACKEND_URL in frontend/.env to https://sales-network-10.preview.emergentagent.com (same origin as frontend). Frontend service restarted."
       - working: true
         agent: "testing"
         comment: "COMPREHENSIVE LOGIN BUG FIX VERIFICATION COMPLETED. All 8 verification checks PASSED: (1) Login with company@gooil.com/GoOil@2026 successful - redirected to /app, (2) Dashboard renders with 12 KPI cards, (3) No 'Something went wrong' error, (4) JWT token stored in localStorage under key 'go_oil_token' (223 chars, valid 3-part JWT structure), (5) One-click demo buttons working (Company Admin, Distributor tested), (6) POST /api/auth/login returns 200 with {user, token} payload, (7) No CORS errors in console, (8) CORS headers present (access-control-allow-origin: *). Tested 3 personas successfully: company@gooil.com, admin@gooil.com, distributor@gooil.com. Only console errors are expected 401s from /api/auth/me during initial page load (normal behavior). Login flow fully functional."
@@ -1777,7 +1777,7 @@ agent_communication:
       - Browser blocked the cross-origin request
       
       FIX APPLIED:
-      - REACT_APP_BACKEND_URL set to https://saas-productize.preview.emergentagent.com
+      - REACT_APP_BACKEND_URL set to https://sales-network-10.preview.emergentagent.com
       - Same origin as frontend (no cross-origin issues)
       - Frontend service restarted successfully
       
@@ -1786,10 +1786,10 @@ agent_communication:
       ═══════════════════════════════════════════════════════════════════════════
       
       Request Details:
-      - URL: https://saas-productize.preview.emergentagent.com/api/auth/login
+      - URL: https://sales-network-10.preview.emergentagent.com/api/auth/login
       - Method: POST
       - Content-Type: application/json
-      - Origin: https://saas-productize.preview.emergentagent.com
+      - Origin: https://sales-network-10.preview.emergentagent.com
       
       Response Details:
       - Status: 200 OK

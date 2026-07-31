@@ -9,7 +9,7 @@ import json
 from datetime import datetime
 
 # Backend URL from frontend/.env
-BASE_URL = "https://saas-productize.preview.emergentagent.com/api"
+BASE_URL = "https://sales-network-10.preview.emergentagent.com/api"
 
 # Test credentials
 CREDS = {
