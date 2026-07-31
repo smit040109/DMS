@@ -575,7 +575,10 @@ export function OwnerOrderDetailPage() {
         title={order.order_no}
         subtitle={`${order.distributor_name} • Placed ${niceDate(order.created_at)}`}
         back="/dms/owner/primary-orders"
-        action={canReady && <Button onClick={ready} disabled={busy} className="bg-teal-700 hover:bg-teal-800" data-testid="mark-ready-btn"><Truck size={16} className="mr-1" /> Mark Ready to Go</Button>}
+        action={<div className="flex gap-2">
+          {order.ebill_id && <Button variant="outline" onClick={() => window.open(`/dms/print/ebill/${order.ebill_id}`, "_blank")} data-testid="print-ebill-btn"><span className="mr-1">🖨</span> Print e-Bill</Button>}
+          {canReady && <Button onClick={ready} disabled={busy} className="bg-teal-700 hover:bg-teal-800" data-testid="mark-ready-btn"><Truck size={16} className="mr-1" /> Mark Ready to Go</Button>}
+        </div>}
       />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Status</div><div className="mt-1"><span className={`text-sm px-2.5 py-1 rounded-full border ${statusPill(order.status)}`}>{order.status.replace(/_/g, " ")}</span></div></Card>

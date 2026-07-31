@@ -11,7 +11,7 @@ Tenant scope: `tnt-dms-oil` (dedicated tenant so existing tenancy wrapper isolat
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
@@ -900,19 +900,6 @@ def build_dms_router(db, get_current_user):
             }
         }
 
-    # placeholders for iteration 2 dashboards
-    @router.get("/dashboard/salesperson")
-    async def sp_dashboard(user: dict = Depends(salesperson_only)):
-        return {"kpis": {"assigned_distributors": 0, "assigned_retailers": 0, "orders_today": 0}}
-
-    @router.get("/dashboard/team-leader")
-    async def tl_dashboard(user: dict = Depends(team_leader_only)):
-        return {"kpis": {"distributors": 0, "salespersons": 0, "sales_mtd": 0}}
-
-    @router.get("/dashboard/regional-manager")
-    async def rm_dashboard(user: dict = Depends(regional_manager_only)):
-        return {"kpis": {"team_leaders": 0, "sales_mtd": 0}}
-
     # =========================================================================
     # ME endpoint — enriched with distributor info if applicable
     # =========================================================================
@@ -922,6 +909,924 @@ def build_dms_router(db, get_current_user):
         if user.get("distributor_id"):
             d = await db.dms_distributors.find_one({"id": user["distributor_id"]}, {"_id": 0})
             out["distributor"] = d
+        if user.get("retailer_id"):
+            r = await db.dms_retailers.find_one({"id": user["retailer_id"]}, {"_id": 0})
+            out["retailer"] = r
         return out
+
+    # =========================================================================
+    # ITERATION 2 — SECONDARY SALES (Distributor ↔ Retailer)
+    # =========================================================================
+
+    async def _resolve_visible_products_for_retailer(distributor_id: str, retailer_id: str) -> List[Dict[str, Any]]:
+        """Return products distributor has NOT hidden for this retailer AND has stock for."""
+        hidden = set()
+        async for v in db.dms_ret_visibility.find({"distributor_id": distributor_id, "retailer_id": retailer_id, "visible": False}, {"_id": 0}):
+            hidden.add(v["product_id"])
+        # only include products distributor has stock in
+        prods = []
+        async for inv in db.dms_distributor_inventory.find({"distributor_id": distributor_id}, {"_id": 0}):
+            if inv["product_id"] in hidden:
+                continue
+            if int(inv.get("qty_boxes", 0)) <= 0:
+                continue
+            p = await db.dms_products.find_one({"id": inv["product_id"]}, {"_id": 0})
+            if not p or not p.get("active"):
+                continue
+            # distributor's SP = cost + margin (we allow override in retailer_price)
+            sp_map = await db.dms_retailer_prices.find_one({"distributor_id": distributor_id, "product_id": p["id"]}, {"_id": 0})
+            selling_price = _round(sp_map["selling_price"]) if sp_map else _round(inv.get("cost_price", p["unit_price"]) * 1.15)
+            prods.append({
+                **p,
+                "distributor_stock_boxes": int(inv["qty_boxes"]),
+                "selling_price": selling_price,
+                "cost_price": inv.get("cost_price", p["unit_price"]),
+            })
+        return prods
+
+    async def _get_retailer_selling_mode(distributor_id: str, retailer_id: str) -> str:
+        doc = await db.dms_ret_mode.find_one({"distributor_id": distributor_id, "retailer_id": retailer_id}, {"_id": 0})
+        return doc.get("mode", "box") if doc else "box"
+
+    # ── retailer prices (distributor's selling price to retailers, configurable by owner/TL) ──
+    @router.get("/distributors/{did}/retailer-prices")
+    async def get_retailer_prices(did: str, user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role not in ("owner", "super_admin", "team_leader", "distributor") or (role == "distributor" and user.get("distributor_id") != did):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        products = await db.dms_products.find({"active": True}, {"_id": 0}).sort("name", 1).to_list(1000)
+        price_map = {p["product_id"]: p["selling_price"] async for p in db.dms_retailer_prices.find({"distributor_id": did}, {"_id": 0})}
+        # get purchase price from distributor inventory
+        inv_map = {i["product_id"]: i.get("cost_price", 0) async for i in db.dms_distributor_inventory.find({"distributor_id": did}, {"_id": 0})}
+        out = []
+        for p in products:
+            cp = inv_map.get(p["id"], p["unit_price"])
+            out.append({
+                "product_id": p["id"],
+                "product_name": p["name"],
+                "sku_code": p["sku_code"],
+                "cost_price": _round(cp),
+                "selling_price": price_map.get(p["id"], _round(cp * 1.15)),
+            })
+        return {"data": out}
+
+    @router.put("/distributors/{did}/retailer-prices")
+    async def set_retailer_price(did: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        # Owner or Team Leader can set; distributor cannot set their own selling price (per doc)
+        if role not in ("owner", "super_admin", "team_leader"):
+            raise HTTPException(status_code=403, detail="Only owner or team leader can set selling prices")
+        pid = body.get("product_id"); sp = _round(body.get("selling_price", 0))
+        if not pid or sp <= 0:
+            raise HTTPException(status_code=400, detail="product_id + selling_price>0 required")
+        await db.dms_retailer_prices.update_one(
+            {"distributor_id": did, "product_id": pid},
+            {"$set": {"distributor_id": did, "product_id": pid, "selling_price": sp, "updated_at": _now(), "updated_by": user["id"]}},
+            upsert=True,
+        )
+        return {"ok": True}
+
+    # ── retailers ──
+    async def _get_dist_id_for_user(user: dict) -> Optional[str]:
+        role = user.get("role")
+        if role == "distributor":
+            return user.get("distributor_id")
+        if role == "distributor_accountant":
+            return user.get("distributor_id")
+        if role == "salesperson":
+            # returns first assigned distributor
+            a = await db.dms_sp_assignments.find_one({"salesperson_id": user["id"]}, {"_id": 0})
+            return a.get("distributor_id") if a else None
+        return None
+
+    @router.get("/retailers")
+    async def list_retailers(distributor_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        q: Dict[str, Any] = {"active": True}
+        if role == "retailer":
+            q["id"] = user.get("retailer_id")
+        elif role in ("distributor", "distributor_accountant"):
+            q["distributor_id"] = user.get("distributor_id")
+        elif role == "salesperson":
+            # retailers under my assigned distributors
+            assigns = await db.dms_sp_assignments.find({"salesperson_id": user["id"]}, {"_id": 0}).to_list(500)
+            dids = [a["distributor_id"] for a in assigns]
+            q["distributor_id"] = {"$in": dids} if dids else "__none__"
+        elif distributor_id:
+            q["distributor_id"] = distributor_id
+        docs = await db.dms_retailers.find(q, {"_id": 0}).sort("name", 1).to_list(1000)
+        return {"data": docs, "count": len(docs)}
+
+    @router.post("/retailers")
+    async def create_retailer(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role not in ("distributor", "salesperson", "owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        did = body.get("distributor_id") or await _get_dist_id_for_user(user)
+        if not did:
+            raise HTTPException(status_code=400, detail="distributor_id required")
+        required = ["name", "phone", "address"]
+        for k in required:
+            if not body.get(k):
+                raise HTTPException(status_code=400, detail=f"{k} required")
+        rid = _nid("ret")
+        # user login (optional)
+        ruser_id = None
+        if body.get("email"):
+            try:
+                ruser_id = await _create_dms_user(
+                    email=body["email"],
+                    password=body.get("password") or "Demo@2026",
+                    name=body["name"],
+                    role="retailer",
+                    extra={"retailer_id": rid, "distributor_id": did, "phone": body["phone"]},
+                )
+            except HTTPException:
+                # email already exists — link to existing user if it's a retailer
+                existing = await db.users.find_one({"email": body["email"].lower()})
+                if existing and existing.get("role") == "retailer":
+                    ruser_id = existing["id"]
+                    await db.users.update_one({"id": existing["id"]}, {"$set": {"retailer_id": rid, "distributor_id": did}})
+                else:
+                    raise
+        doc = {
+            "id": rid,
+            "name": body["name"],
+            "phone": body["phone"],
+            "email": (body.get("email") or "").lower(),
+            "address": body["address"],
+            "region": body.get("region", ""),
+            "gps_lat": body.get("gps_lat"),
+            "gps_lng": body.get("gps_lng"),
+            "distributor_id": did,
+            "onboarded_by": user["id"],
+            "onboarded_by_role": user["role"],
+            "user_id": ruser_id,
+            "kyc": {
+                "gstin": body.get("gstin", ""),
+                "shop_license": body.get("shop_license", ""),
+                "notes": body.get("kyc_notes", ""),
+            },
+            "documents": body.get("documents", []),
+            "credit_limit": _round(body.get("credit_limit", 0)),
+            "active": True,
+            "created_at": _now(),
+        }
+        await db.dms_retailers.insert_one(doc)
+        return _clean(doc)
+
+    @router.get("/retailers/{rid}")
+    async def get_retailer(rid: str, user: dict = Depends(get_current_user)):
+        doc = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        return doc
+
+    @router.put("/retailers/{rid}")
+    async def update_retailer(rid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        upd: Dict[str, Any] = {}
+        for k in ["name", "phone", "address", "region", "gps_lat", "gps_lng", "credit_limit", "active", "documents"]:
+            if k in body:
+                upd[k] = body[k]
+        if "kyc" in body:
+            upd["kyc"] = body["kyc"]
+        upd["updated_at"] = _now()
+        r = await db.dms_retailers.update_one({"id": rid}, {"$set": upd})
+        if r.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        return {"ok": True}
+
+    # ── retailer visibility (distributor controls) ──
+    @router.get("/retailers/{rid}/visibility")
+    async def get_ret_visibility(rid: str, user: dict = Depends(get_current_user)):
+        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not retailer:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        did = retailer["distributor_id"]
+        # only distributor/dist_acct/owner can view
+        if user["role"] not in ("owner", "super_admin", "team_leader") and user.get("distributor_id") != did:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        products = await db.dms_products.find({"active": True}, {"_id": 0}).sort("name", 1).to_list(1000)
+        vis_map = {v["product_id"]: v.get("visible", True) async for v in db.dms_ret_visibility.find({"distributor_id": did, "retailer_id": rid}, {"_id": 0})}
+        out = []
+        for p in products:
+            out.append({
+                "product_id": p["id"],
+                "product_name": p["name"],
+                "sku_code": p["sku_code"],
+                "visible": vis_map.get(p["id"], True),
+            })
+        return {"data": out}
+
+    @router.put("/retailers/{rid}/visibility")
+    async def set_ret_visibility(rid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not retailer:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        did = retailer["distributor_id"]
+        if user["role"] not in ("owner", "super_admin") and user.get("distributor_id") != did:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        pid = body.get("product_id"); visible = bool(body.get("visible", True))
+        if not pid:
+            raise HTTPException(status_code=400, detail="product_id required")
+        await db.dms_ret_visibility.update_one(
+            {"distributor_id": did, "retailer_id": rid, "product_id": pid},
+            {"$set": {"distributor_id": did, "retailer_id": rid, "product_id": pid, "visible": visible, "updated_at": _now()}},
+            upsert=True,
+        )
+        return {"ok": True}
+
+    # ── retailer selling mode ──
+    @router.get("/retailers/{rid}/selling-mode")
+    async def get_ret_mode(rid: str, user: dict = Depends(get_current_user)):
+        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not retailer:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        did = retailer["distributor_id"]
+        mode = await _get_retailer_selling_mode(did, rid)
+        return {"mode": mode}
+
+    @router.put("/retailers/{rid}/selling-mode")
+    async def set_ret_mode(rid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not retailer:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        did = retailer["distributor_id"]
+        if user["role"] not in ("owner", "super_admin") and user.get("distributor_id") != did:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        mode = body.get("mode", "box")
+        if mode not in ("box", "box_pcs"):
+            raise HTTPException(status_code=400, detail="mode must be 'box' or 'box_pcs'")
+        await db.dms_ret_mode.update_one(
+            {"distributor_id": did, "retailer_id": rid},
+            {"$set": {"distributor_id": did, "retailer_id": rid, "mode": mode, "updated_at": _now()}},
+            upsert=True,
+        )
+        return {"ok": True, "mode": mode}
+
+    # ── retailer browse ──
+    @router.get("/retailer/browse")
+    async def retailer_browse(retailer_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+        # retailer sees their own; salesperson may pass retailer_id explicitly
+        role = user.get("role")
+        rid = retailer_id or user.get("retailer_id")
+        if not rid:
+            raise HTTPException(status_code=400, detail="retailer_id required")
+        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not retailer:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        # access check
+        if role == "retailer" and user.get("retailer_id") != rid:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        did = retailer["distributor_id"]
+        products = await _resolve_visible_products_for_retailer(did, rid)
+        cats = {c["id"]: c["name"] async for c in db.dms_categories.find({}, {"_id": 0, "id": 1, "name": 1})}
+        for p in products:
+            p["category_name"] = cats.get(p.get("category_id"), "")
+        mode = await _get_retailer_selling_mode(did, rid)
+        # pending qty for this retailer
+        pending = []
+        async for pd in db.dms_retailer_pending.find({"retailer_id": rid, "distributor_id": did}, {"_id": 0}):
+            if int(pd.get("pending_qty_boxes", 0)) > 0 or int(pd.get("pending_qty_pcs", 0)) > 0:
+                pending.append(pd)
+        return {"data": products, "mode": mode, "retailer": retailer, "pending": pending}
+
+    # ── secondary orders ──
+    @router.post("/secondary-orders")
+    async def place_secondary_order(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role not in ("retailer", "salesperson", "distributor", "owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        rid = body.get("retailer_id") or user.get("retailer_id")
+        if not rid:
+            raise HTTPException(status_code=400, detail="retailer_id required")
+        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not retailer:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        if role == "retailer" and user.get("retailer_id") != rid:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        did = retailer["distributor_id"]
+        items = body.get("items") or []
+        include_pending = bool(body.get("include_pending", False))
+        if not items and not include_pending:
+            raise HTTPException(status_code=400, detail="items[] required")
+        mode = await _get_retailer_selling_mode(did, rid)
+        # merge with pending if include_pending
+        pending_add: Dict[str, Dict[str, Any]] = {}
+        if include_pending:
+            async for pd in db.dms_retailer_pending.find({"retailer_id": rid, "distributor_id": did}, {"_id": 0}):
+                if int(pd.get("pending_qty_boxes", 0)) > 0 or int(pd.get("pending_qty_pcs", 0)) > 0:
+                    pending_add[pd["product_id"]] = pd
+
+        order_items = []
+        subtotal = 0.0
+        gst_total = 0.0
+        for it in items:
+            pid = it.get("product_id")
+            qty_boxes = int(it.get("qty_boxes", 0))
+            qty_pcs = int(it.get("qty_pcs", 0)) if mode == "box_pcs" else 0
+            if not pid or (qty_boxes == 0 and qty_pcs == 0):
+                continue
+            p = await db.dms_products.find_one({"id": pid}, {"_id": 0})
+            if not p:
+                continue
+            sp_map = await db.dms_retailer_prices.find_one({"distributor_id": did, "product_id": pid}, {"_id": 0})
+            box_price = _round(sp_map["selling_price"]) if sp_map else _round(p["unit_price"] * 1.15)
+            pcs_price = _round(box_price / max(p["box_qty"], 1))
+            # add pending
+            pend = pending_add.pop(pid, None)
+            if pend:
+                qty_boxes += int(pend.get("pending_qty_boxes", 0))
+                qty_pcs += int(pend.get("pending_qty_pcs", 0))
+            line_sub = _round(box_price * qty_boxes + pcs_price * qty_pcs)
+            line_gst = _round(line_sub * (p.get("gst_pct", 18) / 100.0))
+            subtotal += line_sub; gst_total += line_gst
+            order_items.append({
+                "product_id": pid,
+                "product_name": p["name"],
+                "sku_code": p["sku_code"],
+                "box_qty": p["box_qty"],
+                "box_price": box_price,
+                "pcs_price": pcs_price,
+                "gst_pct": p.get("gst_pct", 18),
+                "qty_boxes_ordered": qty_boxes,
+                "qty_pcs_ordered": qty_pcs,
+                "qty_boxes_dispatched": 0,
+                "qty_pcs_dispatched": 0,
+                "line_subtotal": line_sub,
+                "line_gst": line_gst,
+                "line_total": _round(line_sub + line_gst),
+                "carried_pending": bool(pend),
+            })
+        # any remaining pending items also included?
+        for pid, pend in pending_add.items():
+            p = await db.dms_products.find_one({"id": pid}, {"_id": 0})
+            if not p:
+                continue
+            sp_map = await db.dms_retailer_prices.find_one({"distributor_id": did, "product_id": pid}, {"_id": 0})
+            box_price = _round(sp_map["selling_price"]) if sp_map else _round(p["unit_price"] * 1.15)
+            pcs_price = _round(box_price / max(p["box_qty"], 1))
+            qb = int(pend.get("pending_qty_boxes", 0)); qp = int(pend.get("pending_qty_pcs", 0))
+            line_sub = _round(box_price * qb + pcs_price * qp)
+            line_gst = _round(line_sub * (p.get("gst_pct", 18) / 100.0))
+            subtotal += line_sub; gst_total += line_gst
+            order_items.append({
+                "product_id": pid, "product_name": p["name"], "sku_code": p["sku_code"],
+                "box_qty": p["box_qty"], "box_price": box_price, "pcs_price": pcs_price,
+                "gst_pct": p.get("gst_pct", 18), "qty_boxes_ordered": qb, "qty_pcs_ordered": qp,
+                "qty_boxes_dispatched": 0, "qty_pcs_dispatched": 0,
+                "line_subtotal": line_sub, "line_gst": line_gst, "line_total": _round(line_sub + line_gst),
+                "carried_pending": True,
+            })
+
+        if not order_items:
+            raise HTTPException(status_code=400, detail="No valid items")
+        total = _round(subtotal + gst_total)
+        order = {
+            "id": _nid("so"),
+            "order_no": f"SO-{datetime.now().strftime('%y%m%d%H%M%S')}",
+            "retailer_id": rid,
+            "retailer_name": retailer["name"],
+            "distributor_id": did,
+            "mode": mode,
+            "items": order_items,
+            "subtotal": _round(subtotal),
+            "gst_total": _round(gst_total),
+            "total": total,
+            "status": "pending",
+            "fulfillment_pct": 0,
+            "notes": body.get("notes", ""),
+            "placed_by": user["id"],
+            "placed_by_role": user["role"],
+            "created_at": _now(),
+        }
+        await db.dms_secondary_orders.insert_one(order)
+        # if pending was included, mark those pending records consumed
+        if include_pending:
+            await db.dms_retailer_pending.update_many(
+                {"retailer_id": rid, "distributor_id": did},
+                {"$set": {"pending_qty_boxes": 0, "pending_qty_pcs": 0, "consumed_at": _now(), "consumed_by_order": order["id"]}},
+            )
+        # notify distributor + dist accountant
+        async for u in db.users.find({"distributor_id": did, "role": {"$in": ["distributor", "distributor_accountant"]}}, {"_id": 0, "id": 1}):
+            await notify(u["id"], "secondary_order", f"New order from {retailer['name']}",
+                         f"{order['order_no']} — {len(order_items)} items — \u20b9{total:,.0f}",
+                         f"/dms/distributor/retail-orders/{order['id']}")
+        return _clean(order)
+
+    @router.get("/secondary-orders")
+    async def list_secondary_orders(status: Optional[str] = None, user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        q: Dict[str, Any] = {}
+        if status:
+            q["status"] = status
+        if role == "retailer":
+            q["retailer_id"] = user.get("retailer_id")
+        elif role in ("distributor", "distributor_accountant"):
+            q["distributor_id"] = user.get("distributor_id")
+        elif role == "salesperson":
+            assigns = await db.dms_sp_assignments.find({"salesperson_id": user["id"]}, {"_id": 0}).to_list(500)
+            dids = [a["distributor_id"] for a in assigns]
+            q["distributor_id"] = {"$in": dids} if dids else "__none__"
+        docs = await db.dms_secondary_orders.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+        return {"data": docs, "count": len(docs)}
+
+    @router.get("/secondary-orders/{oid}")
+    async def get_secondary_order(oid: str, user: dict = Depends(get_current_user)):
+        doc = await db.dms_secondary_orders.find_one({"id": oid}, {"_id": 0})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Order not found")
+        role = user.get("role")
+        if role == "retailer" and doc["retailer_id"] != user.get("retailer_id"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if role in ("distributor", "distributor_accountant") and doc["distributor_id"] != user.get("distributor_id"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        atts = await db.dms_attachments.find({"reference_id": oid}, {"_id": 0}).to_list(50)
+        doc["attachments"] = atts
+        # enrich retailer & distributor names
+        r = await db.dms_retailers.find_one({"id": doc["retailer_id"]}, {"_id": 0, "name": 1, "phone": 1, "address": 1})
+        doc["retailer"] = r
+        d = await db.dms_distributors.find_one({"id": doc["distributor_id"]}, {"_id": 0, "name": 1, "phone": 1, "address": 1, "kyc": 1})
+        doc["distributor"] = d
+        return doc
+
+    @router.post("/secondary-orders/{oid}/dispatch")
+    async def dispatch_secondary(oid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        """Body: {items: [{product_id, qty_boxes_dispatched, qty_pcs_dispatched}], complete: bool}"""
+        role = user.get("role")
+        if role not in ("distributor", "owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        order = await db.dms_secondary_orders.find_one({"id": oid}, {"_id": 0})
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        if role == "distributor" and user.get("distributor_id") != order["distributor_id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if order["status"] in ("dispatched", "completed"):
+            raise HTTPException(status_code=400, detail="Already dispatched")
+        did = order["distributor_id"]; rid = order["retailer_id"]
+        items = body.get("items") or []
+        item_map = {it["product_id"]: it for it in items}
+        # apply
+        billed_items = []
+        subtotal = 0.0
+        gst_total = 0.0
+        for it in order["items"]:
+            di = item_map.get(it["product_id"], {})
+            db_qty = int(di.get("qty_boxes_dispatched", 0))
+            dp_qty = int(di.get("qty_pcs_dispatched", 0)) if order["mode"] == "box_pcs" else 0
+            db_qty = min(db_qty, it["qty_boxes_ordered"])
+            dp_qty = min(dp_qty, it["qty_pcs_ordered"])
+            it["qty_boxes_dispatched"] = db_qty
+            it["qty_pcs_dispatched"] = dp_qty
+            # decrement distributor inventory
+            total_pcs = db_qty * it["box_qty"] + dp_qty
+            if total_pcs > 0:
+                inv = await db.dms_distributor_inventory.find_one({"distributor_id": did, "product_id": it["product_id"]})
+                if inv:
+                    boxes_to_deduct = db_qty + (dp_qty // max(it["box_qty"], 1))
+                    remaining_pcs = dp_qty % max(it["box_qty"], 1)
+                    # Simplified: deduct boxes; treat pcs as fractional; for simplicity we deduct ceil
+                    new_qty = max(0, int(inv.get("qty_boxes", 0)) - db_qty - (1 if remaining_pcs > 0 else 0))
+                    await db.dms_distributor_inventory.update_one({"id": inv["id"]}, {"$set": {"qty_boxes": new_qty, "updated_at": _now()}})
+                    await db.dms_stock_ledger.insert_one({
+                        "id": _nid("sl"), "scope": "distributor", "distributor_id": did,
+                        "product_id": it["product_id"], "delta_boxes": -(db_qty + (1 if remaining_pcs > 0 else 0)),
+                        "reason": "secondary_dispatch", "reference": order["order_no"], "at": _now(),
+                    })
+            line_sub = _round(it["box_price"] * db_qty + it["pcs_price"] * dp_qty)
+            line_gst = _round(line_sub * (it["gst_pct"] / 100.0))
+            subtotal += line_sub; gst_total += line_gst
+            billed_items.append({
+                **it,
+                "dispatched_qty_boxes": db_qty,
+                "dispatched_qty_pcs": dp_qty,
+                "line_subtotal": line_sub, "line_gst": line_gst, "line_total": _round(line_sub + line_gst),
+            })
+            # pending qty
+            pending_boxes = it["qty_boxes_ordered"] - db_qty
+            pending_pcs = it["qty_pcs_ordered"] - dp_qty
+            if pending_boxes > 0 or pending_pcs > 0:
+                await db.dms_retailer_pending.update_one(
+                    {"retailer_id": rid, "distributor_id": did, "product_id": it["product_id"]},
+                    {"$set": {
+                        "retailer_id": rid, "distributor_id": did, "product_id": it["product_id"],
+                        "pending_qty_boxes": pending_boxes, "pending_qty_pcs": pending_pcs,
+                        "product_name": it["product_name"], "sku_code": it["sku_code"],
+                        "updated_at": _now(),
+                    }},
+                    upsert=True,
+                )
+        # bill
+        total = _round(subtotal + gst_total)
+        bill = {
+            "id": _nid("rb"), "bill_no": f"RB-{datetime.now().strftime('%y%m%d%H%M%S')}",
+            "order_id": oid, "order_no": order["order_no"],
+            "retailer_id": rid, "distributor_id": did,
+            "items": billed_items, "subtotal": _round(subtotal), "gst_total": _round(gst_total), "total": total,
+            "status": "issued", "created_at": _now(),
+        }
+        await db.dms_retailer_bills.insert_one(bill)
+        await db.dms_retailer_ledger.insert_one({
+            "id": _nid("rle"),
+            "distributor_id": did, "retailer_id": rid,
+            "kind": "invoice", "reference_id": bill["id"], "reference_no": bill["bill_no"],
+            "amount": total, "description": f"Bill for {order['order_no']}", "at": _now(),
+        })
+        # compute fulfillment
+        ord_total_pcs = sum(it["qty_boxes_ordered"] * it["box_qty"] + it["qty_pcs_ordered"] for it in order["items"])
+        disp_total_pcs = sum(it["qty_boxes_dispatched"] * it["box_qty"] + it["qty_pcs_dispatched"] for it in order["items"])
+        pct = int(round((disp_total_pcs / ord_total_pcs) * 100)) if ord_total_pcs > 0 else 0
+        new_status = "dispatched"
+        await db.dms_secondary_orders.update_one(
+            {"id": oid},
+            {"$set": {"items": order["items"], "fulfillment_pct": pct, "status": new_status,
+                      "bill_id": bill["id"], "dispatched_at": _now(), "updated_at": _now()}},
+        )
+        # notify retailer
+        r_user = await db.users.find_one({"retailer_id": rid, "role": "retailer"}, {"_id": 0, "id": 1})
+        if r_user:
+            await notify(r_user["id"], "order_dispatched", f"Order {order['order_no']} dispatched",
+                         f"Bill {bill['bill_no']} \u2022 \u20b9{total:,.0f}",
+                         f"/dms/retailer/my-orders/{oid}")
+        return {"ok": True, "bill_id": bill["id"], "fulfillment_pct": pct, "status": new_status}
+
+    # ── secondary ledger ──
+    @router.get("/ledger/secondary")
+    async def secondary_ledger(retailer_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        q: Dict[str, Any] = {}
+        if role == "retailer":
+            q["retailer_id"] = user.get("retailer_id")
+        elif role in ("distributor", "distributor_accountant"):
+            q["distributor_id"] = user.get("distributor_id")
+        if retailer_id and role not in ("retailer",):
+            q["retailer_id"] = retailer_id
+        entries = await db.dms_retailer_ledger.find(q, {"_id": 0}).sort("at", -1).to_list(2000)
+        # summary per retailer
+        summary: Dict[str, Dict[str, Any]] = {}
+        for e in entries:
+            rid = e["retailer_id"]
+            s = summary.setdefault(rid, {"retailer_id": rid, "billed": 0.0, "paid": 0.0, "outstanding": 0.0})
+            if e["kind"] == "invoice":
+                s["billed"] += e["amount"]; s["outstanding"] += e["amount"]
+            elif e["kind"] == "payment":
+                s["paid"] += e["amount"]; s["outstanding"] -= e["amount"]
+        rids = list(summary.keys())
+        rnames = {r["id"]: r["name"] async for r in db.dms_retailers.find({"id": {"$in": rids}}, {"_id": 0, "id": 1, "name": 1})}
+        for s in summary.values():
+            s["retailer_name"] = rnames.get(s["retailer_id"], "")
+            for k in ("billed", "paid", "outstanding"):
+                s[k] = _round(s[k])
+        return {"entries": entries, "summary": sorted(summary.values(), key=lambda x: -x["outstanding"])}
+
+    @router.post("/ledger/secondary/payment")
+    async def record_secondary_payment(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role not in ("distributor", "distributor_accountant", "owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        rid = body.get("retailer_id")
+        amt = _round(body.get("amount", 0))
+        if not rid or amt <= 0:
+            raise HTTPException(status_code=400, detail="retailer_id + amount>0 required")
+        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not retailer:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        entry = {
+            "id": _nid("rle"),
+            "distributor_id": retailer["distributor_id"], "retailer_id": rid,
+            "kind": "payment",
+            "reference_no": body.get("reference_no", f"PMT-{datetime.now().strftime('%y%m%d%H%M%S')}"),
+            "amount": amt, "method": body.get("method", "bank_transfer"),
+            "description": body.get("description", "Payment received"),
+            "at": _now(), "recorded_by": user["id"],
+        }
+        await db.dms_retailer_ledger.insert_one(entry)
+        return _clean(entry)
+
+    # =========================================================================
+    # SALES TEAM (Salesperson + Team Leader + Regional Manager)
+    # =========================================================================
+
+    # ── assignments ──
+    @router.get("/assignments/tl-distributors")
+    async def list_tl_dist_assignments(team_leader_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+        q: Dict[str, Any] = {}
+        if team_leader_id:
+            q["team_leader_id"] = team_leader_id
+        elif user["role"] == "team_leader":
+            q["team_leader_id"] = user["id"]
+        docs = await db.dms_tl_assignments.find(q, {"_id": 0}).to_list(500)
+        return {"data": docs}
+
+    @router.post("/assignments/tl-distributors")
+    async def assign_tl_dist(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        if user["role"] not in ("owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Only owner can assign distributors to team leaders")
+        tid = body.get("team_leader_id"); did = body.get("distributor_id")
+        if not tid or not did:
+            raise HTTPException(status_code=400, detail="team_leader_id + distributor_id required")
+        await db.dms_tl_assignments.update_one(
+            {"team_leader_id": tid, "distributor_id": did},
+            {"$set": {"team_leader_id": tid, "distributor_id": did, "assigned_by": user["id"], "at": _now()}},
+            upsert=True,
+        )
+        return {"ok": True}
+
+    @router.delete("/assignments/tl-distributors")
+    async def unassign_tl_dist(team_leader_id: str, distributor_id: str, user: dict = Depends(get_current_user)):
+        if user["role"] not in ("owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        await db.dms_tl_assignments.delete_one({"team_leader_id": team_leader_id, "distributor_id": distributor_id})
+        return {"ok": True}
+
+    @router.get("/assignments/sp-distributors")
+    async def list_sp_assignments(salesperson_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+        q: Dict[str, Any] = {}
+        if salesperson_id:
+            q["salesperson_id"] = salesperson_id
+        elif user["role"] == "salesperson":
+            q["salesperson_id"] = user["id"]
+        docs = await db.dms_sp_assignments.find(q, {"_id": 0}).to_list(500)
+        return {"data": docs}
+
+    @router.post("/assignments/sp-distributors")
+    async def assign_sp_dist(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        if user["role"] not in ("team_leader", "owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Only team leader / owner can assign salespersons")
+        spid = body.get("salesperson_id"); did = body.get("distributor_id")
+        if not spid or not did:
+            raise HTTPException(status_code=400, detail="salesperson_id + distributor_id required")
+        # TL can only assign their own distributors
+        if user["role"] == "team_leader":
+            tl_dist = await db.dms_tl_assignments.find_one({"team_leader_id": user["id"], "distributor_id": did})
+            if not tl_dist:
+                raise HTTPException(status_code=403, detail="This distributor is not assigned to your team")
+        await db.dms_sp_assignments.update_one(
+            {"salesperson_id": spid, "distributor_id": did},
+            {"$set": {"salesperson_id": spid, "distributor_id": did, "assigned_by": user["id"], "at": _now()}},
+            upsert=True,
+        )
+        return {"ok": True}
+
+    @router.delete("/assignments/sp-distributors")
+    async def unassign_sp_dist(salesperson_id: str, distributor_id: str, user: dict = Depends(get_current_user)):
+        if user["role"] not in ("team_leader", "owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        await db.dms_sp_assignments.delete_one({"salesperson_id": salesperson_id, "distributor_id": distributor_id})
+        return {"ok": True}
+
+    @router.get("/assignments/rm-tls")
+    async def list_rm_tl_assignments(regional_manager_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+        q: Dict[str, Any] = {}
+        if regional_manager_id:
+            q["regional_manager_id"] = regional_manager_id
+        elif user["role"] == "regional_manager":
+            q["regional_manager_id"] = user["id"]
+        docs = await db.dms_rm_assignments.find(q, {"_id": 0}).to_list(500)
+        return {"data": docs}
+
+    @router.post("/assignments/rm-tls")
+    async def assign_rm_tl(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        if user["role"] not in ("owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        rmid = body.get("regional_manager_id"); tlid = body.get("team_leader_id")
+        if not rmid or not tlid:
+            raise HTTPException(status_code=400, detail="regional_manager_id + team_leader_id required")
+        await db.dms_rm_assignments.update_one(
+            {"regional_manager_id": rmid, "team_leader_id": tlid},
+            {"$set": {"regional_manager_id": rmid, "team_leader_id": tlid, "assigned_by": user["id"], "at": _now()}},
+            upsert=True,
+        )
+        return {"ok": True}
+
+    @router.delete("/assignments/rm-tls")
+    async def unassign_rm_tl(regional_manager_id: str, team_leader_id: str, user: dict = Depends(get_current_user)):
+        if user["role"] not in ("owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        await db.dms_rm_assignments.delete_one({"regional_manager_id": regional_manager_id, "team_leader_id": team_leader_id})
+        return {"ok": True}
+
+    # ── list users by role (used by assignment UIs) ──
+    @router.get("/users")
+    async def list_dms_users(role: Optional[str] = None, user: dict = Depends(get_current_user)):
+        if user["role"] not in ("owner", "super_admin", "team_leader", "regional_manager"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        q: Dict[str, Any] = {}
+        if role:
+            q["role"] = role
+        docs = await db.users.find(q, {"_id": 0, "password_hash": 0}).to_list(1000)
+        return {"data": docs}
+
+    # ── punch in / out ──
+    @router.post("/punch/in")
+    async def punch_in(body: Dict[str, Any] = Body(...), user: dict = Depends(salesperson_only)):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        existing = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today, "out_at": None})
+        if existing:
+            return {"ok": True, "already": True, "punch": _clean(existing)}
+        doc = {
+            "id": _nid("pn"), "salesperson_id": user["id"], "date": today,
+            "in_at": _now(), "out_at": None,
+            "gps_in": {"lat": body.get("lat"), "lng": body.get("lng")},
+            "gps_out": None,
+        }
+        await db.dms_punch.insert_one(doc)
+        return {"ok": True, "punch": _clean(doc)}
+
+    @router.post("/punch/out")
+    async def punch_out(body: Dict[str, Any] = Body(...), user: dict = Depends(salesperson_only)):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        p = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today, "out_at": None})
+        if not p:
+            raise HTTPException(status_code=400, detail="Not punched in today")
+        await db.dms_punch.update_one({"id": p["id"]}, {"$set": {
+            "out_at": _now(),
+            "gps_out": {"lat": body.get("lat"), "lng": body.get("lng")},
+        }})
+        p2 = await db.dms_punch.find_one({"id": p["id"]}, {"_id": 0})
+        return {"ok": True, "punch": p2}
+
+    @router.get("/punch/today")
+    async def punch_today(user: dict = Depends(get_current_user)):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        p = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today}, {"_id": 0})
+        return {"punch": p}
+
+    @router.get("/punch/history")
+    async def punch_history(salesperson_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+        target = salesperson_id
+        if not target and user["role"] == "salesperson":
+            target = user["id"]
+        docs = await db.dms_punch.find({"salesperson_id": target}, {"_id": 0}).sort("in_at", -1).to_list(60)
+        return {"data": docs}
+
+    # =========================================================================
+    # DASHBOARDS — sales team roles
+    # =========================================================================
+    @router.get("/dashboard/salesperson")
+    async def sp_dashboard(user: dict = Depends(salesperson_only)):
+        assigns = await db.dms_sp_assignments.find({"salesperson_id": user["id"]}, {"_id": 0}).to_list(500)
+        dids = [a["distributor_id"] for a in assigns]
+        n_dists = len(dids)
+        n_retailers = await db.dms_retailers.count_documents({"distributor_id": {"$in": dids}, "active": True}) if dids else 0
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        orders_today = await db.dms_secondary_orders.count_documents({
+            "placed_by": user["id"],
+            "created_at": {"$gte": today + "T00:00:00"},
+        })
+        punch = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today}, {"_id": 0})
+        return {
+            "kpis": {
+                "assigned_distributors": n_dists,
+                "assigned_retailers": n_retailers,
+                "orders_today": orders_today,
+                "punched_in": bool(punch and not punch.get("out_at")),
+            },
+            "today_punch": punch,
+        }
+
+    @router.get("/dashboard/team-leader")
+    async def tl_dashboard(user: dict = Depends(team_leader_only)):
+        my_dists = await db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0}).to_list(500)
+        dids = [a["distributor_id"] for a in my_dists]
+        n_sp = await db.dms_sp_assignments.count_documents({"distributor_id": {"$in": dids}}) if dids else 0
+        # sales MTD in secondary_orders where distributor is mine
+        mtd_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        sales = 0.0
+        async for so in db.dms_secondary_orders.find({"distributor_id": {"$in": dids}, "created_at": {"$gte": mtd_start}}, {"_id": 0, "total": 1}):
+            sales += so.get("total", 0)
+        return {
+            "kpis": {
+                "distributors": len(dids),
+                "salespersons": n_sp,
+                "sales_mtd": _round(sales),
+            }
+        }
+
+    @router.get("/dashboard/regional-manager")
+    async def rm_dashboard(user: dict = Depends(regional_manager_only)):
+        my_tls = await db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0}).to_list(500)
+        tlids = [a["team_leader_id"] for a in my_tls]
+        # distributors under those TLs
+        dids = []
+        async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "distributor_id": 1}):
+            dids.append(a["distributor_id"])
+        mtd_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        sales = 0.0
+        async for so in db.dms_secondary_orders.find({"distributor_id": {"$in": dids}, "created_at": {"$gte": mtd_start}}, {"_id": 0, "total": 1}):
+            sales += so.get("total", 0)
+        return {
+            "kpis": {
+                "team_leaders": len(tlids),
+                "distributors": len(set(dids)),
+                "sales_mtd": _round(sales),
+            }
+        }
+
+    @router.get("/dashboard/retailer")
+    async def retailer_dashboard(user: dict = Depends(retailer_only)):
+        rid = user.get("retailer_id")
+        if not rid:
+            raise HTTPException(status_code=400, detail="Not linked to a retailer")
+        billed = 0.0; paid = 0.0
+        async for e in db.dms_retailer_ledger.find({"retailer_id": rid}, {"_id": 0}):
+            if e["kind"] == "invoice":
+                billed += e["amount"]
+            elif e["kind"] == "payment":
+                paid += e["amount"]
+        pending = 0
+        async for pd in db.dms_retailer_pending.find({"retailer_id": rid}, {"_id": 0}):
+            pending += int(pd.get("pending_qty_boxes", 0)) + int(pd.get("pending_qty_pcs", 0))
+        n_orders = await db.dms_secondary_orders.count_documents({"retailer_id": rid})
+        n_dispatched = await db.dms_secondary_orders.count_documents({"retailer_id": rid, "status": "dispatched"})
+        return {
+            "kpis": {
+                "total_orders": n_orders,
+                "in_transit": n_dispatched,
+                "outstanding": _round(billed - paid),
+                "pending_items": pending,
+            }
+        }
+
+    @router.get("/dashboard/super-admin")
+    async def superadmin_dashboard(user: dict = Depends(_guard())):
+        # super_admin implicit — allow only super_admin
+        if user["role"] != "super_admin":
+            raise HTTPException(status_code=403, detail="Super admin only")
+        n_owners = await db.users.count_documents({"role": "owner"})
+        n_tl = await db.users.count_documents({"role": "team_leader"})
+        n_sp = await db.users.count_documents({"role": "salesperson"})
+        n_dist = await db.dms_distributors.count_documents({"active": True})
+        n_ret = await db.dms_retailers.count_documents({"active": True})
+        n_po = await db.dms_primary_orders.count_documents({})
+        n_so = await db.dms_secondary_orders.count_documents({})
+        return {
+            "kpis": {
+                "owners": n_owners, "team_leaders": n_tl, "salespersons": n_sp,
+                "distributors": n_dist, "retailers": n_ret,
+                "primary_orders": n_po, "secondary_orders": n_so,
+            }
+        }
+
+    # =========================================================================
+    # SUPER ADMIN — login-as (impersonation)
+    # =========================================================================
+    @router.get("/admin/users")
+    async def admin_list_users(user: dict = Depends(get_current_user)):
+        if user["role"] != "super_admin":
+            raise HTTPException(status_code=403, detail="Super admin only")
+        docs = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+        return {"data": docs}
+
+    @router.post("/admin/impersonate/{uid}")
+    async def impersonate(uid: str, user: dict = Depends(get_current_user)):
+        if user["role"] != "super_admin":
+            raise HTTPException(status_code=403, detail="Super admin only")
+        target = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        # Generate a token for the target user (super_admin origin recorded)
+        import jwt as _jwt, os as _os
+        payload = {
+            "sub": target["id"], "email": target["email"], "role": target["role"],
+            "tenant_id": target.get("tenant_id"),
+            "exp": datetime.now(timezone.utc) + timedelta(hours=2),
+            "type": "access",
+            "impersonated_by": user["id"],
+        }
+        tok = _jwt.encode(payload, _os.environ["JWT_SECRET"], algorithm="HS256")
+        return {"token": tok, "user": target}
+
+    # =========================================================================
+    # PRINTABLE E-BILL / RETAILER BILL data
+    # =========================================================================
+    @router.get("/print/ebill/{ebill_id}")
+    async def print_ebill(ebill_id: str, user: dict = Depends(get_current_user)):
+        eb = await db.dms_ebills.find_one({"id": ebill_id}, {"_id": 0})
+        if not eb:
+            raise HTTPException(status_code=404, detail="e-Bill not found")
+        # RBAC
+        role = user.get("role")
+        if role in ("distributor", "distributor_accountant") and eb["distributor_id"] != user.get("distributor_id"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        dist = await db.dms_distributors.find_one({"id": eb["distributor_id"]}, {"_id": 0})
+        eb["distributor"] = dist
+        return eb
+
+    @router.get("/print/retailer-bill/{bill_id}")
+    async def print_retailer_bill(bill_id: str, user: dict = Depends(get_current_user)):
+        b = await db.dms_retailer_bills.find_one({"id": bill_id}, {"_id": 0})
+        if not b:
+            raise HTTPException(status_code=404, detail="Bill not found")
+        role = user.get("role")
+        if role == "retailer" and b["retailer_id"] != user.get("retailer_id"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if role in ("distributor", "distributor_accountant") and b["distributor_id"] != user.get("distributor_id"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        retailer = await db.dms_retailers.find_one({"id": b["retailer_id"]}, {"_id": 0})
+        distributor = await db.dms_distributors.find_one({"id": b["distributor_id"]}, {"_id": 0})
+        b["retailer"] = retailer
+        b["distributor"] = distributor
+        return b
 
     return router

@@ -210,4 +210,89 @@ async def seed_dms(raw_db):
                 "reference": "",
                 "at": _now(),
             })
+
+    # --- Distributors initial stock (10 boxes of each so retailers can order) ---
+    dists = await raw_db.dms_distributors.find({"tenant_id": DMS_TENANT_ID}, {"_id": 0}).to_list(100)
+    if await raw_db.dms_distributor_inventory.count_documents({"tenant_id": DMS_TENANT_ID}) == 0:
+        for d in dists:
+            for p in products:
+                await raw_db.dms_distributor_inventory.insert_one({
+                    "id": _nid("dinv"),
+                    "tenant_id": DMS_TENANT_ID,
+                    "distributor_id": d["id"],
+                    "product_id": p["id"],
+                    "qty_boxes": 15,
+                    "cost_price": p["unit_price"],
+                    "updated_at": _now(),
+                })
+
+    # --- Retailer selling prices (owner sets, distributor sells at this) — cost + 15% ---
+    if await raw_db.dms_retailer_prices.count_documents({"tenant_id": DMS_TENANT_ID}) == 0:
+        for d in dists:
+            for p in products:
+                await raw_db.dms_retailer_prices.insert_one({
+                    "id": _nid("rp"),
+                    "tenant_id": DMS_TENANT_ID,
+                    "distributor_id": d["id"],
+                    "product_id": p["id"],
+                    "selling_price": round(p["unit_price"] * 1.15, 2),
+                    "updated_at": _now(),
+                })
+
+    # --- Retailers ---
+    if await raw_db.dms_retailers.count_documents({"tenant_id": DMS_TENANT_ID}) == 0 and dists:
+        primary_dist_id = next((d["id"] for d in dists if d["email"] == "dist1@dms.com"), dists[0]["id"])
+        retailers_seed = [
+            ("retailer1@dms.com", "Sharma Auto Shop", "+91-9876500031", "Karol Bagh, New Delhi", "box_pcs", 28.6448, 77.2167),
+            ("retailer2@dms.com", "Verma Motors",     "+91-9876500032", "Rohini, New Delhi",     "box",     28.7495, 77.0567),
+        ]
+        for email, name, phone, addr, mode, lat, lng in retailers_seed:
+            uid = user_ids_by_email.get(email)
+            rid = _nid("ret")
+            await raw_db.dms_retailers.insert_one({
+                "id": rid, "tenant_id": DMS_TENANT_ID,
+                "name": name, "phone": phone, "email": email,
+                "address": addr, "region": "Delhi",
+                "gps_lat": lat, "gps_lng": lng,
+                "distributor_id": primary_dist_id,
+                "onboarded_by": user_ids_by_email.get("owner@dms.com"),
+                "onboarded_by_role": "owner",
+                "user_id": uid,
+                "kyc": {"gstin": "", "shop_license": "SHP-DL-" + str(hash(email))[-4:], "notes": ""},
+                "documents": [], "credit_limit": 100000, "active": True,
+                "created_at": _now(),
+            })
+            if uid:
+                await raw_db.users.update_one({"id": uid}, {"$set": {"retailer_id": rid, "distributor_id": primary_dist_id}})
+            # selling mode
+            await raw_db.dms_ret_mode.insert_one({
+                "id": _nid("rm"), "tenant_id": DMS_TENANT_ID,
+                "distributor_id": primary_dist_id, "retailer_id": rid, "mode": mode, "updated_at": _now(),
+            })
+
+    # --- Sales team assignments ---
+    tl_id = user_ids_by_email.get("tl@dms.com")
+    sp_id = user_ids_by_email.get("sales@dms.com")
+    rm_id = user_ids_by_email.get("rm@dms.com")
+    # Team leader gets both distributors; salesperson gets dist1; RM gets TL
+    if tl_id and dists and await raw_db.dms_tl_assignments.count_documents({"team_leader_id": tl_id}) == 0:
+        for d in dists:
+            await raw_db.dms_tl_assignments.insert_one({
+                "id": _nid("tla"), "tenant_id": DMS_TENANT_ID,
+                "team_leader_id": tl_id, "distributor_id": d["id"],
+                "assigned_by": user_ids_by_email.get("owner@dms.com"), "at": _now(),
+            })
+    if sp_id and dists and await raw_db.dms_sp_assignments.count_documents({"salesperson_id": sp_id}) == 0:
+        primary_did = next((d["id"] for d in dists if d["email"] == "dist1@dms.com"), dists[0]["id"])
+        await raw_db.dms_sp_assignments.insert_one({
+            "id": _nid("spa"), "tenant_id": DMS_TENANT_ID,
+            "salesperson_id": sp_id, "distributor_id": primary_did,
+            "assigned_by": tl_id, "at": _now(),
+        })
+    if rm_id and tl_id and await raw_db.dms_rm_assignments.count_documents({"regional_manager_id": rm_id}) == 0:
+        await raw_db.dms_rm_assignments.insert_one({
+            "id": _nid("rma"), "tenant_id": DMS_TENANT_ID,
+            "regional_manager_id": rm_id, "team_leader_id": tl_id,
+            "assigned_by": user_ids_by_email.get("owner@dms.com"), "at": _now(),
+        })
     return True

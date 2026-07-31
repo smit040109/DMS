@@ -12,15 +12,23 @@ import {
 import {
   DistributorBrowsePage, DistributorOrdersPage, DistributorOrderDetailPage, DistributorStockPage,
 } from "@/pages/dms/DistributorPages";
+import {
+  DistRetailersPage, DistRetailerDetailPage, DistSecondaryOrdersPage, DistSecondaryOrderDetailPage, SecondaryLedgerPage,
+} from "@/pages/dms/DistributorSecondaryPages";
+import {
+  RetailerBrowsePage, RetailerOrdersPage, RetailerOrderDetailPage,
+} from "@/pages/dms/RetailerPages";
+import {
+  SpDistributorsPage, SpRetailersPage, SpNewRetailerPage, SpNewOrderPage,
+  TlDistributorsPage, TlAssignmentsPage,
+} from "@/pages/dms/SalesTeamPages";
+import { SuperAdminUsersPage } from "@/pages/dms/SuperAdminPages";
+import { PrintEbillPage, PrintRetailerBillPage } from "@/pages/dms/PrintPages";
 
 function Protected({ children }) {
   const { user } = useAuth();
   if (user === null) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="text-sm text-slate-500">Loading…</div>
-      </div>
-    );
+    return <div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="text-sm text-slate-500">Loading…</div></div>;
   }
   if (!user) return <Navigate to="/login" replace />;
   return children;
@@ -38,15 +46,24 @@ function DmsPage({ Component }) {
   );
 }
 
+// Print pages get a bare protected wrapper (no shell)
+function PrintPage({ Component }) {
+  return (
+    <Protected>
+      <Component />
+    </Protected>
+  );
+}
+
 function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
 
-      {/* DMS routes */}
+      {/* Dashboard router */}
       <Route path="/dms" element={<DmsPage Component={DmsDashboardRouter} />} />
 
-      {/* Owner routes */}
+      {/* Owner */}
       <Route path="/dms/owner/categories"          element={<DmsPage Component={CategoriesPage} />} />
       <Route path="/dms/owner/products"            element={<DmsPage Component={ProductsPage} />} />
       <Route path="/dms/owner/distributors"        element={<DmsPage Component={DistributorsPage} />} />
@@ -55,15 +72,42 @@ function AppRoutes() {
       <Route path="/dms/owner/primary-orders/:id"  element={<DmsPage Component={OwnerOrderDetailPage} />} />
       <Route path="/dms/owner/inventory"           element={<DmsPage Component={OwnerInventoryPage} />} />
       <Route path="/dms/owner/ledger"              element={<DmsPage Component={PrimaryLedgerPage} />} />
+      <Route path="/dms/owner/retailer-prices"     element={<DmsPage Component={CategoriesPage} />} />
 
-      {/* Distributor routes */}
+      {/* Distributor */}
       <Route path="/dms/distributor/browse"           element={<DmsPage Component={DistributorBrowsePage} />} />
       <Route path="/dms/distributor/my-orders"        element={<DmsPage Component={DistributorOrdersPage} />} />
       <Route path="/dms/distributor/my-orders/:id"    element={<DmsPage Component={DistributorOrderDetailPage} />} />
       <Route path="/dms/distributor/stock"            element={<DmsPage Component={DistributorStockPage} />} />
       <Route path="/dms/distributor/ledger"           element={<DmsPage Component={PrimaryLedgerPage} />} />
+      <Route path="/dms/distributor/retailers"        element={<DmsPage Component={DistRetailersPage} />} />
+      <Route path="/dms/distributor/retailers/:id"    element={<DmsPage Component={DistRetailerDetailPage} />} />
+      <Route path="/dms/distributor/retail-orders"    element={<DmsPage Component={DistSecondaryOrdersPage} />} />
+      <Route path="/dms/distributor/retail-orders/:id" element={<DmsPage Component={DistSecondaryOrderDetailPage} />} />
+      <Route path="/dms/distributor/sec-ledger"       element={<DmsPage Component={SecondaryLedgerPage} />} />
 
-      {/* Root → send to /dms if logged in, /login otherwise */}
+      {/* Retailer */}
+      <Route path="/dms/retailer/browse"        element={<DmsPage Component={RetailerBrowsePage} />} />
+      <Route path="/dms/retailer/my-orders"     element={<DmsPage Component={RetailerOrdersPage} />} />
+      <Route path="/dms/retailer/my-orders/:id" element={<DmsPage Component={RetailerOrderDetailPage} />} />
+
+      {/* Salesperson */}
+      <Route path="/dms/salesperson/distributors"  element={<DmsPage Component={SpDistributorsPage} />} />
+      <Route path="/dms/salesperson/retailers"     element={<DmsPage Component={SpRetailersPage} />} />
+      <Route path="/dms/salesperson/new-retailer"  element={<DmsPage Component={SpNewRetailerPage} />} />
+      <Route path="/dms/salesperson/new-order"     element={<DmsPage Component={SpNewOrderPage} />} />
+
+      {/* Team Leader */}
+      <Route path="/dms/team-leader/distributors" element={<DmsPage Component={TlDistributorsPage} />} />
+      <Route path="/dms/team-leader/assignments"  element={<DmsPage Component={TlAssignmentsPage} />} />
+
+      {/* Super Admin */}
+      <Route path="/dms/admin/users" element={<DmsPage Component={SuperAdminUsersPage} />} />
+
+      {/* Print pages (no shell) */}
+      <Route path="/dms/print/ebill/:id"          element={<PrintPage Component={PrintEbillPage} />} />
+      <Route path="/dms/print/retailer-bill/:id"  element={<PrintPage Component={PrintRetailerBillPage} />} />
+
       <Route path="/" element={<Navigate to="/dms" replace />} />
       <Route path="/app/*" element={<Navigate to="/dms" replace />} />
       <Route path="*" element={<Navigate to="/dms" replace />} />

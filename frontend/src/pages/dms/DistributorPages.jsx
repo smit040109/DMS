@@ -235,7 +235,10 @@ export function DistributorOrderDetailPage() {
         title={order.order_no}
         subtitle={`Placed ${niceDate(order.created_at)}`}
         back="/dms/distributor/my-orders"
-        action={order.status === "ready_to_go" && <Button onClick={receive} disabled={busy} className="bg-emerald-700 hover:bg-emerald-800" data-testid="mark-received-btn"><CheckCircle2 size={16} className="mr-1" /> Mark Received</Button>}
+        action={<div className="flex gap-2">
+          {order.ebill && <Button variant="outline" onClick={() => window.open(`/dms/print/ebill/${order.ebill.id}`, "_blank")} data-testid="dist-print-ebill"><span className="mr-1">🖨</span> Print e-Bill</Button>}
+          {order.status === "ready_to_go" && <Button onClick={receive} disabled={busy} className="bg-emerald-700 hover:bg-emerald-800" data-testid="mark-received-btn"><CheckCircle2 size={16} className="mr-1" /> Mark Received</Button>}
+        </div>}
       />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Status</div><div className="mt-1"><span className={`text-sm px-2.5 py-1 rounded-full border ${statusPill(order.status)}`}>{order.status.replace(/_/g, " ")}</span></div></Card>
