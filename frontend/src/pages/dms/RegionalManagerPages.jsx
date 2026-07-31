@@ -13,11 +13,11 @@ export function RmDashboardPage() {
   useEffect(() => { dms.rmDashboard().then(d => setK(d.kpis)).catch(() => {}); }, []);
   const cards = [
     { label: "Team Leaders",     value: k?.team_leaders ?? "—",           icon: Users,     tint: "bg-purple-50 text-purple-700" },
-    { label: "Distributors",     value: k?.distributors ?? "—",           icon: Handshake, tint: "bg-teal-50 text-teal-700" },
+    { label: "Distributors",     value: k?.distributors ?? "—",           icon: Handshake, tint: "bg-[#faf6e6] text-[#a67c00]" },
     { label: "Retailers",        value: k?.retailers ?? "—",              icon: Store,     tint: "bg-amber-50 text-amber-700" },
     { label: "Salespersons",     value: k?.salespersons ?? "—",           icon: Users,     tint: "bg-fuchsia-50 text-fuchsia-700" },
     { label: "Today's Sales",    value: k ? inr(k.today_sales) : "—",     icon: TrendingUp,tint: "bg-emerald-50 text-emerald-700" },
-    { label: "Monthly Sales",    value: k ? inr(k.monthly_sales) : "—",   icon: TrendingUp,tint: "bg-teal-50 text-teal-700" },
+    { label: "Monthly Sales",    value: k ? inr(k.monthly_sales) : "—",   icon: TrendingUp,tint: "bg-[#faf6e6] text-[#a67c00]" },
     { label: "Outstanding",      value: k ? inr(k.outstanding) : "—",     icon: IndianRupee,tint: "bg-rose-50 text-rose-700" },
     { label: "Revenue",          value: k ? inr(k.revenue) : "—",         icon: IndianRupee,tint: "bg-indigo-50 text-indigo-700" },
     { label: "Fulfillment %",    value: k ? `${k.fulfillment_pct}%` : "—",icon: Percent,   tint: "bg-blue-50 text-blue-700" },
@@ -68,14 +68,14 @@ export function RmTeamLeadersPage() {
                   {i === 0 && rows.length > 1 && <Trophy size={14} className="inline ml-1 text-amber-500" />}
                 </TableCell>
                 <TableCell><div className="font-medium">{r.name}</div><div className="text-xs text-slate-500">{r.email}</div></TableCell>
-                <TableCell className="text-right font-semibold text-teal-800">{inr(r.sales)}</TableCell>
+                <TableCell className="text-right font-semibold text-[#8a6600]">{inr(r.sales)}</TableCell>
                 <TableCell className="text-right">{r.active_salespersons}</TableCell>
                 <TableCell className="text-right">{r.active_distributors}</TableCell>
                 <TableCell className="text-right">
                   <span className={`px-2 py-0.5 rounded-full text-xs ${r.pending_orders > 0 ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-500"}`}>{r.pending_orders}</span>
                 </TableCell>
                 <TableCell className="text-right">{inr(r.revenue)}</TableCell>
-                <TableCell><div className="h-2 w-32 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-teal-500" style={{ width: `${top ? Math.max(2, (r.sales / top) * 100) : 0}%` }} /></div></TableCell>
+                <TableCell><div className="h-2 w-32 bg-slate-100 rounded-full overflow-hidden"><div className="h-full bg-[#faf6e6]0" style={{ width: `${top ? Math.max(2, (r.sales / top) * 100) : 0}%` }} /></div></TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -117,7 +117,7 @@ function BarBlock({ title, rows }) {
               <span className="font-semibold text-slate-900">{inr(r.sales)}</span>
             </div>
             <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-              <div className="h-full bg-teal-500" style={{ width: `${Math.max(2, (r.sales / max) * 100)}%` }} />
+              <div className="h-full bg-[#faf6e6]0" style={{ width: `${Math.max(2, (r.sales / max) * 100)}%` }} />
             </div>
           </div>
         ))}

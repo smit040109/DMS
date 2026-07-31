@@ -151,7 +151,7 @@ export function LiveTrackingPage() {
                 <button
                   key={sp.id}
                   onClick={() => onSelectSp(sp)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${selectedSp === sp.id ? "bg-teal-50 border border-teal-300" : "hover:bg-slate-50 border border-transparent"}`}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${selectedSp === sp.id ? "bg-[#faf6e6] border border-[#c9a227]" : "hover:bg-slate-50 border border-transparent"}`}
                   data-testid={`sp-item-${sp.id}`}
                 >
                   <span className={`h-2 w-2 rounded-full ${sp.online ? "bg-emerald-500 animate-pulse" : "bg-slate-300"}`} />
@@ -216,7 +216,7 @@ export function LiveTrackingPage() {
                       <button
                         key={h.date}
                         onClick={() => setSelectedDate(h.date)}
-                        className={`w-full text-left flex items-center justify-between px-2 py-1 rounded ${h.date === selectedDate ? "bg-teal-50 text-teal-800" : "hover:bg-slate-50"}`}
+                        className={`w-full text-left flex items-center justify-between px-2 py-1 rounded ${h.date === selectedDate ? "bg-[#faf6e6] text-[#8a6600]" : "hover:bg-slate-50"}`}
                       >
                         <span className="flex items-center gap-1.5"><Calendar size={10} /> {h.date}</span>
                         <span className="text-slate-500">{h.working_hours} h · {h.pings} pings</span>

@@ -41,7 +41,7 @@ export function SalespersonDashboardPage() {
     { label: "Assigned Retailers", value: kpis?.assigned_retailers ?? "—", icon: Store, color: "indigo" },
     { label: "Orders Today", value: kpis?.orders_today ?? "—", icon: ShoppingCart, color: "amber" },
   ];
-  const colorMap = { teal: "bg-teal-50 text-teal-700", indigo: "bg-indigo-50 text-indigo-700", amber: "bg-amber-50 text-amber-700" };
+  const colorMap = { teal: "bg-[#faf6e6] text-[#a67c00]", indigo: "bg-indigo-50 text-indigo-700", amber: "bg-amber-50 text-amber-700" };
   return (
     <div>
       <PageHeader title="Salesperson Dashboard" subtitle="Punch in, visit retailers, capture orders" />
@@ -76,9 +76,9 @@ export function SalespersonDashboardPage() {
         ))}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/distributors")}><Handshake size={20} className="text-teal-700" /><div className="mt-2 font-semibold">My Distributors</div><div className="text-xs text-slate-500">View stock & details</div></Card>
-        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/retailers")}><Store size={20} className="text-teal-700" /><div className="mt-2 font-semibold">My Retailers</div><div className="text-xs text-slate-500">Visit, onboard, place orders</div></Card>
-        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/new-retailer")}><Plus size={20} className="text-teal-700" /><div className="mt-2 font-semibold">Onboard Retailer</div><div className="text-xs text-slate-500">Add a new retailer on the go</div></Card>
+        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/distributors")}><Handshake size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">My Distributors</div><div className="text-xs text-slate-500">View stock & details</div></Card>
+        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/retailers")}><Store size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">My Retailers</div><div className="text-xs text-slate-500">Visit, onboard, place orders</div></Card>
+        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/new-retailer")}><Plus size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">Onboard Retailer</div><div className="text-xs text-slate-500">Add a new retailer on the go</div></Card>
       </div>
     </div>
   );
@@ -113,14 +113,14 @@ export function SpRetailersPage() {
   return (
     <div>
       <PageHeader title="My Retailers" subtitle="Retailers under your assigned distributors"
-        action={<Button onClick={() => nav("/dms/salesperson/new-retailer")} className="bg-teal-700 hover:bg-teal-800" data-testid="sp-new-retailer"><Plus size={16} className="mr-1" /> Onboard Retailer</Button>} />
+        action={<Button onClick={() => nav("/dms/salesperson/new-retailer")} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="sp-new-retailer"><Plus size={16} className="mr-1" /> Onboard Retailer</Button>} />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {list.map(r => (
           <Card key={r.id} className="p-4">
             <div className="font-semibold">{r.name}</div>
             <div className="text-xs text-slate-500 mt-0.5">{r.phone}</div>
             <div className="text-xs text-slate-500 truncate">{r.address}</div>
-            {r.gps_lat && <a href={`https://maps.google.com/?q=${r.gps_lat},${r.gps_lng}`} target="_blank" rel="noreferrer" className="text-[11px] text-teal-700 hover:underline flex items-center gap-1 mt-1"><MapPin size={11} /> View on Maps</a>}
+            {r.gps_lat && <a href={`https://maps.google.com/?q=${r.gps_lat},${r.gps_lng}`} target="_blank" rel="noreferrer" className="text-[11px] text-[#a67c00] hover:underline flex items-center gap-1 mt-1"><MapPin size={11} /> View on Maps</a>}
             <div className="mt-3 flex gap-2">
               <Button size="sm" variant="outline" className="flex-1" onClick={() => nav(`/dms/salesperson/new-order?retailer_id=${r.id}`)} data-testid={`sp-order-for-${r.id}`}><ShoppingCart size={12} className="mr-1" /> Place Order</Button>
             </div>
@@ -188,7 +188,7 @@ export function SpNewRetailerPage() {
           <div><Label>GSTIN (optional)</Label><Input value={form.gstin} onChange={e => setForm({ ...form, gstin: e.target.value })} /></div>
           <div><Label>Shop License (optional)</Label><Input value={form.shop_license} onChange={e => setForm({ ...form, shop_license: e.target.value })} /></div>
         </div>
-        <Button onClick={submit} disabled={busy || !form.name || !form.phone || !form.address} className="w-full bg-teal-700 hover:bg-teal-800" data-testid="sp-save-retailer">Onboard & Place First Order</Button>
+        <Button onClick={submit} disabled={busy || !form.name || !form.phone || !form.address} className="w-full bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="sp-save-retailer">Onboard & Place First Order</Button>
       </Card>
     </div>
   );
@@ -232,7 +232,7 @@ export function SpNewOrderPage() {
             <Card key={p.id} className="p-4">
               <div className="font-semibold">{p.name}</div>
               <div className="text-xs font-mono text-slate-500">{p.sku_code}</div>
-              <div className="mt-2 text-lg font-bold text-teal-700">{inr(p.selling_price)}<span className="text-xs text-slate-500 font-normal">/box</span></div>
+              <div className="mt-2 text-lg font-bold text-[#a67c00]">{inr(p.selling_price)}<span className="text-xs text-slate-500 font-normal">/box</span></div>
               <div className="text-xs text-slate-500">Stock: {p.distributor_stock_boxes} boxes</div>
               <div className="mt-3 flex items-center justify-between gap-2">
                 <span className="text-xs text-slate-600">Boxes</span>
@@ -259,7 +259,7 @@ export function SpNewOrderPage() {
       <div className="fixed bottom-0 left-0 lg:left-60 right-0 bg-white border-t border-slate-200 shadow-lg">
         <div className="p-4 flex items-center gap-4">
           <div className="flex-1"><div className="text-xs text-slate-500">{items.length} items</div><div className="text-xl font-bold">{inr(total)}</div></div>
-          <Button disabled={items.length === 0 || busy} onClick={place} className="bg-teal-700 hover:bg-teal-800 h-11 px-6" data-testid="sp-place-order"><ShoppingCart size={16} className="mr-2" /> Place Order</Button>
+          <Button disabled={items.length === 0 || busy} onClick={place} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white h-11 px-6" data-testid="sp-place-order"><ShoppingCart size={16} className="mr-2" /> Place Order</Button>
         </div>
       </div>
     </div>
@@ -282,8 +282,8 @@ export function TeamLeaderDashboardPage() {
         ].map(c => <Card key={c.label} className="p-4"><div className="text-xs uppercase tracking-wider text-slate-500">{c.label}</div><div className="mt-1 text-xl font-bold">{c.value}</div></Card>)}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/team-leader/distributors")}><Handshake size={20} className="text-teal-700" /><div className="mt-2 font-semibold">My Distributors</div><div className="text-xs text-slate-500">View performance</div></Card>
-        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/team-leader/assignments")}><Users size={20} className="text-teal-700" /><div className="mt-2 font-semibold">Assign Distributors to Salesperson</div><div className="text-xs text-slate-500">Manage your sales team's coverage</div></Card>
+        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/team-leader/distributors")}><Handshake size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">My Distributors</div><div className="text-xs text-slate-500">View performance</div></Card>
+        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/team-leader/assignments")}><Users size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">Assign Distributors to Salesperson</div><div className="text-xs text-slate-500">Manage your sales team's coverage</div></Card>
       </div>
     </div>
   );
@@ -328,7 +328,7 @@ export function TlAssignmentsPage() {
                 const a = isAssigned(sp.id, d.id);
                 return (
                   <TableCell key={d.id}>
-                    <button onClick={() => a ? unassign(sp.id, d.id) : assign(sp.id, d.id)} className={`px-3 py-1 rounded text-xs font-medium ${a ? "bg-teal-100 text-teal-800 hover:bg-teal-200" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`} data-testid={`assign-${sp.id}-${d.id}`}>{a ? "✓ Assigned" : "Assign"}</button>
+                    <button onClick={() => a ? unassign(sp.id, d.id) : assign(sp.id, d.id)} className={`px-3 py-1 rounded text-xs font-medium ${a ? "bg-[#faf0cf] text-[#8a6600] hover:bg-[#faf0cf]" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`} data-testid={`assign-${sp.id}-${d.id}`}>{a ? "✓ Assigned" : "Assign"}</button>
                   </TableCell>
                 );
               })}

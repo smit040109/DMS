@@ -30,14 +30,14 @@ export function DistributorDashboardPage() {
     { label: "Sales MTD",                value: kpis ? inr(kpis.revenue_mtd) : "—",       icon: TrendingUp,   color: "emerald" },
   ];
   const colorMap = {
-    teal: "bg-teal-50 text-teal-700", indigo: "bg-indigo-50 text-indigo-700",
+    teal: "bg-[#faf6e6] text-[#a67c00]", indigo: "bg-indigo-50 text-indigo-700",
     amber: "bg-amber-50 text-amber-700", blue: "bg-blue-50 text-blue-700",
     emerald: "bg-emerald-50 text-emerald-700", rose: "bg-rose-50 text-rose-700",
   };
   return (
     <div>
       <PageHeader title="Distributor Dashboard" subtitle="Your business at a glance"
-        action={<Button onClick={() => nav("/dms/distributor/browse")} className="bg-teal-700 hover:bg-teal-800" data-testid="place-order-cta"><ShoppingCart size={16} className="mr-1" /> Place New Order</Button>}
+        action={<Button onClick={() => nav("/dms/distributor/browse")} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="place-order-cta"><ShoppingCart size={16} className="mr-1" /> Place New Order</Button>}
       />
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
         {cards.map(c => (
@@ -50,7 +50,7 @@ export function DistributorDashboardPage() {
       </div>
       <div className="flex items-center justify-between mb-3">
         <h3 className="font-semibold text-slate-900">Recent Orders</h3>
-        <button onClick={() => nav("/dms/distributor/my-orders")} className="text-sm text-teal-700 hover:underline">View all →</button>
+        <button onClick={() => nav("/dms/distributor/my-orders")} className="text-sm text-[#a67c00] hover:underline">View all →</button>
       </div>
       <Card>
         {recent.length === 0 ? (
@@ -64,7 +64,7 @@ export function DistributorDashboardPage() {
                   <TableCell className="font-mono text-sm">{o.order_no}</TableCell>
                   <TableCell>{o.items.length}</TableCell>
                   <TableCell className="font-medium">{inr(o.total)}</TableCell>
-                  <TableCell><div className="flex items-center gap-2"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-teal-500" style={{ width: `${o.fulfillment_pct}%` }} /></div><span className="text-xs">{o.fulfillment_pct}%</span></div></TableCell>
+                  <TableCell><div className="flex items-center gap-2"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-[#faf6e6]0" style={{ width: `${o.fulfillment_pct}%` }} /></div><span className="text-xs">{o.fulfillment_pct}%</span></div></TableCell>
                   <TableCell><span className={`text-xs px-2 py-1 rounded-full border ${statusPill(o.status)}`}>{o.status.replace(/_/g, " ")}</span></TableCell>
                   <TableCell className="text-xs text-slate-500">{niceDate(o.created_at)}</TableCell>
                 </TableRow>
@@ -138,16 +138,16 @@ export function DistributorBrowsePage() {
             <button
               key={c.name}
               onClick={() => setOpenCategory(c.name)}
-              className="text-left bg-white border border-slate-200 hover:border-teal-400 hover:shadow-md transition rounded-2xl p-5 relative"
+              className="text-left bg-white border border-slate-200 hover:border-[#c9a227] hover:shadow-md transition rounded-2xl p-5 relative"
               data-testid={`cat-tile-${c.name}`}
             >
-              <div className="h-10 w-10 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center mb-3"><Package size={20} /></div>
+              <div className="h-10 w-10 rounded-xl bg-[#faf6e6] text-[#a67c00] flex items-center justify-center mb-3"><Package size={20} /></div>
               <div className="font-semibold text-slate-900">{c.name}</div>
               <div className="text-xs text-slate-500 mt-0.5">{c.count} product{c.count !== 1 ? "s" : ""}</div>
               {c.inCart > 0 && (
-                <span className="absolute top-3 right-3 bg-teal-700 text-white text-[10px] font-bold rounded-full px-2 py-0.5">{c.inCart} in cart</span>
+                <span className="absolute top-3 right-3 bg-[#c9a227] text-white text-[10px] font-bold rounded-full px-2 py-0.5">{c.inCart} in cart</span>
               )}
-              <div className="mt-4 text-teal-700 text-xs font-medium flex items-center">Open <ChevronRight size={12} className="ml-0.5" /></div>
+              <div className="mt-4 text-[#a67c00] text-xs font-medium flex items-center">Open <ChevronRight size={12} className="ml-0.5" /></div>
             </button>
           ))}
         </div>
@@ -168,7 +168,7 @@ export function DistributorBrowsePage() {
                   </div>
                   <div className="text-xs font-mono text-slate-500 mb-2">{p.sku_code} • {p.box_qty} bottles/box</div>
                   <div className="flex items-baseline gap-2 mt-2">
-                    <span className="text-lg font-bold text-teal-700">{inr(p.unit_price)}</span>
+                    <span className="text-lg font-bold text-[#a67c00]">{inr(p.unit_price)}</span>
                     {priceChanged && (
                       <>
                         <span className="text-xs text-slate-500 line-through">{inr(p.previous_price)}</span>
@@ -183,7 +183,7 @@ export function DistributorBrowsePage() {
                   <div className="flex items-center gap-1">
                     <button onClick={() => setQty(p.id, -1)} className="h-9 w-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center" data-testid={`minus-${p.id}`}><Minus size={16} /></button>
                     <input type="number" min={0} value={q} onChange={e => setQtyDirect(p.id, e.target.value)} className="w-14 h-9 text-center border border-slate-200 rounded-lg text-sm font-semibold" data-testid={`qty-input-${p.id}`} />
-                    <button onClick={() => setQty(p.id, 1)} className="h-9 w-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center bg-teal-50 text-teal-700" data-testid={`plus-${p.id}`}><Plus size={16} /></button>
+                    <button onClick={() => setQty(p.id, 1)} className="h-9 w-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center bg-[#faf6e6] text-[#a67c00]" data-testid={`plus-${p.id}`}><Plus size={16} /></button>
                   </div>
                   <div className="text-sm font-semibold text-slate-900">{q > 0 ? inr(q * p.unit_price) : ""}</div>
                 </div>
@@ -197,11 +197,11 @@ export function DistributorBrowsePage() {
       <div className="fixed bottom-0 left-0 lg:left-60 right-0 bg-white border-t border-slate-200 shadow-lg z-40">
         <div className="p-4 flex items-center gap-4">
           <div className="flex-1">
-            <div className="text-xs text-slate-500">{itemsCount} items • Subtotal {inr(subtotal)} + GST {inr(gstTotal)} <span className="ml-1 text-[10px] uppercase font-semibold text-teal-700">using NEW price</span></div>
+            <div className="text-xs text-slate-500">{itemsCount} items • Subtotal {inr(subtotal)} + GST {inr(gstTotal)} <span className="ml-1 text-[10px] uppercase font-semibold text-[#a67c00]">using NEW price</span></div>
             <div className="text-xl font-bold text-slate-900">{inr(total)}</div>
           </div>
           <div className="hidden md:block flex-1 max-w-sm"><Input placeholder="Notes for owner (optional)" value={notes} onChange={e => setNotes(e.target.value)} /></div>
-          <Button disabled={itemsCount === 0 || busy} onClick={place} className="bg-teal-700 hover:bg-teal-800 h-11 px-6" data-testid="place-order-btn">
+          <Button disabled={itemsCount === 0 || busy} onClick={place} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white h-11 px-6" data-testid="place-order-btn">
             <ShoppingCart size={16} className="mr-2" /> Place Order
           </Button>
         </div>
@@ -229,7 +229,7 @@ export function DistributorOrdersPage() {
                 <TableCell className="font-mono text-sm">{o.order_no}</TableCell>
                 <TableCell>{o.items.length}</TableCell>
                 <TableCell className="font-medium">{inr(o.total)}</TableCell>
-                <TableCell><div className="flex items-center gap-2 min-w-[100px]"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-teal-500" style={{ width: `${o.fulfillment_pct}%` }} /></div><span className="text-xs">{o.fulfillment_pct}%</span></div></TableCell>
+                <TableCell><div className="flex items-center gap-2 min-w-[100px]"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-[#faf6e6]0" style={{ width: `${o.fulfillment_pct}%` }} /></div><span className="text-xs">{o.fulfillment_pct}%</span></div></TableCell>
                 <TableCell><span className={`text-xs px-2 py-1 rounded-full border ${statusPill(o.status)}`}>{o.status.replace(/_/g, " ")}</span></TableCell>
                 <TableCell className="text-xs text-slate-500">{niceDate(o.created_at)}</TableCell>
               </TableRow>
@@ -272,7 +272,7 @@ export function DistributorOrderDetailPage() {
       />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Status</div><div className="mt-1"><span className={`text-sm px-2.5 py-1 rounded-full border ${statusPill(order.status)}`}>{order.status.replace(/_/g, " ")}</span></div></Card>
-        <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Fulfillment</div><div className="mt-1 flex items-center gap-3"><div className="flex-1 h-2 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-teal-500 transition-all" style={{ width: `${order.fulfillment_pct}%` }} /></div><span className="font-bold">{order.fulfillment_pct}%</span></div></Card>
+        <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Fulfillment</div><div className="mt-1 flex items-center gap-3"><div className="flex-1 h-2 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-[#faf6e6]0 transition-all" style={{ width: `${order.fulfillment_pct}%` }} /></div><span className="font-bold">{order.fulfillment_pct}%</span></div></Card>
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Total</div><div className="mt-1 font-bold text-lg">{inr(order.total)}</div></Card>
       </div>
       <Card className="mb-4">
@@ -299,7 +299,7 @@ export function DistributorOrderDetailPage() {
       </Card>
       {order.ebill && (
         <Card className="mb-4 p-4">
-          <div className="flex items-center gap-2 mb-2"><Receipt size={18} className="text-teal-700" /><div className="font-semibold">e-Bill Generated</div></div>
+          <div className="flex items-center gap-2 mb-2"><Receipt size={18} className="text-[#a67c00]" /><div className="font-semibold">e-Bill Generated</div></div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div><div className="text-slate-500">Bill #</div><div className="font-mono">{order.ebill.ebill_no}</div></div>
             <div><div className="text-slate-500">Subtotal</div><div>{inr(order.ebill.subtotal)}</div></div>
@@ -310,7 +310,7 @@ export function DistributorOrderDetailPage() {
             <div className="mt-3 pt-3 border-t border-slate-100">
               <div className="text-xs text-slate-500 mb-2">Attachments:</div>
               {order.attachments.map(a => (
-                <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-teal-700 hover:underline"><Paperclip size={14} /> {a.name}</a>
+                <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-[#a67c00] hover:underline"><Paperclip size={14} /> {a.name}</a>
               ))}
             </div>
           )}

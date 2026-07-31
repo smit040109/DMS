@@ -30,6 +30,7 @@ import { OwnerTlPerformancePage, OwnerDistributorSalesListPage, OwnerDistributor
 import { RmDashboardPage, RmTeamLeadersPage, RmRegionPerformancePage, RmDistributorsPage, RmSalespersonsPage } from "@/pages/dms/RegionalManagerPages";
 import { OwnerCouponsPage, OwnerCouponReportsPage, RetailerScanCouponPage } from "@/pages/dms/CouponPages";
 import { PrintEbillPage, PrintRetailerBillPage } from "@/pages/dms/PrintPages";
+import { PriceCircularsPage, PriceCircularDetailPage, NewPriceCircularPage, SettingsPage } from "@/pages/dms/PriceCircularPages";
 
 function Protected({ children }) {
   const { user } = useAuth();
@@ -86,6 +87,10 @@ function AppRoutes() {
       <Route path="/dms/owner/distributor-sales/:id" element={<DmsPage Component={OwnerDistributorSalesDetailPage} />} />
       <Route path="/dms/owner/coupons"             element={<DmsPage Component={OwnerCouponsPage} />} />
       <Route path="/dms/owner/coupon-reports"      element={<DmsPage Component={OwnerCouponReportsPage} />} />
+      <Route path="/dms/owner/price-circulars"     element={<DmsPage Component={PriceCircularsPage} />} />
+      <Route path="/dms/owner/price-circulars/new" element={<DmsPage Component={NewPriceCircularPage} />} />
+      <Route path="/dms/owner/price-circulars/:id" element={<DmsPage Component={PriceCircularDetailPage} />} />
+      <Route path="/dms/owner/settings"            element={<DmsPage Component={SettingsPage} />} />
       <Route path="/dms/retailer/scan"             element={<DmsPage Component={RetailerScanCouponPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
       <Route path="/dms/team-leader/salespersons"  element={<DmsPage Component={TlSalespersonsPage} />} />

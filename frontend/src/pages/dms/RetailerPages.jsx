@@ -23,11 +23,11 @@ export function RetailerDashboardPage() {
     { label: "Outstanding", value: kpis ? inr(kpis.outstanding) : "—", icon: TrendingUp, color: "rose" },
     { label: "Pending Items", value: kpis?.pending_items ?? "—", icon: Package, color: "amber" },
   ];
-  const colorMap = { teal: "bg-teal-50 text-teal-700", blue: "bg-blue-50 text-blue-700", rose: "bg-rose-50 text-rose-700", amber: "bg-amber-50 text-amber-700" };
+  const colorMap = { teal: "bg-[#faf6e6] text-[#a67c00]", blue: "bg-blue-50 text-blue-700", rose: "bg-rose-50 text-rose-700", amber: "bg-amber-50 text-amber-700" };
   return (
     <div>
       <PageHeader title="Retailer Dashboard" subtitle="Your orders & outstanding"
-        action={<Button onClick={() => nav("/dms/retailer/browse")} className="bg-teal-700 hover:bg-teal-800" data-testid="place-order-cta"><ShoppingCart size={16} className="mr-1" /> Place New Order</Button>} />
+        action={<Button onClick={() => nav("/dms/retailer/browse")} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="place-order-cta"><ShoppingCart size={16} className="mr-1" /> Place New Order</Button>} />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
         {cards.map(c => (
           <Card key={c.label} className="p-4">
@@ -141,14 +141,14 @@ export function RetailerBrowsePage() {
             <button
               key={c.name}
               onClick={() => setOpenCategory(c.name)}
-              className="text-left bg-white border border-slate-200 hover:border-teal-400 hover:shadow-md transition rounded-2xl p-5 relative"
+              className="text-left bg-white border border-slate-200 hover:border-[#c9a227] hover:shadow-md transition rounded-2xl p-5 relative"
               data-testid={`ret-cat-${c.name}`}
             >
-              <div className="h-10 w-10 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center mb-3"><Package size={20} /></div>
+              <div className="h-10 w-10 rounded-xl bg-[#faf6e6] text-[#a67c00] flex items-center justify-center mb-3"><Package size={20} /></div>
               <div className="font-semibold text-slate-900">{c.name}</div>
               <div className="text-xs text-slate-500 mt-0.5">{c.count} product{c.count !== 1 ? "s" : ""}</div>
-              {c.inCart > 0 && (<span className="absolute top-3 right-3 bg-teal-700 text-white text-[10px] font-bold rounded-full px-2 py-0.5">{c.inCart} in cart</span>)}
-              <div className="mt-4 text-teal-700 text-xs font-medium flex items-center">Open <ChevronRight size={12} className="ml-0.5" /></div>
+              {c.inCart > 0 && (<span className="absolute top-3 right-3 bg-[#c9a227] text-white text-[10px] font-bold rounded-full px-2 py-0.5">{c.inCart} in cart</span>)}
+              <div className="mt-4 text-[#a67c00] text-xs font-medium flex items-center">Open <ChevronRight size={12} className="ml-0.5" /></div>
             </button>
           ))}
         </div>
@@ -168,7 +168,7 @@ export function RetailerBrowsePage() {
                 </div>
                 <div className="text-xs font-mono text-slate-500">{p.sku_code} • {p.box_qty} bottles/box</div>
                 <div className="mt-2 flex items-baseline gap-2">
-                  <span className="text-lg font-bold text-teal-700">{inr(p.selling_price)}</span>
+                  <span className="text-lg font-bold text-[#a67c00]">{inr(p.selling_price)}</span>
                   {priceChanged && (
                     <><span className="text-xs text-slate-500 line-through">{inr(p.previous_selling_price)}</span>
                       <span className="text-[10px] text-amber-700 font-semibold">(old)</span></>
@@ -181,14 +181,14 @@ export function RetailerBrowsePage() {
                     <span className="text-xs text-slate-600 w-12">Boxes</span>
                     <button onClick={() => setQty(p.id, "boxes", -1)} className="h-9 w-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center" data-testid={`ret-minus-box-${p.id}`}><Minus size={16} /></button>
                     <div className="w-12 text-center font-semibold text-lg">{q.boxes || 0}</div>
-                    <button onClick={() => setQty(p.id, "boxes", 1)} className="h-9 w-9 rounded-lg border border-slate-200 bg-teal-50 text-teal-700 hover:bg-teal-100 flex items-center justify-center" data-testid={`ret-plus-box-${p.id}`}><Plus size={16} /></button>
+                    <button onClick={() => setQty(p.id, "boxes", 1)} className="h-9 w-9 rounded-lg border border-slate-200 bg-[#faf6e6] text-[#a67c00] hover:bg-[#faf0cf] flex items-center justify-center" data-testid={`ret-plus-box-${p.id}`}><Plus size={16} /></button>
                   </div>
                   {data.mode === "box_pcs" && (
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs text-slate-600 w-12">PCS</span>
                       <button onClick={() => setQty(p.id, "pcs", -1)} className="h-9 w-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center"><Minus size={16} /></button>
                       <div className="w-12 text-center font-semibold text-lg">{q.pcs || 0}</div>
-                      <button onClick={() => setQty(p.id, "pcs", 1)} className="h-9 w-9 rounded-lg border border-slate-200 bg-teal-50 text-teal-700 hover:bg-teal-100 flex items-center justify-center"><Plus size={16} /></button>
+                      <button onClick={() => setQty(p.id, "pcs", 1)} className="h-9 w-9 rounded-lg border border-slate-200 bg-[#faf6e6] text-[#a67c00] hover:bg-[#faf0cf] flex items-center justify-center"><Plus size={16} /></button>
                     </div>
                   )}
                 </div>
@@ -200,8 +200,8 @@ export function RetailerBrowsePage() {
 
       <div className="fixed bottom-0 left-0 lg:left-60 right-0 bg-white border-t border-slate-200 shadow-lg z-40">
         <div className="p-4 flex items-center gap-4">
-          <div className="flex-1"><div className="text-xs text-slate-500">{items.length} items • Sub {inr(subtotal)} + GST {inr(gst)} <span className="ml-1 text-[10px] uppercase font-semibold text-teal-700">using NEW price</span></div><div className="text-xl font-bold text-slate-900">{inr(total)}</div></div>
-          <Button disabled={busy || (items.length === 0 && !(includePending && data.pending.length > 0))} onClick={place} className="bg-teal-700 hover:bg-teal-800 h-11 px-6" data-testid="ret-place-order"><ShoppingCart size={16} className="mr-2" /> Place Order</Button>
+          <div className="flex-1"><div className="text-xs text-slate-500">{items.length} items • Sub {inr(subtotal)} + GST {inr(gst)} <span className="ml-1 text-[10px] uppercase font-semibold text-[#a67c00]">using NEW price</span></div><div className="text-xl font-bold text-slate-900">{inr(total)}</div></div>
+          <Button disabled={busy || (items.length === 0 && !(includePending && data.pending.length > 0))} onClick={place} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white h-11 px-6" data-testid="ret-place-order"><ShoppingCart size={16} className="mr-2" /> Place Order</Button>
         </div>
       </div>
     </div>
@@ -247,7 +247,7 @@ export function RetailerOrderDetailPage() {
         action={order.bill_id && <Button variant="outline" onClick={() => window.open(`/dms/print/retailer-bill/${order.bill_id}`, "_blank")}><Printer size={14} className="mr-1" /> Print Bill</Button>} />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Status</div><div className="mt-1"><span className={`text-sm px-2.5 py-1 rounded-full border ${statusPill(order.status)}`}>{order.status.replace(/_/g, " ")}</span></div></Card>
-        <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Fulfillment</div><div className="mt-1 flex items-center gap-2"><div className="flex-1 h-2 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-teal-500" style={{ width: `${order.fulfillment_pct}%` }} /></div><span className="font-bold">{order.fulfillment_pct}%</span></div></Card>
+        <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Fulfillment</div><div className="mt-1 flex items-center gap-2"><div className="flex-1 h-2 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-[#faf6e6]0" style={{ width: `${order.fulfillment_pct}%` }} /></div><span className="font-bold">{order.fulfillment_pct}%</span></div></Card>
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Total</div><div className="mt-1 font-bold text-lg">{inr(order.total)}</div></Card>
       </div>
       <Card>

@@ -9,7 +9,7 @@ export function ComingSoonPage({ title, features }) {
     <div>
       <PageHeader title={title} subtitle="Iteration 2 — coming after Primary Sales sign-off" />
       <Card className="p-8 text-center">
-        <div className="h-14 w-14 mx-auto rounded-full bg-teal-50 text-teal-700 flex items-center justify-center mb-3">
+        <div className="h-14 w-14 mx-auto rounded-full bg-[#faf6e6] text-[#a67c00] flex items-center justify-center mb-3">
           <Sparkles size={22} />
         </div>
         <div className="font-semibold text-slate-900 text-lg">{title}</div>
@@ -18,7 +18,7 @@ export function ComingSoonPage({ title, features }) {
         </div>
         <ul className="mt-4 text-sm text-slate-600 max-w-md mx-auto text-left space-y-1.5">
           {features.map(f => (
-            <li key={f} className="flex items-start gap-2"><span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-teal-500" /> <span>{f}</span></li>
+            <li key={f} className="flex items-start gap-2"><span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-[#faf6e6]0" /> <span>{f}</span></li>
           ))}
         </ul>
       </Card>

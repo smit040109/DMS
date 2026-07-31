@@ -167,6 +167,16 @@ export const dms = {
   // print
   printEbill: (id) => api.get(`/dms/print/ebill/${id}`).then(r => r.data),
   printRetailerBill: (id) => api.get(`/dms/print/retailer-bill/${id}`).then(r => r.data),
+
+  // settings (global — GST %)
+  getSettings: () => api.get("/dms/settings").then(r => r.data),
+  updateSettings: (body) => api.put("/dms/settings", body).then(r => r.data),
+
+  // price circulars
+  listPriceCirculars: () => api.get("/dms/price-circulars").then(r => r.data),
+  getPriceCircular: (cid) => api.get(`/dms/price-circulars/${cid}`).then(r => r.data),
+  createPriceCircular: (body) => api.post("/dms/price-circulars", body).then(r => r.data),
+  productCircularHistory: (pid) => api.get(`/dms/products/${pid}/circular-history`).then(r => r.data),
 };
 
 export function inr(n) {

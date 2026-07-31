@@ -12,7 +12,7 @@ function PrintFrame({ children, title }) {
           <div className="font-semibold">{title}</div>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => window.close()}><X size={14} className="mr-1" /> Close</Button>
-            <Button onClick={() => window.print()} className="bg-teal-700 hover:bg-teal-800" size="sm" data-testid="print-btn"><Printer size={14} className="mr-1" /> Print / Save PDF</Button>
+            <Button onClick={() => window.print()} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" size="sm" data-testid="print-btn"><Printer size={14} className="mr-1" /> Print / Save PDF</Button>
           </div>
         </div>
         <div className="bg-white shadow-lg rounded-lg print:shadow-none print:rounded-none p-8 print:p-6">{children}</div>
@@ -32,14 +32,14 @@ export function PrintEbillPage() {
   if (!eb) return <div className="p-8 text-center text-slate-500">Loading…</div>;
   return (
     <PrintFrame title={`e-Bill ${eb.ebill_no}`}>
-      <div className="border-b-2 border-teal-700 pb-4 mb-6">
+      <div className="border-b-2 border-[#a67c00] pb-4 mb-6">
         <div className="flex items-start justify-between">
           <div>
             <div className="text-2xl font-bold text-slate-900">TAX INVOICE</div>
             <div className="text-sm text-slate-500">Original for Recipient</div>
           </div>
           <div className="text-right">
-            <div className="text-lg font-bold text-teal-700">Bharat Oil</div>
+            <div className="text-lg font-bold text-[#a67c00]">Bharat Oil</div>
             <div className="text-xs text-slate-500">Distribution Management</div>
           </div>
         </div>
@@ -77,7 +77,7 @@ export function PrintEbillPage() {
         <div className="w-64">
           <Row label="Subtotal" value={inr(eb.subtotal)} />
           <Row label="GST" value={inr(eb.gst_total)} />
-          <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className="text-lg font-bold text-teal-700">{inr(eb.total)}</span>} /></div>
+          <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className="text-lg font-bold text-[#a67c00]">{inr(eb.total)}</span>} /></div>
         </div>
       </div>
       <div className="mt-8 text-center text-xs text-slate-500">Thank you for your business!</div>
@@ -92,10 +92,10 @@ export function PrintRetailerBillPage() {
   if (!b) return <div className="p-8 text-center text-slate-500">Loading…</div>;
   return (
     <PrintFrame title={`Bill ${b.bill_no}`}>
-      <div className="border-b-2 border-teal-700 pb-4 mb-6">
+      <div className="border-b-2 border-[#a67c00] pb-4 mb-6">
         <div className="flex items-start justify-between">
           <div><div className="text-2xl font-bold text-slate-900">RETAIL INVOICE</div><div className="text-sm text-slate-500">Original for Recipient</div></div>
-          <div className="text-right"><div className="text-lg font-bold text-teal-700">{b.distributor?.name}</div><div className="text-xs text-slate-500">{b.distributor?.address}</div>{b.distributor?.kyc?.gstin && <div className="text-xs text-slate-500">GSTIN: {b.distributor.kyc.gstin}</div>}</div>
+          <div className="text-right"><div className="text-lg font-bold text-[#a67c00]">{b.distributor?.name}</div><div className="text-xs text-slate-500">{b.distributor?.address}</div>{b.distributor?.kyc?.gstin && <div className="text-xs text-slate-500">GSTIN: {b.distributor.kyc.gstin}</div>}</div>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-8 mb-6">
@@ -129,7 +129,7 @@ export function PrintRetailerBillPage() {
         <div className="w-64">
           <Row label="Subtotal" value={inr(b.subtotal)} />
           <Row label="GST" value={inr(b.gst_total)} />
-          <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className="text-lg font-bold text-teal-700">{inr(b.total)}</span>} /></div>
+          <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className="text-lg font-bold text-[#a67c00]">{inr(b.total)}</span>} /></div>
         </div>
       </div>
     </PrintFrame>

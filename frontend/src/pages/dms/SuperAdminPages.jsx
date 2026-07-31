@@ -13,8 +13,8 @@ import api from "@/lib/api";
 
 const ROLE_COLORS = {
   super_admin: "bg-purple-100 text-purple-800",
-  owner: "bg-teal-100 text-teal-800",
-  owner_accountant: "bg-teal-50 text-teal-700",
+  owner: "bg-[#faf0cf] text-[#8a6600]",
+  owner_accountant: "bg-[#faf6e6] text-[#a67c00]",
   distributor: "bg-blue-100 text-blue-800",
   distributor_accountant: "bg-blue-50 text-blue-700",
   retailer: "bg-amber-100 text-amber-800",

@@ -69,7 +69,7 @@ export function OwnerDashboardPage() {
     { label: "Inventory Value",      value: kpis ? inr(kpis.inventory_value) : "—", icon: Warehouse, color: "slate" },
   ];
   const colorMap = {
-    teal: "bg-teal-50 text-teal-700", indigo: "bg-indigo-50 text-indigo-700",
+    teal: "bg-[#faf6e6] text-[#a67c00]", indigo: "bg-indigo-50 text-indigo-700",
     amber: "bg-amber-50 text-amber-700", blue: "bg-blue-50 text-blue-700",
     emerald: "bg-emerald-50 text-emerald-700", rose: "bg-rose-50 text-rose-700",
     slate: "bg-slate-100 text-slate-700",
@@ -91,7 +91,7 @@ export function OwnerDashboardPage() {
       <div className="mt-6">
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold text-slate-900">Recent Primary Orders</h3>
-          <button onClick={() => nav("/dms/owner/primary-orders")} className="text-sm text-teal-700 hover:underline">View all →</button>
+          <button onClick={() => nav("/dms/owner/primary-orders")} className="text-sm text-[#a67c00] hover:underline">View all →</button>
         </div>
         <Card className="overflow-hidden">
           {recent.length === 0 ? (
@@ -114,7 +114,7 @@ export function OwnerDashboardPage() {
                     <TableCell className="font-mono text-sm">{o.order_no}</TableCell>
                     <TableCell>{o.distributor_name}</TableCell>
                     <TableCell className="font-medium">{inr(o.total)}</TableCell>
-                    <TableCell><div className="flex items-center gap-2"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-teal-500" style={{ width: `${o.fulfillment_pct}%` }} /></div><span className="text-xs text-slate-600">{o.fulfillment_pct}%</span></div></TableCell>
+                    <TableCell><div className="flex items-center gap-2"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-[#faf6e6]0" style={{ width: `${o.fulfillment_pct}%` }} /></div><span className="text-xs text-slate-600">{o.fulfillment_pct}%</span></div></TableCell>
                     <TableCell><span className={`text-xs px-2 py-1 rounded-full border ${statusPill(o.status)}`}>{o.status.replace(/_/g, " ")}</span></TableCell>
                     <TableCell className="text-xs text-slate-500">{niceDate(o.created_at)}</TableCell>
                   </TableRow>
@@ -159,7 +159,7 @@ export function CategoriesPage() {
       <PageHeader
         title="Product Categories"
         subtitle="Group your products (Engine Oil, Gear Oil, Brake Fluid, etc.)"
-        action={<Button onClick={() => { setEditing(null); setForm({ name: "", description: "" }); setOpen(true); }} className="bg-teal-700 hover:bg-teal-800" data-testid="add-category-btn"><Plus size={16} className="mr-1" /> New Category</Button>}
+        action={<Button onClick={() => { setEditing(null); setForm({ name: "", description: "" }); setOpen(true); }} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="add-category-btn"><Plus size={16} className="mr-1" /> New Category</Button>}
       />
       <Card>
         <Table>
@@ -188,7 +188,7 @@ export function CategoriesPage() {
             <div><Label>Name</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} data-testid="cat-name-input" /></div>
             <div><Label>Description (optional)</Label><Textarea value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
           </div>
-          <DialogFooter><Button onClick={save} className="bg-teal-700 hover:bg-teal-800" data-testid="save-cat-btn">{editing ? "Update" : "Create"}</Button></DialogFooter>
+          <DialogFooter><Button onClick={save} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-cat-btn">{editing ? "Update" : "Create"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -199,104 +199,152 @@ export function CategoriesPage() {
 // Owner — Products
 // ============================================================================
 export function ProductsPage() {
+  const nav = useNavigate();
   const [list, setList] = useState([]);
   const [cats, setCats] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: "", category_id: "", sku_code: "", box_qty: 12, unit_price: "", hsn: "", gst_pct: 18, description: "", coupons_per_box: 100, points_value: 10 });
+  const [form, setForm] = useState({ material_description: "", grade_specs: "", pack_size: "", category_id: "", sku_code: "" });
+  const [q, setQ] = useState("");
+  const [catFilter, setCatFilter] = useState("all");
 
   const load = () => Promise.all([dms.listProducts(), dms.listCategories()]).then(([p, c]) => { setList(p.data); setCats(c.data); });
   useEffect(() => { load(); }, []);
 
   const openNew = () => {
     setEditing(null);
-    setForm({ name: "", category_id: cats[0]?.id || "", sku_code: "", box_qty: 12, unit_price: "", hsn: "", gst_pct: 18, description: "", coupons_per_box: 100, points_value: 10 });
+    setForm({ material_description: "", grade_specs: "-", pack_size: "", category_id: cats[0]?.id || "", sku_code: "" });
     setOpen(true);
   };
   const openEdit = (p) => {
     setEditing(p);
-    setForm({ name: p.name, category_id: p.category_id, sku_code: p.sku_code, box_qty: p.box_qty, unit_price: p.unit_price, hsn: p.hsn || "", gst_pct: p.gst_pct, description: p.description || "", coupons_per_box: p.coupons_per_box ?? 100, points_value: p.points_value ?? 10 });
+    setForm({
+      material_description: p.material_description || p.name || "",
+      grade_specs: p.grade_specs || "-",
+      pack_size: p.pack_size || "",
+      category_id: p.category_id,
+      sku_code: p.sku_code,
+    });
     setOpen(true);
   };
   const save = async () => {
     try {
-      const body = { ...form, box_qty: Number(form.box_qty), unit_price: Number(form.unit_price), gst_pct: Number(form.gst_pct), coupons_per_box: Number(form.coupons_per_box), points_value: Number(form.points_value) };
+      // Product Master fields — no pricing here
+      const body = {
+        name: `${form.material_description} (${form.pack_size})`,
+        material_description: form.material_description,
+        grade_specs: form.grade_specs,
+        pack_size: form.pack_size,
+        category_id: form.category_id,
+        sku_code: form.sku_code,
+        box_qty: editing?.box_qty ?? 1,
+        unit_price: editing?.unit_price ?? 0,
+      };
       if (editing) { await dms.updateProduct(editing.id, body); toast.success("Product updated"); }
-      else { await dms.createProduct(body); toast.success("Product created"); }
+      else { await dms.createProduct(body); toast.success("Product created — set pricing via Price Circular"); }
       setOpen(false); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
+  const filtered = list.filter(p => {
+    if (catFilter !== "all" && p.category_id !== catFilter) return false;
+    if (q) {
+      const s = q.toLowerCase();
+      const hay = `${p.material_description || p.name} ${p.grade_specs} ${p.pack_size} ${p.category_name}`.toLowerCase();
+      if (!hay.includes(s)) return false;
+    }
+    return true;
+  });
+
+  // group by category, PDF-style
+  const grouped = {};
+  filtered.forEach(p => {
+    const k = p.category_name || "Uncategorised";
+    if (!grouped[k]) grouped[k] = [];
+    grouped[k].push(p);
+  });
+
   return (
     <div>
       <PageHeader
-        title="Products"
-        subtitle="Master catalog — each product sold by the box"
+        title="Product Master"
+        subtitle={`${list.length} products · Only product info — pricing lives in Price Circular`}
         action={
           <div className="flex gap-2">
+            <Button variant="outline" onClick={() => nav("/dms/owner/price-circulars")} className="border-[#c9a227] text-[#8a6600] hover:bg-[#faf6e6]">View Price Circulars</Button>
             <ExcelButtons onImported={load} />
-            <Button onClick={openNew} disabled={cats.length === 0} className="bg-teal-700 hover:bg-teal-800" data-testid="add-product-btn"><Plus size={16} className="mr-1" /> New Product</Button>
+            <Button onClick={openNew} disabled={cats.length === 0} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white shadow-sm" data-testid="add-product-btn"><Plus size={16} className="mr-1" /> New Product</Button>
           </div>
         }
       />
       {cats.length === 0 && (
-        <Card className="p-4 mb-4 bg-amber-50 border-amber-200 text-amber-800 text-sm">Create a category first, then add products.</Card>
+        <Card className="p-4 mb-4 bg-[#faf6e6] border-[#c9a227]/40 text-[#8a6600] text-sm">Create a category first, then add products.</Card>
       )}
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>SKU</TableHead><TableHead>Product</TableHead><TableHead>Category</TableHead>
-              <TableHead>Box Qty</TableHead><TableHead>Price / Box</TableHead><TableHead>Prev. Price</TableHead>
-              <TableHead>GST%</TableHead><TableHead className="w-24"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.map(p => (
-              <TableRow key={p.id}>
-                <TableCell className="font-mono text-xs">{p.sku_code}</TableCell>
-                <TableCell className="font-medium">{p.name}</TableCell>
-                <TableCell><span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded">{p.category_name}</span></TableCell>
-                <TableCell>{p.box_qty}</TableCell>
-                <TableCell className="font-semibold">{inr(p.unit_price)}</TableCell>
-                <TableCell className="text-slate-500 text-xs">{p.previous_price ? inr(p.previous_price) : "—"}</TableCell>
-                <TableCell>{p.gst_pct}%</TableCell>
-                <TableCell className="text-right">
-                  <button onClick={() => openEdit(p)} className="p-1.5 hover:bg-slate-100 rounded" data-testid={`edit-prod-${p.id}`}><Edit size={14} /></button>
-                </TableCell>
+      <div className="flex flex-wrap gap-2 mb-4">
+        <div className="flex-1 min-w-[200px]"><Input placeholder="Search Material / Grade / Pack…" value={q} onChange={e => setQ(e.target.value)} data-testid="prod-search-input" /></div>
+        <div className="w-56">
+          <Select value={catFilter} onValueChange={setCatFilter}>
+            <SelectTrigger data-testid="prod-cat-filter"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {cats.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {Object.keys(grouped).length === 0 && <div className="p-8 text-center text-sm text-slate-500">No products match your filter</div>}
+
+      {Object.entries(grouped).map(([catName, rows]) => (
+        <Card key={catName} className="mb-4 overflow-hidden border-[#c9a227]/15 shadow-sm">
+          <div className="px-4 py-2.5 bg-gradient-to-r from-[#faf6e6] to-white border-b border-[#c9a227]/20 flex items-center justify-between">
+            <div className="font-display font-bold text-[#8a6600] text-sm uppercase tracking-wide">{catName}</div>
+            <div className="text-xs text-slate-500">{rows.length} SKU{rows.length !== 1 ? "s" : ""}</div>
+          </div>
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-slate-50/50">
+                <TableHead className="w-[45%]">Material Description</TableHead>
+                <TableHead>Grade / Specs</TableHead>
+                <TableHead>Pack Size</TableHead>
+                <TableHead className="w-24 text-right"></TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-        {list.length === 0 && <div className="p-8 text-center text-sm text-slate-500">No products yet</div>}
-      </Card>
+            </TableHeader>
+            <TableBody>
+              {rows.map(p => (
+                <TableRow key={p.id} className="hover:bg-[#faf6e6]/40">
+                  <TableCell className="font-medium text-slate-900">{p.material_description || p.name}</TableCell>
+                  <TableCell><span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono">{p.grade_specs || "-"}</span></TableCell>
+                  <TableCell className="text-slate-700 font-medium">{p.pack_size || "-"}</TableCell>
+                  <TableCell className="text-right">
+                    <button onClick={() => openEdit(p)} className="p-1.5 hover:bg-[#faf6e6] rounded" data-testid={`edit-prod-${p.id}`}><Edit size={14} className="text-[#a67c00]" /></button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      ))}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{editing ? "Edit Product" : "New Product"}</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-3">
-            <div className="col-span-2"><Label>Product Name *</Label><Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} data-testid="prod-name-input" /></div>
-            <div><Label>SKU Code *</Label><Input value={form.sku_code} onChange={e => setForm({ ...form, sku_code: e.target.value })} disabled={!!editing} data-testid="prod-sku-input" /></div>
+            <div className="col-span-2"><Label>Material Description *</Label><Input value={form.material_description} onChange={e => setForm({ ...form, material_description: e.target.value })} data-testid="prod-name-input" placeholder="e.g. POWER 4T 20W40" /></div>
+            <div><Label>Grade / Specs</Label><Input value={form.grade_specs} onChange={e => setForm({ ...form, grade_specs: e.target.value })} placeholder="e.g. SN, GL5" /></div>
+            <div><Label>Pack Size *</Label><Input value={form.pack_size} onChange={e => setForm({ ...form, pack_size: e.target.value })} placeholder="e.g. 1 L / 5 kg" /></div>
             <div><Label>Category *</Label>
               <Select value={form.category_id} onValueChange={v => setForm({ ...form, category_id: v })}>
                 <SelectTrigger data-testid="prod-cat-select"><SelectValue placeholder="Select" /></SelectTrigger>
                 <SelectContent>{cats.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div><Label>Bottles per Box *</Label><Input type="number" value={form.box_qty} onChange={e => setForm({ ...form, box_qty: e.target.value })} data-testid="prod-boxqty-input" /></div>
-            <div><Label>Price per Box (₹) *</Label><Input type="number" value={form.unit_price} onChange={e => setForm({ ...form, unit_price: e.target.value })} data-testid="prod-price-input" /></div>
-            <div><Label>HSN Code</Label><Input value={form.hsn} onChange={e => setForm({ ...form, hsn: e.target.value })} /></div>
-            <div><Label>GST %</Label><Input type="number" value={form.gst_pct} onChange={e => setForm({ ...form, gst_pct: e.target.value })} /></div>
-            <div><Label>Coupons per Box</Label><Input type="number" min={0} value={form.coupons_per_box} onChange={e => setForm({ ...form, coupons_per_box: e.target.value })} data-testid="p-coupons-per-box" /></div>
-            <div><Label>Points per Coupon</Label><Input type="number" min={0} value={form.points_value} onChange={e => setForm({ ...form, points_value: e.target.value })} data-testid="p-points-value" /></div>
-            <div className="col-span-2"><Label>Description</Label><Textarea rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
-            {editing && Number(form.unit_price) !== editing.unit_price && (
-              <div className="col-span-2 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-2.5">
-                📌 Changing price creates a new <b>price batch</b>. Old price (₹{editing.unit_price}) remains visible in history.
-              </div>
-            )}
+            <div><Label>SKU Code *</Label><Input value={form.sku_code} onChange={e => setForm({ ...form, sku_code: e.target.value })} disabled={!!editing} data-testid="prod-sku-input" /></div>
+            <div className="col-span-2 text-xs bg-[#faf6e6] border border-[#c9a227]/30 text-[#8a6600] rounded-lg p-3 mt-2">
+              💡 Pricing (MRP, DLP, margin, coupons, discounts) is managed separately in the <b>Price Circular</b> module.
+            </div>
           </div>
-          <DialogFooter><Button onClick={save} className="bg-teal-700 hover:bg-teal-800" data-testid="save-prod-btn">{editing ? "Update" : "Create"}</Button></DialogFooter>
+          <DialogFooter><Button onClick={save} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-prod-btn">{editing ? "Update" : "Create"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -330,7 +378,7 @@ export function DistributorsPage() {
       <PageHeader
         title="Distributors"
         subtitle="Onboard distributors and manage KYC + product visibility"
-        action={<Button onClick={openNew} className="bg-teal-700 hover:bg-teal-800" data-testid="add-dist-btn"><Plus size={16} className="mr-1" /> New Distributor</Button>}
+        action={<Button onClick={openNew} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="add-dist-btn"><Plus size={16} className="mr-1" /> New Distributor</Button>}
       />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {list.map(d => (
@@ -341,7 +389,7 @@ export function DistributorsPage() {
                 <div className="text-xs text-slate-500 mt-0.5">{d.email}</div>
                 <div className="text-xs text-slate-500">{d.phone}</div>
               </div>
-              <span className="text-[10px] uppercase tracking-wider bg-teal-50 text-teal-700 px-2 py-1 rounded">{d.region || "—"}</span>
+              <span className="text-[10px] uppercase tracking-wider bg-[#faf6e6] text-[#a67c00] px-2 py-1 rounded">{d.region || "—"}</span>
             </div>
             <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
               <span className="text-slate-500">Credit Limit</span>
@@ -351,7 +399,7 @@ export function DistributorsPage() {
               <span className="text-slate-500">GSTIN</span>
               <span className="font-mono text-slate-700">{d.kyc?.gstin || "—"}</span>
             </div>
-            <div className="mt-3 text-teal-700 text-xs font-medium flex items-center">Manage → <ChevronRight size={14} /></div>
+            <div className="mt-3 text-[#a67c00] text-xs font-medium flex items-center">Manage → <ChevronRight size={14} /></div>
           </Card>
         ))}
       </div>
@@ -397,7 +445,7 @@ export function DistributorsPage() {
               </div>
             </div>
           </div>
-          <DialogFooter><Button onClick={save} className="bg-teal-700 hover:bg-teal-800" data-testid="save-dist-btn">Create Distributor</Button></DialogFooter>
+          <DialogFooter><Button onClick={save} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-dist-btn">Create Distributor</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -448,7 +496,7 @@ export function DistributorDetailPage() {
           { k: "kyc", label: "KYC & Profile" },
           { k: "visibility", label: "Product Visibility" },
         ].map(t => (
-          <button key={t.k} onClick={() => setTab(t.k)} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === t.k ? "border-teal-600 text-teal-700" : "border-transparent text-slate-500 hover:text-slate-700"}`} data-testid={`tab-${t.k}`}>{t.label}</button>
+          <button key={t.k} onClick={() => setTab(t.k)} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === t.k ? "border-[#a67c00] text-[#a67c00]" : "border-transparent text-slate-500 hover:text-slate-700"}`} data-testid={`tab-${t.k}`}>{t.label}</button>
         ))}
       </div>
 
@@ -479,7 +527,7 @@ export function DistributorDetailPage() {
               ))}
               <div className="col-span-2 flex justify-end gap-2 mt-3">
                 <Button variant="outline" onClick={() => setEditKyc(false)}>Cancel</Button>
-                <Button onClick={saveKyc} className="bg-teal-700 hover:bg-teal-800" data-testid="save-kyc-btn">Save</Button>
+                <Button onClick={saveKyc} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-kyc-btn">Save</Button>
               </div>
             </div>
           )}
@@ -523,7 +571,7 @@ export function OwnerPrimaryOrdersPage() {
       <PageHeader title="Primary Orders" subtitle="Orders from distributors — fulfill and dispatch" />
       <div className="flex gap-2 mb-4 flex-wrap">
         {[{ k: "", label: "All" }, { k: "pending", label: "Pending" }, { k: "partially_fulfilled", label: "Partial" }, { k: "fulfilled", label: "Fulfilled" }, { k: "ready_to_go", label: "Ready" }, { k: "received", label: "Received" }].map(f => (
-          <button key={f.k} onClick={() => setFilter(f.k)} className={`px-3 py-1.5 text-xs rounded-full border ${filter === f.k ? "bg-teal-700 text-white border-teal-700" : "bg-white border-slate-200 text-slate-700 hover:border-slate-300"}`} data-testid={`filter-${f.k || "all"}`}>{f.label}</button>
+          <button key={f.k} onClick={() => setFilter(f.k)} className={`px-3 py-1.5 text-xs rounded-full border ${filter === f.k ? "bg-[#c9a227] text-white border-[#a67c00]" : "bg-white border-slate-200 text-slate-700 hover:border-slate-300"}`} data-testid={`filter-${f.k || "all"}`}>{f.label}</button>
         ))}
       </div>
       <Card>
@@ -539,7 +587,7 @@ export function OwnerPrimaryOrdersPage() {
                 <TableCell className="font-medium">{o.distributor_name}</TableCell>
                 <TableCell className="text-sm text-slate-600">{o.items.length}</TableCell>
                 <TableCell className="font-semibold">{inr(o.total)}</TableCell>
-                <TableCell><div className="flex items-center gap-2 min-w-[100px]"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-teal-500" style={{ width: `${o.fulfillment_pct}%` }} /></div><span className="text-xs text-slate-600">{o.fulfillment_pct}%</span></div></TableCell>
+                <TableCell><div className="flex items-center gap-2 min-w-[100px]"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-[#faf6e6]0" style={{ width: `${o.fulfillment_pct}%` }} /></div><span className="text-xs text-slate-600">{o.fulfillment_pct}%</span></div></TableCell>
                 <TableCell><span className={`text-xs px-2 py-1 rounded-full border ${statusPill(o.status)}`}>{o.status.replace(/_/g, " ")}</span></TableCell>
                 <TableCell className="text-xs text-slate-500">{niceDate(o.created_at)}</TableCell>
               </TableRow>
@@ -596,12 +644,12 @@ export function OwnerOrderDetailPage() {
         back="/dms/owner/primary-orders"
         action={<div className="flex gap-2">
           {order.ebill_id && <Button variant="outline" onClick={() => window.open(`/dms/print/ebill/${order.ebill_id}`, "_blank")} data-testid="print-ebill-btn"><span className="mr-1">🖨</span> Print e-Bill</Button>}
-          {canReady && <Button onClick={ready} disabled={busy} className="bg-teal-700 hover:bg-teal-800" data-testid="mark-ready-btn"><Truck size={16} className="mr-1" /> Mark Ready to Go</Button>}
+          {canReady && <Button onClick={ready} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="mark-ready-btn"><Truck size={16} className="mr-1" /> Mark Ready to Go</Button>}
         </div>}
       />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Status</div><div className="mt-1"><span className={`text-sm px-2.5 py-1 rounded-full border ${statusPill(order.status)}`}>{order.status.replace(/_/g, " ")}</span></div></Card>
-        <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Fulfillment</div><div className="mt-1 flex items-center gap-3"><div className="flex-1 h-2 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-teal-500 transition-all" style={{ width: `${order.fulfillment_pct}%` }} /></div><span className="font-bold text-slate-900">{order.fulfillment_pct}%</span></div></Card>
+        <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Fulfillment</div><div className="mt-1 flex items-center gap-3"><div className="flex-1 h-2 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-[#faf6e6]0 transition-all" style={{ width: `${order.fulfillment_pct}%` }} /></div><span className="font-bold text-slate-900">{order.fulfillment_pct}%</span></div></Card>
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Order Total</div><div className="mt-1 font-bold text-lg text-slate-900">{inr(order.total)}</div><div className="text-xs text-slate-500">Sub {inr(order.subtotal)} + GST {inr(order.gst_total)}</div></Card>
       </div>
 
@@ -633,7 +681,7 @@ export function OwnerOrderDetailPage() {
       {order.ebill && (
         <Card className="mb-4 p-4">
           <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2"><Receipt size={18} className="text-teal-700" /><div className="font-semibold">e-Bill</div><span className="font-mono text-sm text-slate-600">{order.ebill.ebill_no}</span></div>
+            <div className="flex items-center gap-2"><Receipt size={18} className="text-[#a67c00]" /><div className="font-semibold">e-Bill</div><span className="font-mono text-sm text-slate-600">{order.ebill.ebill_no}</span></div>
             <div className="text-right"><div className="font-bold text-lg">{inr(order.ebill.total)}</div><div className="text-xs text-slate-500">{niceDate(order.ebill.created_at)}</div></div>
           </div>
           <div className="text-sm text-slate-600">Subtotal {inr(order.ebill.subtotal)} • GST {inr(order.ebill.gst_total)} • {order.ebill.items.length} line items dispatched</div>
@@ -647,7 +695,7 @@ export function OwnerOrderDetailPage() {
             {(order.attachments || []).length > 0 && (
               <div className="space-y-2 mb-3">
                 {order.attachments.map(a => (
-                  <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-teal-700 hover:underline"><Paperclip size={14} /> {a.name}</a>
+                  <a key={a.id} href={a.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm text-[#a67c00] hover:underline"><Paperclip size={14} /> {a.name}</a>
                 ))}
               </div>
             )}
@@ -685,7 +733,7 @@ export function OwnerInventoryPage() {
       <PageHeader
         title="Owner Inventory"
         subtitle={`Total value: ${inr(inv.total_value)}`}
-        action={<Button onClick={() => setOpen(true)} className="bg-teal-700 hover:bg-teal-800" data-testid="stock-in-btn"><Plus size={16} className="mr-1" /> Stock Adjustment</Button>}
+        action={<Button onClick={() => setOpen(true)} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="stock-in-btn"><Plus size={16} className="mr-1" /> Stock Adjustment</Button>}
       />
       <Card>
         <Table>
@@ -719,7 +767,7 @@ export function OwnerInventoryPage() {
             <div><Label>Change in Boxes (+/-) *</Label><Input type="number" value={form.delta_boxes} onChange={e => setForm({ ...form, delta_boxes: e.target.value })} data-testid="adj-qty" /></div>
             <div><Label>Reason</Label><Input value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })} /></div>
           </div>
-          <DialogFooter><Button onClick={save} className="bg-teal-700 hover:bg-teal-800" data-testid="save-adj-btn">Save</Button></DialogFooter>
+          <DialogFooter><Button onClick={save} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-adj-btn">Save</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -747,7 +795,7 @@ export function PrimaryLedgerPage() {
       <PageHeader
         title="Primary Sales Ledger"
         subtitle="Owner ↔ Distributor transactions"
-        action={<Button onClick={() => setOpen(true)} className="bg-teal-700 hover:bg-teal-800" data-testid="record-payment-btn"><IndianRupee size={16} className="mr-1" /> Record Payment</Button>}
+        action={<Button onClick={() => setOpen(true)} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="record-payment-btn"><IndianRupee size={16} className="mr-1" /> Record Payment</Button>}
       />
       <div className="mb-4">
         <h3 className="text-sm font-semibold text-slate-700 mb-2">Outstanding by Distributor</h3>
@@ -811,7 +859,7 @@ export function PrimaryLedgerPage() {
             </div>
             <div><Label>Note</Label><Input value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
           </div>
-          <DialogFooter><Button onClick={save} className="bg-teal-700 hover:bg-teal-800" data-testid="save-payment-btn">Save</Button></DialogFooter>
+          <DialogFooter><Button onClick={save} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-payment-btn">Save</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

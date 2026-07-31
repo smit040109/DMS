@@ -364,7 +364,149 @@ backend:
           NO CRITICAL ISSUES FOUND. All Phase 1-6 backend APIs working as designed.
           Test coverage: 31/31 individual tests passed (100%).
 
-  - task: "PHASE 7 — Coupon System + Excel Import/Export"
+  - task: "GO OIL DMS v2 — Product Master + Price Circular + Settings + fresh GO OIL data"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py, backend/dms_seed.py, backend/dms_pdf_data.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          MAJOR UPGRADE from Bharat Oil DMS → GO OIL DMS with these changes:
+
+          1) FULL DATA RESET (dms_seed.py — SEED_VERSION="gooil-v2-may26"):
+             - Deletes all old business data (products, orders, ledger, coupons, etc.)
+             - Fresh GO OIL demo users (password: GoOil@2026):
+               superadmin@gooil.com, owner@gooil.com, accountant@gooil.com,
+               distributor1/2@gooil.com, distacct@gooil.com,
+               retailer1/2@gooil.com, salesperson@gooil.com,
+               teamleader@gooil.com, regionalmgr@gooil.com
+             - 135 products seeded from official GO OIL May'26 PDF (dms_pdf_data.py)
+             - 14 categories (MCO variants, Gear Oil GL4/GL5, Grease, DEO variants, PCMO variants, Essential)
+             - MAY'26 Price Circular = Batch 1 auto-created with all pricing
+
+          2) NEW SETTINGS ENDPOINTS (/api/dms/settings):
+             - GET/PUT with gst_pct + company_name
+             - Default GST=0% (owner configures)
+             - Primary + Secondary order calculations use settings.gst_pct
+                (not per-product gst_pct anymore)
+
+          3) NEW PRICE CIRCULAR MODULE (/api/dms/price-circulars):
+             - GET list (with lines_count)
+             - GET {cid} — full circular detail with all lines + category names
+             - POST — create new circular batch (auto batch_no = max+1)
+               * Deactivates previous active lines for included products
+               * Preserves history (never deletes)
+               * Auto-updates product.previous_price + unit_price
+               * Closes legacy price_batches row and opens new one
+             - GET /products/{pid}/circular-history — full pricing history
+             - GET /price-circulars/{cid}/active-lines
+
+          4) PRODUCT MASTER RESTRUCTURED:
+             - Products now carry material_description, grade_specs, pack_size
+               (in addition to existing name/sku/box_qty/etc.)
+             - HSN/GST/coupons_per_box kept in DB but hidden from UI
+             - Pricing sourced from Price Circular (unit_price mirrors latest DLP)
+
+          5) OLD → NEW PRICE:
+             - Distributor browse endpoint returns products with unit_price + previous_price
+             - New circular publication sets previous_price=old DLP, unit_price=new DLP
+             - Order calculation always uses latest unit_price
+
+          Verified via curl:
+          - Login as owner@gooil.com works
+          - GET /dms/products → 135 products with material_description, grade_specs, pack_size
+          - GET /dms/price-circulars → 1 initial circular (MAY'26 Batch 1, 135 lines)
+          - GET /dms/settings → gst_pct=0, company_name=GO OIL Lubricants
+          - POST /dms/price-circulars for 2 products at new DLPs → Batch 2 created
+          - Products verified: previous_price=298 → unit_price=320 (old→new works)
+          - Distributor browse: distributor1@gooil.com sees 135 products, 2 with old→new pricing
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL GO OIL DMS v2 BACKEND TESTS PASSED (100%)
+          
+          Comprehensive backend API testing completed for NEW endpoints + REGRESSION tests.
+          All endpoints working correctly with proper RBAC, data validation, and business logic.
+          
+          **NEW ENDPOINTS (Priority 1) — ALL WORKING:**
+          
+          1. ✅ SETTINGS (/api/dms/settings)
+             - GET as any authenticated user → returns {gst_pct: 0, company_name: "GO OIL Lubricants"}
+             - PUT as owner with {gst_pct: 5.5, company_name: "GO OIL Test"} → 200, updated correctly
+             - GST clamp validation: gst_pct=150 → 400 error (correct)
+             - PUT as distributor → 403 (correct RBAC)
+             - Reset to original values working
+          
+          2. ✅ PRICE CIRCULARS (/api/dms/price-circulars)
+             - GET list → Returns MAY'26 circular (batch_no=1, lines_count=135)
+             - GET /{cid} → Returns header + 135 lines with all required fields:
+               * material_description, grade_specs, pack_size, category_name
+               * mrp, dlp, distributor_margin_pct, cash_coupon, foc_benefits, monthly_gift, trade_discount, is_active
+             - POST new circular as owner → Creates new batch (auto batch_no increment)
+               * Deactivates previous active lines for included products (is_active=False)
+               * Updates product.previous_price = old DLP, product.unit_price = new DLP
+               * Closes legacy price_batches row and opens new one
+             - POST as distributor → 403 (correct RBAC)
+             - POST with empty lines[] → 400 (correct validation)
+             - GET /products/{pid}/circular-history → Returns pricing history with circular_title + batch_label
+             - Batch_no auto-increments correctly (1 → 2 → 3 → 4)
+          
+          3. ✅ PRODUCT MASTER FIELDS
+             - GET /api/dms/products → 135 products returned
+             - All products have material_description, grade_specs, pack_size fields populated
+             - Example: material_description='10W30 COMBO', grade_specs='SN', pack_size='0.8 L'
+          
+          4. ✅ ORDER PRICING USES SETTINGS GST
+             - Set settings gst_pct=10 → Primary order line_gst uses 10% (verified)
+             - Set settings gst_pct=0 → Primary order line_gst=0 (verified)
+             - GST calculation correct: line_gst = line_subtotal × (gst_pct / 100)
+          
+          5. ✅ OLD → NEW PRICE FLOW
+             - POST new circular changing DLP from 370 → 420
+             - GET /api/dms/products → previous_price=370, unit_price=420 (correct)
+             - GET /api/dms/distributor/browse → Shows both previous_price + unit_price
+             - Place order → Uses NEW price (unit_price=420) in order calculation
+          
+          **REGRESSION TESTS (Priority 2) — ALL WORKING:**
+          
+          1. ✅ Categories: GET as owner → 17 categories (≥14 expected, includes test data)
+          2. ✅ Distributors: GET as owner → 2 distributors
+          3. ✅ Distributor browse: as distributor1 → 135 products visible
+          4. ✅ Primary order lifecycle: place → fulfill → ready → receive (all working)
+             - Place order: status=pending
+             - Fulfill lines: partial fulfillment → status=partially_fulfilled
+             - Mark ready: status=ready_to_go, ebill_id generated
+             - Receive order: status=received
+          5. ✅ Secondary order: retailer1 places order → dispatch → status=dispatched
+          6. ✅ Salesperson: punch in/out with GPS coordinates working
+          7. ✅ Notifications: GET as any user, mark read-all working
+          8. ✅ Team Leader dashboard: GET returns KPIs
+          9. ✅ Regional Manager dashboard: GET returns KPIs
+          
+          🎯 CRITICAL FLOWS VERIFIED:
+          - Settings: GET/PUT with GST clamp [0,100], RBAC working
+          - Price Circulars: Full lifecycle (list, detail, create, history) working
+          - Product Master: All 135 products have new fields (material_description, grade_specs, pack_size)
+          - Order pricing: Uses global settings.gst_pct (not per-product)
+          - Old → New price: previous_price + unit_price tracking working
+          - Batch auto-increment: batch_no correctly increments on new circular creation
+          - is_active flag: Old lines deactivated when new circular published
+          - RBAC: Owner-only access for settings/circular creation enforced
+          - All existing critical flows still working (no regressions)
+          
+          📊 TEST COVERAGE:
+          - NEW endpoints: 5/5 scenarios passed (100%)
+          - REGRESSION: 9/9 scenarios passed (100%)
+          - Total: 14/14 scenarios passed (100%)
+          
+          NO CRITICAL ISSUES FOUND.
+          All GO OIL DMS v2 backend APIs production-ready.
+
+  - task: "PHASE 7 (legacy) — Coupon System + Excel Import/Export (retained)"
     implemented: true
     working: true
     file: "backend/dms_router.py"
@@ -627,13 +769,12 @@ frontend:
 
 metadata:
   created_by: "main_agent"
-  version: "1.0-simple-dms"
-  test_sequence: 0
+  version: "2.0-gooil-dms"
+  test_sequence: 1
   run_ui: true
 
 test_plan:
-  current_focus:
-    - "PHASE 7 — Coupon System + Excel Import/Export"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -1034,3 +1175,41 @@ agent_communication:
       All Phase 7 backend APIs production-ready.
       
       RECOMMENDATION: Main agent should summarize and finish.
+
+  - agent: "testing"
+    message: |
+      🎉 GO OIL DMS v2 BACKEND TESTING COMPLETE — ALL 14 SCENARIOS PASSED (100%)
+      
+      Comprehensive backend API testing completed for NEW endpoints (Settings, Price Circular, Product Master) + REGRESSION tests.
+      All endpoints working correctly with proper RBAC, data validation, and business logic.
+      
+      **NEW ENDPOINTS (Priority 1) — ALL WORKING:**
+      
+      1. ✅ Settings (/api/dms/settings)
+      2. ✅ Price Circulars (/api/dms/price-circulars)
+      3. ✅ Product Master fields (material_description, grade_specs, pack_size)
+      4. ✅ Order pricing uses settings GST
+      5. ✅ Old → New price flow (previous_price + unit_price)
+      
+      **REGRESSION (Priority 2) — ALL WORKING:**
+      
+      1. ✅ Categories (17 categories)
+      2. ✅ Distributors (2 distributors)
+      3. ✅ Distributor browse (135 products)
+      4. ✅ Primary order lifecycle (place → fulfill → ready → receive)
+      5. ✅ Secondary order (retailer → distributor)
+      6. ✅ Salesperson punch in/out
+      7. ✅ Notifications
+      8. ✅ Team Leader dashboard
+      9. ✅ Regional Manager dashboard
+      
+      📊 TEST COVERAGE:
+      - NEW endpoints: 5/5 scenarios passed (100%)
+      - REGRESSION: 9/9 scenarios passed (100%)
+      - Total: 14/14 scenarios passed (100%)
+      
+      NO CRITICAL ISSUES FOUND.
+      All GO OIL DMS v2 backend APIs production-ready.
+      
+      RECOMMENDATION: Main agent should summarize and finish.
+

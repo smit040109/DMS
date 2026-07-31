@@ -490,6 +490,9 @@ def build_dms_router(db, get_current_user):
         order_items = []
         subtotal = 0.0
         gst_total = 0.0
+        # global GST% from settings (default 0 until owner configures)
+        settings_doc = await db.dms_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+        global_gst = float(settings_doc.get("gst_pct") or 0)
         for it in items:
             pid = it.get("product_id")
             qty_boxes = int(it.get("qty_boxes", 0))
@@ -500,7 +503,7 @@ def build_dms_router(db, get_current_user):
                 raise HTTPException(status_code=400, detail=f"Product {pid} not found")
             unit_price = _round(p["unit_price"])
             line_sub = _round(unit_price * qty_boxes)
-            line_gst = _round(line_sub * (p.get("gst_pct", 18) / 100.0))
+            line_gst = _round(line_sub * (global_gst / 100.0))
             subtotal += line_sub
             gst_total += line_gst
             order_items.append({
@@ -510,7 +513,7 @@ def build_dms_router(db, get_current_user):
                 "box_qty": p["box_qty"],
                 "unit_price": unit_price,           # price applied
                 "previous_price": p.get("previous_price"),
-                "gst_pct": p.get("gst_pct", 18),
+                "gst_pct": global_gst,
                 "qty_boxes_ordered": qty_boxes,
                 "qty_boxes_fulfilled": 0,
                 "line_subtotal": line_sub,
@@ -1261,6 +1264,9 @@ def build_dms_router(db, get_current_user):
         order_items = []
         subtotal = 0.0
         gst_total = 0.0
+        # global GST% from settings
+        _s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+        global_gst = float(_s.get("gst_pct") or 0)
         for it in items:
             pid = it.get("product_id")
             qty_boxes = int(it.get("qty_boxes", 0))
@@ -1279,7 +1285,7 @@ def build_dms_router(db, get_current_user):
                 qty_boxes += int(pend.get("pending_qty_boxes", 0))
                 qty_pcs += int(pend.get("pending_qty_pcs", 0))
             line_sub = _round(box_price * qty_boxes + pcs_price * qty_pcs)
-            line_gst = _round(line_sub * (p.get("gst_pct", 18) / 100.0))
+            line_gst = _round(line_sub * (global_gst / 100.0))
             subtotal += line_sub; gst_total += line_gst
             order_items.append({
                 "product_id": pid,
@@ -1288,7 +1294,7 @@ def build_dms_router(db, get_current_user):
                 "box_qty": p["box_qty"],
                 "box_price": box_price,
                 "pcs_price": pcs_price,
-                "gst_pct": p.get("gst_pct", 18),
+                "gst_pct": global_gst,
                 "qty_boxes_ordered": qty_boxes,
                 "qty_pcs_ordered": qty_pcs,
                 "qty_boxes_dispatched": 0,
@@ -1308,12 +1314,12 @@ def build_dms_router(db, get_current_user):
             pcs_price = _round(box_price / max(p["box_qty"], 1))
             qb = int(pend.get("pending_qty_boxes", 0)); qp = int(pend.get("pending_qty_pcs", 0))
             line_sub = _round(box_price * qb + pcs_price * qp)
-            line_gst = _round(line_sub * (p.get("gst_pct", 18) / 100.0))
+            line_gst = _round(line_sub * (global_gst / 100.0))
             subtotal += line_sub; gst_total += line_gst
             order_items.append({
                 "product_id": pid, "product_name": p["name"], "sku_code": p["sku_code"],
                 "box_qty": p["box_qty"], "box_price": box_price, "pcs_price": pcs_price,
-                "gst_pct": p.get("gst_pct", 18), "qty_boxes_ordered": qb, "qty_pcs_ordered": qp,
+                "gst_pct": global_gst, "qty_boxes_ordered": qb, "qty_pcs_ordered": qp,
                 "qty_boxes_dispatched": 0, "qty_pcs_dispatched": 0,
                 "line_subtotal": line_sub, "line_gst": line_gst, "line_total": _round(line_sub + line_gst),
                 "carried_pending": True,
@@ -3058,5 +3064,238 @@ def build_dms_router(db, get_current_user):
         b["retailer"] = retailer
         b["distributor"] = distributor
         return b
+
+    # =========================================================================
+    # SETTINGS  (global — GST % is configured here; default 0)
+    # =========================================================================
+    async def _get_settings() -> Dict[str, Any]:
+        doc = await db.dms_settings.find_one({"id": "global"}, {"_id": 0})
+        if not doc:
+            doc = {"id": "global", "gst_pct": 0.0, "company_name": "GO OIL Lubricants", "updated_at": _now()}
+            await db.dms_settings.insert_one(doc)
+        return doc
+
+    @router.get("/settings")
+    async def get_settings(user: dict = Depends(get_current_user)):
+        s = await _get_settings()
+        return _clean(s)
+
+    @router.put("/settings")
+    async def update_settings(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        upd: Dict[str, Any] = {}
+        if "gst_pct" in body:
+            try:
+                gst = float(body["gst_pct"])
+            except Exception:
+                raise HTTPException(status_code=400, detail="gst_pct must be a number")
+            if gst < 0 or gst > 100:
+                raise HTTPException(status_code=400, detail="gst_pct must be between 0 and 100")
+            upd["gst_pct"] = gst
+        if "company_name" in body and isinstance(body["company_name"], str):
+            upd["company_name"] = body["company_name"].strip() or "GO OIL Lubricants"
+        upd["updated_at"] = _now()
+        await db.dms_settings.update_one({"id": "global"}, {"$set": upd}, upsert=True)
+        s = await _get_settings()
+        return _clean(s)
+
+    # =========================================================================
+    # PRICE CIRCULAR  (source-of-truth for pricing history; separate from Product Master)
+    # =========================================================================
+    @router.get("/price-circulars")
+    async def list_price_circulars(user: dict = Depends(get_current_user)):
+        headers = await db.dms_price_circulars.find(
+            {"kind": {"$ne": "line"}}, {"_id": 0}
+        ).sort([("batch_no", -1)]).to_list(500)
+        # attach line counts
+        for h in headers:
+            h["lines_count"] = await db.dms_price_circulars.count_documents(
+                {"kind": "line", "circular_id": h["id"]}
+            )
+        return {"data": headers, "count": len(headers)}
+
+    @router.get("/price-circulars/{cid}")
+    async def get_price_circular(cid: str, user: dict = Depends(get_current_user)):
+        header = await db.dms_price_circulars.find_one({"id": cid}, {"_id": 0})
+        if not header or header.get("kind") == "line":
+            raise HTTPException(status_code=404, detail="Circular not found")
+        lines = await db.dms_price_circulars.find(
+            {"kind": "line", "circular_id": cid}, {"_id": 0}
+        ).to_list(2000)
+        # enrich with product info
+        pids = [ln["product_id"] for ln in lines]
+        prods = await db.dms_products.find({"id": {"$in": pids}}, {"_id": 0}).to_list(2000)
+        pmap = {p["id"]: p for p in prods}
+        cats = {c["id"]: c["name"] async for c in db.dms_categories.find({}, {"_id": 0, "id": 1, "name": 1})}
+        for ln in lines:
+            p = pmap.get(ln["product_id"], {})
+            ln["material_description"] = p.get("material_description", p.get("name", ""))
+            ln["grade_specs"] = p.get("grade_specs", "-")
+            ln["pack_size"] = p.get("pack_size", "")
+            ln["category_name"] = cats.get(p.get("category_id"), "")
+        header["lines"] = lines
+        return _clean(header)
+
+    @router.post("/price-circulars")
+    async def create_price_circular(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        """Create a new Price Circular batch.
+
+        Body:
+          title            : str  (required)
+          effective_date   : YYYY-MM-DD (required)
+          notes            : str  (optional)
+          lines            : list of { product_id, mrp, dlp, distributor_margin_pct,
+                                       cash_coupon, foc_benefits, monthly_gift, trade_discount }
+                             (at least 1 required)
+
+        Behaviour:
+          - Deactivates ALL previous circular lines for the products included here.
+          - Marks previous circular headers as inactive if they had lines only for these products.
+          - Creates a new batch (auto batch_no = max+1).
+          - Auto-updates product.previous_price = old DLP, product.unit_price = new DLP.
+          - Closes any open dms_price_batches row and opens a new one — so old-vs-new price
+            still works with existing order/browse logic.
+          - Never deletes historical lines — full history preserved.
+        """
+        title = (body.get("title") or "").strip()
+        eff_date = (body.get("effective_date") or "").strip()
+        lines = body.get("lines") or []
+        if not title:
+            raise HTTPException(status_code=400, detail="title required")
+        if not eff_date:
+            raise HTTPException(status_code=400, detail="effective_date required")
+        if not lines:
+            raise HTTPException(status_code=400, detail="At least one line required")
+
+        # next batch number
+        latest = await db.dms_price_circulars.find_one(
+            {"kind": {"$ne": "line"}},
+            {"_id": 0, "batch_no": 1},
+            sort=[("batch_no", -1)],
+        )
+        next_batch = int((latest or {}).get("batch_no", 0)) + 1
+        circular_id = _nid("pcir")
+
+        header_doc = {
+            "id": circular_id,
+            "tenant_id": DMS_TENANT_ID,
+            "title": title,
+            "effective_date": eff_date,
+            "batch_no": next_batch,
+            "batch_label": f"Batch {next_batch} — {title}",
+            "is_active": True,
+            "notes": (body.get("notes") or "").strip(),
+            "created_by": user.get("id"),
+            "created_at": _now(),
+        }
+        await db.dms_price_circulars.insert_one(header_doc)
+
+        included_product_ids = []
+        inserted_lines = 0
+        for ln in lines:
+            pid = ln.get("product_id")
+            if not pid:
+                continue
+            product = await db.dms_products.find_one({"id": pid}, {"_id": 0})
+            if not product:
+                continue
+            try:
+                dlp = float(ln.get("dlp"))
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Invalid DLP for product {pid}")
+            try:
+                mrp = float(ln.get("mrp") or 0)
+            except Exception:
+                mrp = 0.0
+            try:
+                margin = float(ln.get("distributor_margin_pct") or 0)
+            except Exception:
+                margin = 0.0
+
+            # Deactivate the previous active line for this product
+            await db.dms_price_circulars.update_many(
+                {"kind": "line", "product_id": pid, "is_active": True},
+                {"$set": {"is_active": False, "deactivated_at": _now()}},
+            )
+
+            # New circular line
+            await db.dms_price_circulars.insert_one({
+                "id": _nid("pcl"),
+                "tenant_id": DMS_TENANT_ID,
+                "kind": "line",
+                "circular_id": circular_id,
+                "product_id": pid,
+                "effective_date": eff_date,
+                "batch_no": next_batch,
+                "mrp": mrp,
+                "dlp": dlp,
+                "distributor_margin_pct": margin,
+                "cash_coupon": (ln.get("cash_coupon") or "").strip(),
+                "foc_benefits": (ln.get("foc_benefits") or "").strip(),
+                "monthly_gift": (ln.get("monthly_gift") or "").strip(),
+                "trade_discount": (ln.get("trade_discount") or "").strip(),
+                "is_active": True,
+                "created_at": _now(),
+            })
+            inserted_lines += 1
+            included_product_ids.append(pid)
+
+            # Also mirror new DLP into product.unit_price so existing order code works
+            old_price = float(product.get("unit_price") or 0)
+            if dlp != old_price:
+                await db.dms_products.update_one(
+                    {"id": pid},
+                    {"$set": {"previous_price": old_price, "unit_price": dlp, "updated_at": _now()}},
+                )
+                # Close open legacy price-batch row + open a new one (for price-history endpoint)
+                await db.dms_price_batches.update_one(
+                    {"product_id": pid, "to_date": None},
+                    {"$set": {"to_date": _now()}}
+                )
+                await db.dms_price_batches.insert_one({
+                    "id": _nid("pb"),
+                    "tenant_id": DMS_TENANT_ID,
+                    "product_id": pid,
+                    "price": dlp,
+                    "from_date": _now(),
+                    "to_date": None,
+                    "created_at": _now(),
+                    "circular_id": circular_id,
+                    "batch_no": next_batch,
+                })
+
+        if inserted_lines == 0:
+            # rollback header
+            await db.dms_price_circulars.delete_one({"id": circular_id})
+            raise HTTPException(status_code=400, detail="No valid product lines")
+
+        header_doc["lines_count"] = inserted_lines
+        return _clean(header_doc)
+
+    @router.get("/products/{pid}/circular-history")
+    async def product_circular_history(pid: str, user: dict = Depends(get_current_user)):
+        """Full pricing history from all circulars for one product (latest first)."""
+        rows = await db.dms_price_circulars.find(
+            {"kind": "line", "product_id": pid}, {"_id": 0}
+        ).sort([("batch_no", -1)]).to_list(500)
+        # attach circular title
+        cids = list({r["circular_id"] for r in rows})
+        headers = await db.dms_price_circulars.find(
+            {"id": {"$in": cids}, "kind": {"$ne": "line"}},
+            {"_id": 0, "id": 1, "title": 1, "batch_label": 1}
+        ).to_list(500)
+        hmap = {h["id"]: h for h in headers}
+        for r in rows:
+            h = hmap.get(r["circular_id"], {})
+            r["circular_title"] = h.get("title", "")
+            r["batch_label"] = h.get("batch_label", "")
+        return {"data": rows}
+
+    @router.get("/price-circulars/{cid}/active-lines")
+    async def circular_active_lines(cid: str, user: dict = Depends(get_current_user)):
+        """Helper — for a specific circular, which lines are still the *current* active price."""
+        lines = await db.dms_price_circulars.find(
+            {"kind": "line", "circular_id": cid, "is_active": True}, {"_id": 0}
+        ).to_list(2000)
+        return {"data": lines, "count": len(lines)}
 
     return router

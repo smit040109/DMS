@@ -42,14 +42,14 @@ export function OwnerTlPerformancePage() {
               </div>
               <div className="text-right">
                 <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">Total Sales</div>
-                <div className="text-xl font-bold text-teal-800">{inr(r.total_sales)}</div>
+                <div className="text-xl font-bold text-[#8a6600]">{inr(r.total_sales)}</div>
               </div>
             </div>
 
             {/* Progress bar vs top performer */}
             <div className="mt-3">
               <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
-                <div className="h-full bg-teal-500" style={{ width: `${topSales ? Math.max(2, (r.total_sales / topSales) * 100) : 0}%` }} />
+                <div className="h-full bg-[#faf6e6]0" style={{ width: `${topSales ? Math.max(2, (r.total_sales / topSales) * 100) : 0}%` }} />
               </div>
             </div>
 
@@ -89,7 +89,7 @@ export function OwnerTlPerformancePage() {
                 <TableRow key={r.team_leader_id}>
                   <TableCell className="font-bold text-slate-500">#{idx + 1}</TableCell>
                   <TableCell><div className="font-medium">{r.name}</div><div className="text-xs text-slate-500">{r.email}</div></TableCell>
-                  <TableCell className="text-right font-semibold text-teal-800">{inr(r.total_sales)}</TableCell>
+                  <TableCell className="text-right font-semibold text-[#8a6600]">{inr(r.total_sales)}</TableCell>
                   <TableCell className="text-right">{inr(r.monthly_sales)}</TableCell>
                   <TableCell className="text-right">{inr(r.today_sales)}</TableCell>
                   <TableCell className="text-right">{r.total_orders}</TableCell>
@@ -119,7 +119,7 @@ function Sparkline({ series }) {
     <div className="flex items-end gap-1 h-10">
       {(series || []).map((s, i) => (
         <div key={i} className="flex-1 flex flex-col items-center justify-end" title={`${s.date}: ${inr(s.sales)}`}>
-          <div className="w-full bg-teal-500 rounded-sm" style={{ height: `${Math.max(2, (s.sales / max) * 100)}%`, opacity: s.sales ? 1 : 0.2 }} />
+          <div className="w-full bg-[#faf6e6]0 rounded-sm" style={{ height: `${Math.max(2, (s.sales / max) * 100)}%`, opacity: s.sales ? 1 : 0.2 }} />
           <div className="text-[8px] text-slate-400 mt-0.5">{s.date.slice(-2)}</div>
         </div>
       ))}
@@ -145,7 +145,7 @@ export function OwnerDistributorSalesListPage() {
                 <div className="font-semibold text-slate-900">{d.name}</div>
                 <div className="text-xs text-slate-500">{d.region}</div>
               </div>
-              <ArrowUpRight size={16} className="text-teal-600" />
+              <ArrowUpRight size={16} className="text-[#a67c00]" />
             </div>
             <div className="text-xs text-slate-500 mt-2 flex items-center gap-1">View retailers, products, prices <ChevronRight size={12} /></div>
           </Card>
@@ -171,7 +171,7 @@ export function OwnerDistributorSalesDetailPage() {
       <PageHeader title={distributor.name} subtitle={`Complete business activity · ${distributor.region || "—"}`} back="/dms/owner/distributor-sales" />
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-        <KpiCard label="Total Revenue" value={inr(totals.revenue)} tint="bg-teal-50 text-teal-700" icon={TrendingUp} />
+        <KpiCard label="Total Revenue" value={inr(totals.revenue)} tint="bg-[#faf6e6] text-[#a67c00]" icon={TrendingUp} />
         <KpiCard label="Total Orders" value={totals.orders} tint="bg-blue-50 text-blue-700" icon={Package} />
         <KpiCard label="Active Retailers" value={totals.retailers_active} tint="bg-amber-50 text-amber-700" icon={Store} />
         <KpiCard label="Products Sold" value={totals.products_sold} tint="bg-indigo-50 text-indigo-700" icon={Package} />

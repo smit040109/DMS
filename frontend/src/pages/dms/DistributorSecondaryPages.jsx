@@ -30,7 +30,7 @@ export function DistRetailersPage() {
   return (
     <div>
       <PageHeader title="My Retailers" subtitle="Manage retailers under your distribution"
-        action={<Button onClick={openNew} className="bg-teal-700 hover:bg-teal-800" data-testid="add-retailer-btn"><Plus size={16} className="mr-1" /> Add Retailer</Button>} />
+        action={<Button onClick={openNew} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="add-retailer-btn"><Plus size={16} className="mr-1" /> Add Retailer</Button>} />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {list.map(r => (
           <Card key={r.id} className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav(`/dms/distributor/retailers/${r.id}`)}>
@@ -38,7 +38,7 @@ export function DistRetailersPage() {
             <div className="text-xs text-slate-500 mt-0.5">{r.phone}</div>
             <div className="text-xs text-slate-500 truncate">{r.address}</div>
             {r.gps_lat && <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1"><MapPin size={10} /> {r.gps_lat.toFixed(4)}, {r.gps_lng.toFixed(4)}</div>}
-            <div className="mt-3 text-teal-700 text-xs font-medium">Manage → <ChevronRight size={12} className="inline" /></div>
+            <div className="mt-3 text-[#a67c00] text-xs font-medium">Manage → <ChevronRight size={12} className="inline" /></div>
           </Card>
         ))}
       </div>
@@ -70,7 +70,7 @@ export function DistRetailersPage() {
               </div>
             </div>
           </div>
-          <DialogFooter><Button onClick={save} className="bg-teal-700 hover:bg-teal-800" data-testid="save-retailer-btn">Create</Button></DialogFooter>
+          <DialogFooter><Button onClick={save} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-retailer-btn">Create</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
@@ -96,7 +96,7 @@ export function DistRetailerDetailPage() {
       <PageHeader title={r.name} subtitle={`${r.phone} • ${r.address}`} back="/dms/distributor/retailers" />
       <div className="flex gap-2 mb-4 border-b border-slate-200">
         {[{ k: "visibility", l: "Product Visibility" }, { k: "mode", l: "Selling Mode" }, { k: "info", l: "Details" }].map(t => (
-          <button key={t.k} onClick={() => setTab(t.k)} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === t.k ? "border-teal-600 text-teal-700" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{t.l}</button>
+          <button key={t.k} onClick={() => setTab(t.k)} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === t.k ? "border-[#a67c00] text-[#a67c00]" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{t.l}</button>
         ))}
       </div>
       {tab === "visibility" && (
@@ -114,7 +114,7 @@ export function DistRetailerDetailPage() {
           <div className="font-semibold text-slate-900 mb-3">How can this retailer order?</div>
           <div className="space-y-2">
             {[{ v: "box", l: "Box only", d: "Retailer can order full boxes only" }, { v: "box_pcs", l: "Box + PCS (pieces)", d: "Retailer can order individual pieces too" }].map(o => (
-              <label key={o.v} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${mode === o.v ? "border-teal-500 bg-teal-50" : "border-slate-200 hover:bg-slate-50"}`}>
+              <label key={o.v} className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer ${mode === o.v ? "border-[#c9a227] bg-[#faf6e6]" : "border-slate-200 hover:bg-slate-50"}`}>
                 <input type="radio" checked={mode === o.v} onChange={() => changeMode(o.v)} />
                 <div><div className="font-medium text-slate-900">{o.l}</div><div className="text-xs text-slate-500">{o.d}</div></div>
               </label>
@@ -151,7 +151,7 @@ export function DistSecondaryOrdersPage() {
               <TableCell className="font-medium">{o.retailer_name}</TableCell>
               <TableCell><span className="text-xs bg-slate-100 px-2 py-0.5 rounded">{o.mode === "box_pcs" ? "Box+PCS" : "Box"}</span></TableCell>
               <TableCell className="font-semibold">{inr(o.total)}</TableCell>
-              <TableCell><div className="flex items-center gap-2 min-w-[100px]"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-teal-500" style={{ width: `${o.fulfillment_pct || 0}%` }} /></div><span className="text-xs">{o.fulfillment_pct || 0}%</span></div></TableCell>
+              <TableCell><div className="flex items-center gap-2 min-w-[100px]"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-[#faf6e6]0" style={{ width: `${o.fulfillment_pct || 0}%` }} /></div><span className="text-xs">{o.fulfillment_pct || 0}%</span></div></TableCell>
               <TableCell><span className={`text-xs px-2 py-1 rounded-full border ${statusPill(o.status)}`}>{o.status.replace(/_/g, " ")}</span></TableCell>
               <TableCell className="text-xs text-slate-500">{niceDate(o.created_at)}</TableCell>
             </TableRow>
@@ -193,7 +193,7 @@ export function DistSecondaryOrderDetailPage() {
       <PageHeader title={order.order_no} subtitle={`${order.retailer_name} • Placed ${niceDate(order.created_at)}`} back="/dms/distributor/retail-orders"
         action={<div className="flex gap-2">
           {order.bill_id && <Button variant="outline" onClick={() => window.open(`/dms/print/retailer-bill/${order.bill_id}`, "_blank")}><Printer size={14} className="mr-1" /> Print Bill</Button>}
-          {canDispatch && <Button onClick={doDispatch} disabled={busy} className="bg-teal-700 hover:bg-teal-800" data-testid="dispatch-btn"><Truck size={14} className="mr-1" /> Dispatch</Button>}
+          {canDispatch && <Button onClick={doDispatch} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="dispatch-btn"><Truck size={14} className="mr-1" /> Dispatch</Button>}
         </div>} />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Status</div><div className="mt-1"><span className={`text-sm px-2.5 py-1 rounded-full border ${statusPill(order.status)}`}>{order.status.replace(/_/g, " ")}</span></div></Card>
@@ -248,7 +248,7 @@ export function SecondaryLedgerPage() {
   return (
     <div>
       <PageHeader title="Secondary Sales Ledger" subtitle="Distributor ↔ Retailer transactions"
-        action={<Button onClick={() => setOpen(true)} className="bg-teal-700 hover:bg-teal-800" data-testid="record-sec-payment"><IndianRupee size={16} className="mr-1" /> Record Payment</Button>} />
+        action={<Button onClick={() => setOpen(true)} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="record-sec-payment"><IndianRupee size={16} className="mr-1" /> Record Payment</Button>} />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
         {data.summary.map(s => (
           <Card key={s.retailer_id} className="p-4">
@@ -258,7 +258,7 @@ export function SecondaryLedgerPage() {
               <div><div className="text-[10px] uppercase tracking-wider text-slate-500">Paid</div><div className="font-semibold text-emerald-700 text-sm">{inr(s.paid)}</div></div>
               <div><div className="text-[10px] uppercase tracking-wider text-slate-500">Due</div><div className="font-bold text-rose-700 text-sm">{inr(s.outstanding)}</div></div>
             </div>
-            <button onClick={() => { setForm({ retailer_id: s.retailer_id, amount: "", method: "cash" }); setOpen(true); }} className="mt-3 w-full text-xs text-teal-700 hover:bg-teal-50 py-1.5 rounded">Mark payment</button>
+            <button onClick={() => { setForm({ retailer_id: s.retailer_id, amount: "", method: "cash" }); setOpen(true); }} className="mt-3 w-full text-xs text-[#a67c00] hover:bg-[#faf6e6] py-1.5 rounded">Mark payment</button>
           </Card>
         ))}
       </div>
@@ -290,7 +290,7 @@ export function SecondaryLedgerPage() {
             </Select>
           </div>
         </div>
-        <DialogFooter><Button onClick={save} className="bg-teal-700 hover:bg-teal-800" data-testid="save-sec-payment">Save</Button></DialogFooter>
+        <DialogFooter><Button onClick={save} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-sec-payment">Save</Button></DialogFooter>
       </DialogContent></Dialog>
     </div>
   );

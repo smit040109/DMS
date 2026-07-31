@@ -43,7 +43,7 @@ export function OwnerCouponsPage() {
         title="Coupon Management"
         subtitle="Generate coupons, view assignments, and monitor redemptions"
         action={
-          <Button className="bg-teal-700 hover:bg-teal-800" onClick={() => setGenOpen(true)} data-testid="gen-coupons-btn">
+          <Button className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" onClick={() => setGenOpen(true)} data-testid="gen-coupons-btn">
             <Plus size={16} className="mr-2" /> Generate Coupons
           </Button>
         }
@@ -162,7 +162,7 @@ function GenerateDialog({ open, onClose, products, onDone }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={busy} className="bg-teal-700 hover:bg-teal-800" data-testid="gen-submit">{busy ? "Generating…" : "Generate"}</Button>
+          <Button onClick={submit} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="gen-submit">{busy ? "Generating…" : "Generate"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -195,7 +195,7 @@ export function OwnerCouponReportsPage() {
       <PageHeader title="Coupon Reports" subtitle="Assignments, redemptions and fraud attempt logs" />
       <div className="flex gap-1 border-b border-slate-200 mb-4">
         {tabs.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-sm font-semibold border-b-2 ${tab === t.id ? "border-teal-700 text-teal-800" : "border-transparent text-slate-500 hover:text-slate-800"}`}>{t.label}</button>
+          <button key={t.id} onClick={() => setTab(t.id)} className={`px-4 py-2 text-sm font-semibold border-b-2 ${tab === t.id ? "border-[#a67c00] text-[#8a6600]" : "border-transparent text-slate-500 hover:text-slate-800"}`}>{t.label}</button>
         ))}
       </div>
 
@@ -337,7 +337,7 @@ export function RetailerScanCouponPage() {
           <Label>Coupon Code</Label>
           <div className="flex gap-2 mt-1">
             <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="e.g. CPN000123" onKeyDown={e => e.key === "Enter" && scan()} data-testid="scan-input" />
-            <Button onClick={scan} disabled={busy || !code.trim()} className="bg-teal-700 hover:bg-teal-800" data-testid="scan-btn">{busy ? "Scanning…" : "Scan"}</Button>
+            <Button onClick={scan} disabled={busy || !code.trim()} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="scan-btn">{busy ? "Scanning…" : "Scan"}</Button>
           </div>
           {result && (
             <div className={`mt-4 p-4 rounded-lg border ${result.ok ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200"}`} data-testid="scan-result">
@@ -356,7 +356,7 @@ export function RetailerScanCouponPage() {
         <Card className="p-5">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2 text-slate-900 font-semibold"><Award size={18} /> My Points</div>
-            <div className="text-2xl font-bold text-teal-800">{history.total_points.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-[#8a6600]">{history.total_points.toLocaleString()}</div>
           </div>
           <div className="text-xs text-slate-500 mb-3">Last {history.data.length} redemptions</div>
           <div className="max-h-72 overflow-y-auto space-y-1">
@@ -367,7 +367,7 @@ export function RetailerScanCouponPage() {
                   <div className="font-mono font-semibold text-slate-900">{c.coupon_code}</div>
                   <div className="text-[11px] text-slate-500">{c.product_name} · {niceDate(c.redeemed_at)}</div>
                 </div>
-                <div className="text-teal-700 font-semibold">+{c.points_value}</div>
+                <div className="text-[#a67c00] font-semibold">+{c.points_value}</div>
               </div>
             ))}
           </div>

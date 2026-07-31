@@ -18,7 +18,7 @@ export function TlDashboardPage() {
   useEffect(() => { dms.tlDashboard().then(d => setK(d.kpis)).catch(() => {}); }, []);
   const cards = [
     { label: "Today's Sales",         value: k ? inr(k.today_sales) : "—",     icon: TrendingUp,   tint: "bg-emerald-50 text-emerald-700" },
-    { label: "This Month's Sales",    value: k ? inr(k.monthly_sales) : "—",   icon: TrendingUp,   tint: "bg-teal-50 text-teal-700" },
+    { label: "This Month's Sales",    value: k ? inr(k.monthly_sales) : "—",   icon: TrendingUp,   tint: "bg-[#faf6e6] text-[#a67c00]" },
     { label: "Total Orders",          value: k?.total_orders ?? "—",           icon: ShoppingCart, tint: "bg-blue-50 text-blue-700" },
     { label: "Pending Orders",        value: k?.pending_orders ?? "—",         icon: ClipboardList,tint: "bg-amber-50 text-amber-700" },
     { label: "Fulfillment %",         value: k ? `${k.fulfillment_pct}%` : "—",icon: Percent,      tint: "bg-indigo-50 text-indigo-700" },
@@ -160,7 +160,7 @@ export function TlSalespersonsPage() {
             </Select>
             <div className="flex gap-2 mt-4">
               <Button variant="outline" className="flex-1" onClick={() => setAssignFor(null)}>Cancel</Button>
-              <Button className="flex-1 bg-teal-700 hover:bg-teal-800" onClick={doAssign} disabled={!pickDist} data-testid="confirm-assign">Assign</Button>
+              <Button className="flex-1 bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" onClick={doAssign} disabled={!pickDist} data-testid="confirm-assign">Assign</Button>
             </div>
           </Card>
         </div>

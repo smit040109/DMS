@@ -28,7 +28,7 @@ const ROLE_LABEL = ROLE_OPTIONS.reduce((a, r) => (a[r.value] = r.label, a), {
 });
 
 const ROLE_BADGE = {
-  owner:                  "bg-teal-100 text-teal-800",
+  owner:                  "bg-[#faf0cf] text-[#8a6600]",
   owner_accountant:       "bg-emerald-100 text-emerald-800",
   distributor:            "bg-blue-100 text-blue-800",
   distributor_accountant: "bg-indigo-100 text-indigo-800",
@@ -101,7 +101,7 @@ export function OwnerUsersPage() {
         title="User Management"
         subtitle="Create users, reset passwords, and log in as any user in the system"
         action={
-          <Button onClick={() => setCreateOpen(true)} className="bg-teal-700 hover:bg-teal-800" data-testid="new-user-btn">
+          <Button onClick={() => setCreateOpen(true)} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="new-user-btn">
             <Plus size={16} className="mr-2" /> New User
           </Button>
         }
@@ -163,11 +163,11 @@ export function OwnerUsersPage() {
                 <TableRow key={u.id} data-testid={`user-row-${u.email}`}>
                   <TableCell>
                     <div className="flex items-center gap-3">
-                      <div className="h-9 w-9 rounded-full bg-teal-100 text-teal-800 text-xs font-bold flex items-center justify-center">
+                      <div className="h-9 w-9 rounded-full bg-[#faf0cf] text-[#8a6600] text-xs font-bold flex items-center justify-center">
                         {(u.avatar || u.name || "?").split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()}
                       </div>
                       <div>
-                        <div className="font-medium text-slate-900">{u.name}{isMe && <span className="ml-2 text-xs text-teal-700">(You)</span>}</div>
+                        <div className="font-medium text-slate-900">{u.name}{isMe && <span className="ml-2 text-xs text-[#a67c00]">(You)</span>}</div>
                         {u.phone && <div className="text-xs text-slate-500">{u.phone}</div>}
                       </div>
                     </div>
@@ -286,7 +286,7 @@ function CreateUserDialog({ open, onClose, onCreated }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={busy} className="bg-teal-700 hover:bg-teal-800" data-testid="cu-submit">
+          <Button onClick={submit} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="cu-submit">
             {busy ? "Creating…" : "Create User"}
           </Button>
         </DialogFooter>
@@ -335,7 +335,7 @@ function ResetPasswordDialog({ user, onClose }) {
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={busy} className="bg-teal-700 hover:bg-teal-800" data-testid="rp-submit">
+          <Button onClick={submit} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="rp-submit">
             {busy ? "Saving…" : "Reset Password"}
           </Button>
         </DialogFooter>
