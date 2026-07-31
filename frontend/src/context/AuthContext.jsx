@@ -41,7 +41,10 @@ export function AuthProvider({ children }) {
       setUser(data.user);
       return { ok: true };
     } catch (e) {
-      const msg = formatApiErrorDetail(e.response?.data?.detail) || e.message;
+      let msg = formatApiErrorDetail(e.response?.data?.detail) || e.message;
+      if (e.response?.status === 429) msg = "Too many attempts. Please wait a minute and try again.";
+      else if (e.response?.status === 401) msg = "Invalid email or password.";
+      else if (!e.response) msg = "Network error — is the server reachable?";
       setError(msg);
       return { ok: false, error: msg };
     }

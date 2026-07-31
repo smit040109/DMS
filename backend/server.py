@@ -236,7 +236,7 @@ class AiIn(BaseModel):
 
 # ---------- Auth ----------
 @api.post("/auth/login")
-@limiter.limit("10/minute")
+@limiter.limit("100/minute")  # generous — Kubernetes ingress collapses many users to one proxy IP
 async def login(request: Request, response: Response, body: LoginIn):
     email = body.email.lower().strip()
     # Users are tenant-scoped in the wrapper; use raw db for the login lookup
@@ -268,7 +268,7 @@ async def login(request: Request, response: Response, body: LoginIn):
 
 
 @api.post("/auth/register")
-@limiter.limit("5/minute")
+@limiter.limit("30/minute")  # generous — proxy-collapsed IPs
 async def register(request: Request, response: Response, body: RegisterIn):
     body.validate_password()
     email = body.email.lower().strip()
