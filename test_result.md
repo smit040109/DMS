@@ -375,7 +375,17 @@ backend:
       - working: "NA"
         agent: "main"
         comment: |
-          MAJOR UPGRADE from Bharat Oil DMS → GO OIL DMS with these changes:
+          MAJOR UPGRADE from Bharat Oil DMS → GO OIL DMS.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL 14 TESTS PASSED (100%) — GO OIL DMS v2 backend verified.
+          Settings, Price Circulars (list/detail/create/history), Product Master fields
+          (material_description/grade_specs/pack_size on all 135 products), GST-from-settings,
+          Old→New price flow, and full regression (categories, distributors, orders,
+          salesperson punch, notifications, TL/RM dashboards) all working.
+          Batch auto-increment, is_active toggling, RBAC (distributor 403 on owner-only
+          endpoints), GST clamp [0,100] — all correct.
 
           1) FULL DATA RESET (dms_seed.py — SEED_VERSION="gooil-v2-may26"):
              - Deletes all old business data (products, orders, ledger, coupons, etc.)
