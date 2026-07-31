@@ -35,6 +35,32 @@ All money in **INR**, 10 demo users (password `Demo@2026`), mobile-responsive te
 - Frontend pages: RmDashboard, RmTeamLeaders, RmRegionPerformance, RmDistributors, RmSalespersons + LiveTracking
 
 ### Phase 6 · Ordering UX (Distributor + Retailer) ✅
+
+### Phase 7 · Coupon Security System + Excel Import/Export ✅
+- Products now carry `coupons_per_box` (default 100) + `points_value` (default 10 pts) — editable per product; also imported/exported via Excel
+- New collections:
+  - `dms_coupons` — coupon_code (globally sequential CPN000001+), batch_id, product_id, assigned_distributor_id, assigned_on/ebill, status (unused/assigned/redeemed), redeemed_by_retailer_id, redeemed_at, points_value
+  - `dms_coupon_batches` — one row per generation batch: product, count, start_code, end_code
+  - `dms_coupon_fraud_attempts` — coupon_code, retailer, retailer_distributor, coupon_owner_distributor, reason (invalid_code / already_redeemed / not_dispatched / distributor_mismatch), at
+- Endpoints (all under `/api/dms`):
+  - `POST /owner/coupons/generate` — owner generates N unused coupons for a product (max 100k/batch)
+  - `GET /owner/coupons` — filterable by status/product/distributor/retailer
+  - `GET /owner/coupons/batches`
+  - `GET /owner/coupons/reports/summary` — totals + by_distributor + by_retailer
+  - `GET /owner/coupons/reports/fraud` — full fraud attempt log
+  - `GET /owner/coupons/reports/history` — redemption history
+  - `POST /retailer/coupons/scan` — validates in this exact order: valid code → not-redeemed → assigned → distributor-network match; on any failure logs a fraud attempt with the reason
+  - `GET /retailer/coupons/my-history` — retailer's own redemptions + total points
+- **Auto-assign on dispatch**: inside `mark_ready_to_go`, for each order line the system pulls next `qty_boxes × coupons_per_box` unused coupons (FIFO by created_at) for that product and stamps `assigned_distributor_id + assigned_on + status=assigned`. Shortfall (empty pool) is recorded in `ebill.coupons_assigned` without blocking dispatch
+- **Frontend**:
+  - Owner sidebar: **Coupons** (batches, KPIs, filterable list, Generate dialog) + **Coupon Reports** (Distributor/Retailer summary, Redemption history, Fraud attempts tabs)
+  - Retailer sidebar: **Scan Coupon** — one-tap redeem UI with success/reject panel + running points balance + last 500 redemptions
+- **Excel Import/Export for products**:
+  - `GET /owner/products/export` → xlsx (sku, name, category, box_qty, hsn, gst, price, coupons_per_box, points_value, active)
+  - `POST /owner/products/import` (multipart .xlsx) → upsert by sku_code; auto-creates missing categories; on price change closes old batch + opens new (same behaviour as PUT)
+  - Products page toolbar: **Export** + **Import** buttons (owner-only)
+
+## Backend regression: **Phase 7 = 13/13 passed** (Phase 1-6 previously 31/31)
 - Two-step flow: Category tile grid → Product cards with big +/- buttons
 - Old (strike-through) + New price displayed side-by-side with "Price ↑" tag when changed
 - Sticky footer with `USING NEW PRICE` label — subtotal + GST + total all calculated with new price
