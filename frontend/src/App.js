@@ -28,6 +28,7 @@ import { LiveTrackingPage } from "@/pages/dms/LiveTrackingPage";
 import { TlDashboardPage, TlDistributorsMonitoringPage, TlSalespersonsPage, TlOrdersMonitoringPage, TlRetailersPage, TlAttendancePage } from "@/pages/dms/TeamLeaderPages";
 import { OwnerTlPerformancePage, OwnerDistributorSalesListPage, OwnerDistributorSalesDetailPage } from "@/pages/dms/OwnerInsightsPages";
 import { RmDashboardPage, RmTeamLeadersPage, RmRegionPerformancePage, RmDistributorsPage, RmSalespersonsPage } from "@/pages/dms/RegionalManagerPages";
+import { OwnerCouponsPage, OwnerCouponReportsPage, RetailerScanCouponPage } from "@/pages/dms/CouponPages";
 import { PrintEbillPage, PrintRetailerBillPage } from "@/pages/dms/PrintPages";
 
 function Protected({ children }) {
@@ -83,6 +84,9 @@ function AppRoutes() {
       <Route path="/dms/owner/tl-performance"      element={<DmsPage Component={OwnerTlPerformancePage} />} />
       <Route path="/dms/owner/distributor-sales"   element={<DmsPage Component={OwnerDistributorSalesListPage} />} />
       <Route path="/dms/owner/distributor-sales/:id" element={<DmsPage Component={OwnerDistributorSalesDetailPage} />} />
+      <Route path="/dms/owner/coupons"             element={<DmsPage Component={OwnerCouponsPage} />} />
+      <Route path="/dms/owner/coupon-reports"      element={<DmsPage Component={OwnerCouponReportsPage} />} />
+      <Route path="/dms/retailer/scan"             element={<DmsPage Component={RetailerScanCouponPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
       <Route path="/dms/team-leader/salespersons"  element={<DmsPage Component={TlSalespersonsPage} />} />
       <Route path="/dms/team-leader/orders"        element={<DmsPage Component={TlOrdersMonitoringPage} />} />

@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Body, Query
+from fastapi import APIRouter, Depends, HTTPException, Body, Query, UploadFile, File
 from pydantic import BaseModel
 
 
@@ -193,6 +193,8 @@ def build_dms_router(db, get_current_user):
             "previous_price": None,
             "hsn": body.get("hsn", ""),
             "gst_pct": _round(body.get("gst_pct", 18)),
+            "coupons_per_box": int(body.get("coupons_per_box", 100)),
+            "points_value": _round(body.get("points_value", 10)),
             "active": True,
             "created_at": _now(),
         }
@@ -214,7 +216,7 @@ def build_dms_router(db, get_current_user):
         if not current:
             raise HTTPException(status_code=404, detail="Product not found")
         upd: Dict[str, Any] = {}
-        for k in ["name", "description", "box_qty", "hsn", "gst_pct", "active"]:
+        for k in ["name", "description", "box_qty", "hsn", "gst_pct", "active", "coupons_per_box", "points_value"]:
             if k in body:
                 upd[k] = body[k]
         if "unit_price" in body:
@@ -678,6 +680,38 @@ def build_dms_router(db, get_current_user):
             {"id": oid},
             {"$set": {"status": "ready_to_go", "ebill_id": ebill["id"], "ready_at": _now(), "updated_at": _now()}},
         )
+        # ── Coupon auto-assignment: pull next N unused coupons per line ──
+        assigned_summary = []
+        for it in billed_items:
+            pid_ = it["product_id"]
+            prod = await db.dms_products.find_one({"id": pid_}, {"_id": 0, "coupons_per_box": 1, "name": 1})
+            per_box = int((prod or {}).get("coupons_per_box", 100) or 100)
+            need = int(it["billed_qty_boxes"]) * per_box
+            if need <= 0:
+                continue
+            unused = await db.dms_coupons.find(
+                {"product_id": pid_, "status": "unused"}, {"_id": 0, "id": 1, "coupon_code": 1}
+            ).sort("created_at", 1).limit(need).to_list(need)
+            assigned_summary.append({
+                "product_id": pid_, "product_name": (prod or {}).get("name"),
+                "requested": need, "assigned": len(unused),
+                "shortfall": max(0, need - len(unused)),
+            })
+            if unused:
+                ids = [u["id"] for u in unused]
+                await db.dms_coupons.update_many(
+                    {"id": {"$in": ids}},
+                    {"$set": {
+                        "assigned_distributor_id": order["distributor_id"],
+                        "assigned_distributor_name": order["distributor_name"],
+                        "assigned_on": _now(),
+                        "assigned_on_ebill_id": ebill["id"],
+                        "assigned_on_ebill_no": ebill["ebill_no"],
+                        "status": "assigned",
+                    }},
+                )
+        if assigned_summary:
+            await db.dms_ebills.update_one({"id": ebill["id"]}, {"$set": {"coupons_assigned": assigned_summary}})
         # notify distributor
         dist_user = await db.users.find_one({"distributor_id": order["distributor_id"], "role": "distributor"}, {"_id": 0, "id": 1})
         if dist_user:
@@ -2619,6 +2653,350 @@ def build_dms_router(db, get_current_user):
         }
         tok = _jwt.encode(payload, _os.environ["JWT_SECRET"], algorithm="HS256")
         return {"token": tok, "user": target, "impersonated_by": {"id": user["id"], "name": user.get("name"), "email": user.get("email")}}
+
+    # =========================================================================
+    # COUPON MANAGEMENT — Distributor-based security (Phase 7)
+    # =========================================================================
+    async def _next_coupon_serial() -> int:
+        """Global sequential CPN000001+ serial. Reads from meta counter."""
+        c = await db.dms_meta.find_one_and_update(
+            {"key": "coupon_counter"},
+            {"$inc": {"value": 1}},
+            upsert=True, return_document=True,
+        )
+        return int((c or {}).get("value", 1))
+
+    def _coupon_code(n: int) -> str:
+        return f"CPN{n:06d}"
+
+    @router.post("/owner/coupons/generate")
+    async def gen_coupons(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        """Generate N unused coupons for a product. Returns start_code + end_code + batch_id."""
+        pid = body.get("product_id")
+        count = int(body.get("count", 0) or 0)
+        if not pid or count <= 0:
+            raise HTTPException(status_code=400, detail="product_id and positive count required")
+        if count > 100000:
+            raise HTTPException(status_code=400, detail="Max 100,000 coupons per batch")
+        prod = await db.dms_products.find_one({"id": pid}, {"_id": 0, "name": 1, "points_value": 1})
+        if not prod:
+            raise HTTPException(status_code=404, detail="Product not found")
+        pts = _round(prod.get("points_value", 10))
+        batch_id = _nid("cbt")
+        docs = []
+        first_n = None; last_n = None
+        for _ in range(count):
+            n = await _next_coupon_serial()
+            if first_n is None: first_n = n
+            last_n = n
+            docs.append({
+                "id": _nid("cpn"),
+                "coupon_code": _coupon_code(n),
+                "batch_id": batch_id,
+                "product_id": pid,
+                "product_name": prod.get("name"),
+                "assigned_distributor_id": None,
+                "assigned_distributor_name": None,
+                "assigned_on": None,
+                "status": "unused",
+                "redeemed_by_retailer_id": None,
+                "redeemed_at": None,
+                "points_value": pts,
+                "created_at": _now(),
+            })
+        if docs:
+            await db.dms_coupons.insert_many(docs)
+        # store batch meta
+        await db.dms_coupon_batches.insert_one({
+            "id": batch_id,
+            "product_id": pid,
+            "product_name": prod.get("name"),
+            "count": count,
+            "start_code": _coupon_code(first_n) if first_n else None,
+            "end_code": _coupon_code(last_n) if last_n else None,
+            "created_by": user["id"],
+            "created_at": _now(),
+        })
+        return {"ok": True, "batch_id": batch_id, "count": count,
+                "start_code": docs[0]["coupon_code"] if docs else None,
+                "end_code": docs[-1]["coupon_code"] if docs else None}
+
+    @router.get("/owner/coupons")
+    async def owner_list_coupons(
+        status: Optional[str] = None,
+        product_id: Optional[str] = None,
+        distributor_id: Optional[str] = None,
+        retailer_id: Optional[str] = None,
+        limit: int = 200,
+        user: dict = Depends(owner_only),
+    ):
+        q: Dict[str, Any] = {}
+        if status: q["status"] = status
+        if product_id: q["product_id"] = product_id
+        if distributor_id: q["assigned_distributor_id"] = distributor_id
+        if retailer_id: q["redeemed_by_retailer_id"] = retailer_id
+        docs = await db.dms_coupons.find(q, {"_id": 0}).sort("created_at", -1).limit(min(limit, 1000)).to_list(1000)
+        return {"data": docs, "count": len(docs)}
+
+    @router.get("/owner/coupons/batches")
+    async def owner_coupon_batches(user: dict = Depends(owner_only)):
+        docs = await db.dms_coupon_batches.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+        return {"data": docs}
+
+    # ── Retailer scan (redeem) ──
+    @router.post("/retailer/coupons/scan")
+    async def retailer_scan_coupon(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        if user.get("role") != "retailer":
+            raise HTTPException(status_code=403, detail="Only retailers can scan coupons")
+        code = (body.get("coupon_code") or "").strip().upper()
+        if not code:
+            raise HTTPException(status_code=400, detail="coupon_code required")
+        # my retailer + distributor
+        ret = await db.dms_retailers.find_one({"id": user.get("retailer_id")}, {"_id": 0}) if user.get("retailer_id") else None
+        if not ret:
+            ret = await db.dms_retailers.find_one({"user_id": user["id"]}, {"_id": 0})
+        if not ret:
+            raise HTTPException(status_code=400, detail="Retailer profile not found for this user")
+        my_did = ret.get("distributor_id")
+
+        cp = await db.dms_coupons.find_one({"coupon_code": code}, {"_id": 0})
+
+        async def _log_fraud(reason: str, coupon_owner_did: Optional[str] = None):
+            await db.dms_coupon_fraud_attempts.insert_one({
+                "id": _nid("fra"),
+                "coupon_code": code,
+                "attempted_by_retailer_id": ret["id"],
+                "attempted_by_retailer_name": ret.get("name"),
+                "attempted_by_retailer_distributor_id": my_did,
+                "coupon_owner_distributor_id": coupon_owner_did,
+                "reason": reason,
+                "at": _now(),
+            })
+
+        if not cp:
+            await _log_fraud("invalid_code")
+            raise HTTPException(status_code=400, detail="Invalid coupon code")
+        if cp.get("status") == "redeemed":
+            await _log_fraud("already_redeemed", cp.get("assigned_distributor_id"))
+            raise HTTPException(status_code=400, detail=f"Coupon already redeemed on {cp.get('redeemed_at','')[:10]}")
+        if not cp.get("assigned_distributor_id"):
+            await _log_fraud("not_dispatched")
+            raise HTTPException(status_code=400, detail="Coupon not dispatched yet — cannot redeem")
+        if cp["assigned_distributor_id"] != my_did:
+            await _log_fraud("distributor_mismatch", cp.get("assigned_distributor_id"))
+            raise HTTPException(status_code=403, detail="This coupon does not belong to your distributor network.")
+
+        # redeem
+        await db.dms_coupons.update_one(
+            {"id": cp["id"]},
+            {"$set": {
+                "status": "redeemed",
+                "redeemed_by_retailer_id": ret["id"],
+                "redeemed_by_retailer_name": ret.get("name"),
+                "redeemed_at": _now(),
+            }},
+        )
+        return {
+            "ok": True,
+            "coupon_code": cp["coupon_code"],
+            "product_name": cp.get("product_name"),
+            "points_value": cp.get("points_value", 0),
+            "message": f"Redeemed successfully. You earned {cp.get('points_value', 0)} points.",
+        }
+
+    @router.get("/retailer/coupons/my-history")
+    async def retailer_coupon_history(user: dict = Depends(get_current_user)):
+        if user.get("role") != "retailer":
+            raise HTTPException(status_code=403, detail="Retailers only")
+        ret = await db.dms_retailers.find_one({"id": user.get("retailer_id")}, {"_id": 0}) if user.get("retailer_id") else await db.dms_retailers.find_one({"user_id": user["id"]}, {"_id": 0})
+        if not ret:
+            return {"data": [], "total_points": 0}
+        docs = await db.dms_coupons.find({"redeemed_by_retailer_id": ret["id"]}, {"_id": 0}).sort("redeemed_at", -1).to_list(500)
+        return {"data": docs, "total_points": _round(sum(c.get("points_value", 0) for c in docs))}
+
+    # ── Reports for Owner ──
+    @router.get("/owner/coupons/reports/summary")
+    async def coupons_report_summary(user: dict = Depends(owner_only)):
+        """Returns totals + distributor-wise + retailer-wise + unused + fraud counts."""
+        total = await db.dms_coupons.count_documents({})
+        unused = await db.dms_coupons.count_documents({"status": "unused"})
+        assigned = await db.dms_coupons.count_documents({"status": "assigned"})
+        redeemed = await db.dms_coupons.count_documents({"status": "redeemed"})
+
+        # distributor-wise
+        by_dist: Dict[str, Dict[str, Any]] = {}
+        async for c in db.dms_coupons.find({"assigned_distributor_id": {"$ne": None}}, {"_id": 0}):
+            did = c["assigned_distributor_id"]
+            row = by_dist.setdefault(did, {
+                "distributor_id": did,
+                "distributor_name": c.get("assigned_distributor_name"),
+                "assigned": 0, "redeemed": 0, "points_redeemed": 0.0,
+            })
+            row["assigned"] += 1
+            if c.get("status") == "redeemed":
+                row["redeemed"] += 1
+                row["points_redeemed"] += c.get("points_value", 0)
+
+        # retailer-wise (redemptions)
+        by_ret: Dict[str, Dict[str, Any]] = {}
+        async for c in db.dms_coupons.find({"redeemed_by_retailer_id": {"$ne": None}}, {"_id": 0}):
+            rid = c["redeemed_by_retailer_id"]
+            row = by_ret.setdefault(rid, {
+                "retailer_id": rid,
+                "retailer_name": c.get("redeemed_by_retailer_name"),
+                "redeemed": 0, "points": 0.0,
+            })
+            row["redeemed"] += 1
+            row["points"] += c.get("points_value", 0)
+
+        # fraud count
+        fraud = await db.dms_coupon_fraud_attempts.count_documents({})
+
+        return {
+            "totals": {
+                "total": total, "unused": unused, "assigned": assigned,
+                "redeemed": redeemed, "fraud_attempts": fraud,
+            },
+            "by_distributor": sorted(by_dist.values(), key=lambda r: r["redeemed"], reverse=True),
+            "by_retailer": sorted(by_ret.values(), key=lambda r: r["redeemed"], reverse=True),
+        }
+
+    @router.get("/owner/coupons/reports/fraud")
+    async def coupons_fraud(user: dict = Depends(owner_only)):
+        docs = await db.dms_coupon_fraud_attempts.find({}, {"_id": 0}).sort("at", -1).to_list(500)
+        return {"data": docs, "count": len(docs)}
+
+    @router.get("/owner/coupons/reports/history")
+    async def coupons_history(user: dict = Depends(owner_only)):
+        docs = await db.dms_coupons.find({"status": "redeemed"}, {"_id": 0}).sort("redeemed_at", -1).limit(500).to_list(500)
+        return {"data": docs, "count": len(docs)}
+
+    # =========================================================================
+    # PRODUCTS — Excel Import / Export (Owner)
+    # =========================================================================
+    @router.get("/owner/products/export")
+    async def export_products(user: dict = Depends(owner_only)):
+        from openpyxl import Workbook
+        from io import BytesIO
+        from fastapi.responses import Response
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Products"
+        headers = ["sku_code", "name", "category_name", "description", "box_qty", "hsn", "gst_pct", "unit_price", "coupons_per_box", "points_value", "active"]
+        ws.append(headers)
+        cats = {c["id"]: c["name"] async for c in db.dms_categories.find({}, {"_id": 0, "id": 1, "name": 1})}
+        async for p in db.dms_products.find({}, {"_id": 0}):
+            ws.append([
+                p.get("sku_code"), p.get("name"),
+                cats.get(p.get("category_id"), ""),
+                p.get("description", ""),
+                p.get("box_qty", 0), p.get("hsn", ""),
+                p.get("gst_pct", 18),
+                p.get("unit_price", 0),
+                p.get("coupons_per_box", 100),
+                p.get("points_value", 10),
+                bool(p.get("active", True)),
+            ])
+        # widen columns
+        for col_letter in ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]:
+            ws.column_dimensions[col_letter].width = 18
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return Response(
+            content=buf.read(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="products_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'},
+        )
+
+    @router.post("/owner/products/import")
+    async def import_products(file: UploadFile = File(...), user: dict = Depends(owner_only)):
+        from openpyxl import load_workbook
+        from io import BytesIO
+        raw = await file.read()
+        try:
+            wb = load_workbook(BytesIO(raw), data_only=True)
+            ws = wb.active
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Cannot read xlsx: {e}")
+        # read headers
+        header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+        if not header_row:
+            raise HTTPException(status_code=400, detail="Empty file")
+        headers = [str(h or "").strip().lower() for h in header_row]
+        col = {h: i for i, h in enumerate(headers)}
+        required = ["sku_code", "name", "category_name", "box_qty", "unit_price"]
+        for req in required:
+            if req not in col:
+                raise HTTPException(status_code=400, detail=f"Missing required column: {req}")
+
+        # cache category id map
+        cats = {c["name"].strip().lower(): c["id"] async for c in db.dms_categories.find({}, {"_id": 0, "name": 1, "id": 1})}
+
+        created, updated, skipped, errors = 0, 0, 0, []
+        for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not row or all(v is None or v == "" for v in row):
+                continue
+            try:
+                sku = (str(row[col["sku_code"]]) if row[col["sku_code"]] is not None else "").strip()
+                name = (str(row[col["name"]]) if row[col["name"]] is not None else "").strip()
+                cat_name = (str(row[col["category_name"]]) if row[col["category_name"]] is not None else "").strip()
+                if not sku or not name or not cat_name:
+                    skipped += 1; errors.append(f"Row {i}: missing sku/name/category"); continue
+                cat_id = cats.get(cat_name.lower())
+                if not cat_id:
+                    # auto-create category
+                    cid = _nid("cat")
+                    await db.dms_categories.insert_one({"id": cid, "name": cat_name, "created_at": _now()})
+                    cats[cat_name.lower()] = cid
+                    cat_id = cid
+                box_qty = int(row[col["box_qty"]] or 0)
+                unit_price = float(row[col["unit_price"]] or 0)
+                gst = float(row[col.get("gst_pct", -1)] if "gst_pct" in col and row[col["gst_pct"]] is not None else 18)
+                hsn = str(row[col.get("hsn", -1)] or "") if "hsn" in col else ""
+                desc = str(row[col.get("description", -1)] or "") if "description" in col else ""
+                per_box = int(row[col["coupons_per_box"]] or 100) if "coupons_per_box" in col and row[col["coupons_per_box"]] is not None else 100
+                points = float(row[col["points_value"]] or 10) if "points_value" in col and row[col["points_value"]] is not None else 10
+                active = bool(row[col["active"]]) if "active" in col and row[col["active"]] is not None else True
+
+                existing = await db.dms_products.find_one({"sku_code": sku}, {"_id": 0})
+                if existing:
+                    upd = {
+                        "name": name, "category_id": cat_id, "description": desc,
+                        "box_qty": box_qty, "hsn": hsn, "gst_pct": _round(gst),
+                        "coupons_per_box": per_box, "points_value": _round(points),
+                        "active": active, "updated_at": _now(),
+                    }
+                    if float(existing.get("unit_price", 0)) != unit_price:
+                        # price change → close previous batch, open new (same as PUT path)
+                        await db.dms_price_batches.update_one({"product_id": existing["id"], "to_date": None}, {"$set": {"to_date": _now()}})
+                        await db.dms_price_batches.insert_one({
+                            "id": _nid("pb"), "product_id": existing["id"], "price": _round(unit_price),
+                            "from_date": _now(), "to_date": None, "created_at": _now(),
+                        })
+                        upd["previous_price"] = existing.get("unit_price")
+                        upd["unit_price"] = _round(unit_price)
+                    await db.dms_products.update_one({"id": existing["id"]}, {"$set": upd})
+                    updated += 1
+                else:
+                    pid = _nid("prd")
+                    await db.dms_products.insert_one({
+                        "id": pid, "name": name, "category_id": cat_id, "sku_code": sku,
+                        "description": desc, "box_qty": box_qty, "unit_price": _round(unit_price),
+                        "previous_price": None, "hsn": hsn, "gst_pct": _round(gst),
+                        "coupons_per_box": per_box, "points_value": _round(points),
+                        "active": active, "created_at": _now(),
+                    })
+                    await db.dms_price_batches.insert_one({
+                        "id": _nid("pb"), "product_id": pid, "price": _round(unit_price),
+                        "from_date": _now(), "to_date": None, "created_at": _now(),
+                    })
+                    created += 1
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Row {i}: {e}")
+
+        return {"ok": True, "created": created, "updated": updated, "skipped": skipped, "errors": errors[:20]}
 
     # =========================================================================
     # SUPER ADMIN — login-as (impersonation)

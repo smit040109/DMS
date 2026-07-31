@@ -38,6 +38,13 @@ test_state = {
     "order_id": None,
     "product_a_id": None,
     "product_b_id": None,
+    "coupon_product_id": None,
+    "coupon_code_valid": None,
+    "coupon_code_unused": None,
+    "dist1_id": None,
+    "retailer1_id": None,
+    "retailer2_id": None,
+    "phase7_order_id": None,
 }
 
 
@@ -868,6 +875,624 @@ def test_11_security():
 
 
 # ============================================================================
+# TEST SCENARIO 12: PHASE 7 - Coupon Generation
+# ============================================================================
+def test_12_coupon_generation():
+    print_section("12. PHASE 7 - COUPON GENERATION")
+    
+    # Get first product from /dms/products
+    print("\n12.1 Get first product for coupon generation")
+    r = requests.get(f"{DMS_API}/products", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        products = r.json()["data"]
+        if products:
+            test_state["coupon_product_id"] = products[0]["id"]
+            print_test("Got product for coupons", True, f"Product: {products[0]['name']}")
+        else:
+            print_test("Get product", False, "No products found")
+            return False
+    else:
+        print_test("Get products", False, f"Status: {r.status_code}")
+        return False
+    
+    # Test 12.2: Generate 2000 coupons as owner
+    print("\n12.2 POST /dms/owner/coupons/generate with count=2000")
+    payload = {"product_id": test_state["coupon_product_id"], "count": 2000}
+    r = requests.post(f"{DMS_API}/owner/coupons/generate", headers=headers(CREDENTIALS["owner"]), 
+                     json=payload, timeout=30)
+    if r.status_code == 200:
+        result = r.json()
+        print_test("Generate 2000 coupons", result.get("ok") == True, 
+                  f"Count: {result.get('count')}, Start: {result.get('start_code')}, End: {result.get('end_code')}")
+        print_test("Count is 2000", result.get("count") == 2000)
+        print_test("Has start_code", result.get("start_code") is not None and result.get("start_code").startswith("CPN"))
+        print_test("Has end_code", result.get("end_code") is not None and result.get("end_code").startswith("CPN"))
+    else:
+        print_test("Generate coupons", False, f"Status: {r.status_code}, {r.text}")
+        return False
+    
+    # Test 12.3: Generate another 1000 coupons for same product (should be sequential)
+    print("\n12.3 POST /dms/owner/coupons/generate with count=1000 (sequential)")
+    payload = {"product_id": test_state["coupon_product_id"], "count": 1000}
+    r = requests.post(f"{DMS_API}/owner/coupons/generate", headers=headers(CREDENTIALS["owner"]), 
+                     json=payload, timeout=30)
+    if r.status_code == 200:
+        result = r.json()
+        print_test("Generate 1000 more coupons", result.get("ok") == True, 
+                  f"Count: {result.get('count')}, Start: {result.get('start_code')}, End: {result.get('end_code')}")
+        print_test("Count is 1000", result.get("count") == 1000)
+    else:
+        print_test("Generate sequential coupons", False, f"Status: {r.status_code}")
+    
+    # Test 12.4: Try to generate as distributor (should fail)
+    print("\n12.4 POST /dms/owner/coupons/generate as distributor → 403")
+    payload = {"product_id": test_state["coupon_product_id"], "count": 100}
+    r = requests.post(f"{DMS_API}/owner/coupons/generate", headers=headers(CREDENTIALS["dist1"]), 
+                     json=payload, timeout=15)
+    print_test("Distributor cannot generate coupons", r.status_code == 403, f"Status: {r.status_code}")
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 13: PHASE 7 - Coupon Listing
+# ============================================================================
+def test_13_coupon_listing():
+    print_section("13. PHASE 7 - COUPON LISTING")
+    
+    # Test 13.1: List coupons with limit
+    print("\n13.1 GET /dms/owner/coupons?limit=5 → returns 5 rows")
+    r = requests.get(f"{DMS_API}/owner/coupons?limit=5", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        coupons = result.get("data", [])
+        print_test("GET coupons with limit=5", len(coupons) == 5, f"Found {len(coupons)} coupons")
+        
+        if coupons:
+            # Store an unused coupon code for later tests
+            unused = [c for c in coupons if c.get("status") == "unused"]
+            if unused:
+                test_state["coupon_code_unused"] = unused[0]["coupon_code"]
+                print_test("Found unused coupon", True, f"Code: {test_state['coupon_code_unused']}")
+    else:
+        print_test("GET coupons", False, f"Status: {r.status_code}")
+        return False
+    
+    # Test 13.2: List coupons with status filter
+    print("\n13.2 GET /dms/owner/coupons?status=unused → all unused")
+    r = requests.get(f"{DMS_API}/owner/coupons?status=unused", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        coupons = result.get("data", [])
+        all_unused = all(c.get("status") == "unused" for c in coupons)
+        print_test("All coupons are unused", all_unused, f"Found {len(coupons)} unused coupons")
+    else:
+        print_test("GET unused coupons", False, f"Status: {r.status_code}")
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 14: PHASE 7 - Coupon Batches
+# ============================================================================
+def test_14_coupon_batches():
+    print_section("14. PHASE 7 - COUPON BATCHES")
+    
+    print("\n14.1 GET /dms/owner/coupons/batches → at least 2 rows")
+    r = requests.get(f"{DMS_API}/owner/coupons/batches", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        batches = result.get("data", [])
+        print_test("GET coupon batches", len(batches) >= 2, f"Found {len(batches)} batches")
+        
+        if batches:
+            batch = batches[0]
+            has_fields = all(k in batch for k in ["product_name", "count", "start_code", "end_code"])
+            print_test("Batch has required fields", has_fields)
+            if has_fields:
+                print(f"   Product: {batch.get('product_name')}, Count: {batch.get('count')}")
+                print(f"   Range: {batch.get('start_code')} to {batch.get('end_code')}")
+    else:
+        print_test("GET coupon batches", False, f"Status: {r.status_code}")
+        return False
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 15: PHASE 7 - Auto-assign on Dispatch
+# ============================================================================
+def test_15_coupon_auto_assign():
+    print_section("15. PHASE 7 - AUTO-ASSIGN ON DISPATCH")
+    
+    # Get dist1 ID
+    print("\n15.1 Get distributor IDs")
+    r = requests.get(f"{DMS_API}/distributors", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        dists = r.json()["data"]
+        dist1 = next((d for d in dists if d.get("email") == CREDENTIALS["dist1"]), None)
+        if dist1:
+            test_state["dist1_id"] = dist1["id"]
+            print_test("Got dist1 ID", True, f"ID: {dist1['id']}")
+        else:
+            print_test("Get dist1", False, "Distributor not found")
+            return False
+    else:
+        print_test("Get distributors", False, f"Status: {r.status_code}")
+        return False
+    
+    # Test 15.2: Create a new primary order as dist1
+    print("\n15.2 Create primary order as dist1 with coupon product (5 boxes)")
+    payload = {
+        "items": [{"product_id": test_state["coupon_product_id"], "qty_boxes": 5}],
+        "notes": "Phase 7 coupon test order"
+    }
+    r = requests.post(f"{DMS_API}/primary-orders", headers=headers(CREDENTIALS["dist1"]), 
+                     json=payload, timeout=15)
+    if r.status_code == 200:
+        order = r.json()
+        test_state["phase7_order_id"] = order["id"]
+        print_test("Create order", True, f"Order: {order['order_no']}")
+    else:
+        print_test("Create order", False, f"Status: {r.status_code}, {r.text}")
+        return False
+    
+    # Test 15.3: Fulfill the order as owner
+    print("\n15.3 Fulfill order (5 boxes)")
+    payload = {"product_id": test_state["coupon_product_id"], "qty_boxes_fulfilled": 5}
+    r = requests.post(f"{DMS_API}/primary-orders/{test_state['phase7_order_id']}/fulfill-line", 
+                     headers=headers(CREDENTIALS["owner"]), json=payload, timeout=15)
+    if r.status_code == 200:
+        print_test("Fulfill order", True)
+    else:
+        print_test("Fulfill order", False, f"Status: {r.status_code}")
+        return False
+    
+    # Test 15.4: Mark order ready (should auto-assign coupons)
+    print("\n15.4 Mark order ready → auto-assign coupons")
+    r = requests.post(f"{DMS_API}/primary-orders/{test_state['phase7_order_id']}/ready", 
+                     headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        print_test("Mark ready", True, f"Status: {result.get('status')}")
+    else:
+        print_test("Mark ready", False, f"Status: {r.status_code}")
+        return False
+    
+    # Test 15.5: Verify coupons assigned to distributor
+    print("\n15.5 GET /dms/owner/coupons?distributor_id={dist1}&status=assigned")
+    r = requests.get(f"{DMS_API}/owner/coupons?distributor_id={test_state['dist1_id']}&status=assigned&limit=10", 
+                     headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        assigned = result.get("data", [])
+        # Should have 5 boxes × coupons_per_box (default 100) = 500 coupons
+        print_test("Coupons assigned to distributor", len(assigned) > 0, 
+                  f"Found {len(assigned)} assigned coupons (expected ~500)")
+        
+        if assigned:
+            # Store a valid coupon code for retailer scan test
+            test_state["coupon_code_valid"] = assigned[0]["coupon_code"]
+            print_test("Coupon has assigned_distributor_id", 
+                      assigned[0].get("assigned_distributor_id") == test_state["dist1_id"])
+            print_test("Coupon status is assigned", assigned[0].get("status") == "assigned")
+            print(f"   Sample assigned coupon: {test_state['coupon_code_valid']}")
+    else:
+        print_test("GET assigned coupons", False, f"Status: {r.status_code}")
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 16: PHASE 7 - Retailer Scan (Valid)
+# ============================================================================
+def test_16_retailer_scan_valid():
+    print_section("16. PHASE 7 - RETAILER SCAN (VALID)")
+    
+    if not test_state.get("coupon_code_valid"):
+        print_test("Retailer scan test", False, "No valid coupon code available")
+        return False
+    
+    # Get retailer1 ID
+    print("\n16.1 Get retailer1 ID")
+    r = requests.get(f"{DMS_API}/retailers", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        retailers = r.json()["data"]
+        retailer1 = next((ret for ret in retailers if ret.get("email") == CREDENTIALS["retailer1"]), None)
+        if not retailer1:
+            # Try to find by user lookup
+            r2 = requests.get(f"{DMS_API}/retailers", headers=headers(CREDENTIALS["retailer1"]), timeout=15)
+            if r2.status_code == 200:
+                retailers2 = r2.json()["data"]
+                if retailers2:
+                    retailer1 = retailers2[0]
+        
+        if retailer1:
+            test_state["retailer1_id"] = retailer1["id"]
+            print_test("Got retailer1 ID", True, f"ID: {retailer1['id']}")
+        else:
+            print_test("Get retailer1", False, "Retailer not found")
+            return False
+    else:
+        print_test("Get retailers", False, f"Status: {r.status_code}")
+        return False
+    
+    # Test 16.2: Scan valid coupon as retailer1
+    print("\n16.2 POST /dms/retailer/coupons/scan with valid coupon")
+    payload = {"coupon_code": test_state["coupon_code_valid"]}
+    r = requests.post(f"{DMS_API}/retailer/coupons/scan", headers=headers(CREDENTIALS["retailer1"]), 
+                     json=payload, timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        print_test("Scan valid coupon", result.get("ok") == True)
+        print_test("Has points_value", result.get("points_value", 0) > 0, 
+                  f"Points: {result.get('points_value')}")
+        print_test("Has success message", "Redeemed" in result.get("message", ""),
+                  f"Message: {result.get('message')}")
+    else:
+        print_test("Scan valid coupon", False, f"Status: {r.status_code}, {r.text}")
+        return False
+    
+    # Test 16.3: Verify coupon status changed to redeemed
+    print("\n16.3 GET /dms/owner/coupons?status=redeemed → includes the redeemed coupon")
+    r = requests.get(f"{DMS_API}/owner/coupons?status=redeemed&limit=5", 
+                     headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        redeemed = result.get("data", [])
+        found = any(c.get("coupon_code") == test_state["coupon_code_valid"] for c in redeemed)
+        print_test("Coupon marked as redeemed", found, f"Found {len(redeemed)} redeemed coupons")
+        
+        if found:
+            coupon = next(c for c in redeemed if c.get("coupon_code") == test_state["coupon_code_valid"])
+            print_test("Has redeemed_by_retailer_id", coupon.get("redeemed_by_retailer_id") is not None)
+            print_test("Has redeemed_at", coupon.get("redeemed_at") is not None)
+    else:
+        print_test("GET redeemed coupons", False, f"Status: {r.status_code}")
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 17: PHASE 7 - Retailer Scan (Duplicate)
+# ============================================================================
+def test_17_retailer_scan_duplicate():
+    print_section("17. PHASE 7 - RETAILER SCAN (DUPLICATE)")
+    
+    if not test_state.get("coupon_code_valid"):
+        print_test("Duplicate scan test", False, "No valid coupon code available")
+        return False
+    
+    # Test 17.1: Try to scan same coupon again
+    print("\n17.1 POST /dms/retailer/coupons/scan with already redeemed coupon → 400")
+    payload = {"coupon_code": test_state["coupon_code_valid"]}
+    r = requests.post(f"{DMS_API}/retailer/coupons/scan", headers=headers(CREDENTIALS["retailer1"]), 
+                     json=payload, timeout=15)
+    print_test("Duplicate scan rejected", r.status_code == 400, f"Status: {r.status_code}")
+    if r.status_code == 400:
+        print_test("Error message mentions 'already redeemed'", "already redeemed" in r.text.lower(),
+                  f"Message: {r.text[:100]}")
+    
+    # Test 17.2: Verify fraud log increased
+    print("\n17.2 GET /dms/owner/coupons/reports/fraud → fraud count increased")
+    r = requests.get(f"{DMS_API}/owner/coupons/reports/fraud", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        fraud_attempts = result.get("data", [])
+        print_test("Fraud log has entries", len(fraud_attempts) > 0, 
+                  f"Found {len(fraud_attempts)} fraud attempts")
+        
+        # Check if duplicate attempt is logged
+        duplicate_fraud = [f for f in fraud_attempts if f.get("reason") == "already_redeemed"]
+        print_test("Duplicate attempt logged", len(duplicate_fraud) > 0,
+                  f"Found {len(duplicate_fraud)} duplicate attempts")
+    else:
+        print_test("GET fraud log", False, f"Status: {r.status_code}")
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 18: PHASE 7 - Retailer Scan (Mismatch/Invalid)
+# ============================================================================
+def test_18_retailer_scan_invalid():
+    print_section("18. PHASE 7 - RETAILER SCAN (MISMATCH/INVALID)")
+    
+    # Test 18.1: Scan unassigned coupon (not dispatched)
+    print("\n18.1 POST /dms/retailer/coupons/scan with unused coupon → 400 'not dispatched'")
+    if test_state.get("coupon_code_unused"):
+        payload = {"coupon_code": test_state["coupon_code_unused"]}
+        r = requests.post(f"{DMS_API}/retailer/coupons/scan", headers=headers(CREDENTIALS["retailer1"]), 
+                         json=payload, timeout=15)
+        print_test("Unused coupon rejected", r.status_code == 400, f"Status: {r.status_code}")
+        if r.status_code == 400:
+            print_test("Error mentions 'not dispatched'", "not dispatched" in r.text.lower(),
+                      f"Message: {r.text[:100]}")
+    else:
+        print_test("Unused coupon test", False, "No unused coupon available")
+    
+    # Test 18.2: Scan invalid coupon code
+    print("\n18.2 POST /dms/retailer/coupons/scan with invalid code → 400 'Invalid coupon'")
+    payload = {"coupon_code": "CPNBOGUS9999"}
+    r = requests.post(f"{DMS_API}/retailer/coupons/scan", headers=headers(CREDENTIALS["retailer1"]), 
+                     json=payload, timeout=15)
+    print_test("Invalid code rejected", r.status_code == 400, f"Status: {r.status_code}")
+    if r.status_code == 400:
+        print_test("Error mentions 'Invalid coupon'", "invalid" in r.text.lower(),
+                  f"Message: {r.text[:100]}")
+    
+    # Test 18.3: Verify fraud logs
+    print("\n18.3 GET /dms/owner/coupons/reports/fraud → has invalid_code and not_dispatched entries")
+    r = requests.get(f"{DMS_API}/owner/coupons/reports/fraud", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        fraud_attempts = result.get("data", [])
+        
+        invalid_code = [f for f in fraud_attempts if f.get("reason") == "invalid_code"]
+        not_dispatched = [f for f in fraud_attempts if f.get("reason") == "not_dispatched"]
+        
+        print_test("Has invalid_code fraud entries", len(invalid_code) > 0,
+                  f"Found {len(invalid_code)} invalid_code attempts")
+        print_test("Has not_dispatched fraud entries", len(not_dispatched) > 0,
+                  f"Found {len(not_dispatched)} not_dispatched attempts")
+    else:
+        print_test("GET fraud log", False, f"Status: {r.status_code}")
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 19: PHASE 7 - Coupon Reports
+# ============================================================================
+def test_19_coupon_reports():
+    print_section("19. PHASE 7 - COUPON REPORTS")
+    
+    # Test 19.1: Summary report
+    print("\n19.1 GET /dms/owner/coupons/reports/summary")
+    r = requests.get(f"{DMS_API}/owner/coupons/reports/summary", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        print_test("GET summary report", True)
+        
+        # Check totals
+        totals = result.get("totals", {})
+        has_totals = all(k in totals for k in ["total", "unused", "assigned", "redeemed", "fraud_attempts"])
+        print_test("Has all total fields", has_totals)
+        if has_totals:
+            print(f"   Total: {totals['total']}, Unused: {totals['unused']}, Assigned: {totals['assigned']}")
+            print(f"   Redeemed: {totals['redeemed']}, Fraud: {totals['fraud_attempts']}")
+        
+        # Check by_distributor
+        by_dist = result.get("by_distributor", [])
+        print_test("Has by_distributor breakdown", len(by_dist) > 0, f"Found {len(by_dist)} distributors")
+        if by_dist:
+            dist1_entry = next((d for d in by_dist if d.get("distributor_id") == test_state.get("dist1_id")), None)
+            if dist1_entry:
+                print_test("Dist1 in breakdown", True, 
+                          f"Assigned: {dist1_entry.get('assigned')}, Redeemed: {dist1_entry.get('redeemed')}")
+        
+        # Check by_retailer
+        by_ret = result.get("by_retailer", [])
+        print_test("Has by_retailer breakdown", len(by_ret) > 0, f"Found {len(by_ret)} retailers")
+        if by_ret:
+            ret1_entry = next((r for r in by_ret if r.get("retailer_id") == test_state.get("retailer1_id")), None)
+            if ret1_entry:
+                print_test("Retailer1 in breakdown", True,
+                          f"Redeemed: {ret1_entry.get('redeemed')}, Points: {ret1_entry.get('points')}")
+    else:
+        print_test("GET summary report", False, f"Status: {r.status_code}")
+        return False
+    
+    # Test 19.2: Fraud report
+    print("\n19.2 GET /dms/owner/coupons/reports/fraud")
+    r = requests.get(f"{DMS_API}/owner/coupons/reports/fraud", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        fraud = result.get("data", [])
+        print_test("GET fraud report", len(fraud) >= 2, f"Found {len(fraud)} fraud attempts (expected ≥2)")
+    else:
+        print_test("GET fraud report", False, f"Status: {r.status_code}")
+    
+    # Test 19.3: History report
+    print("\n19.3 GET /dms/owner/coupons/reports/history")
+    r = requests.get(f"{DMS_API}/owner/coupons/reports/history", headers=headers(CREDENTIALS["owner"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        history = result.get("data", [])
+        print_test("GET history report", len(history) > 0, f"Found {len(history)} redeemed coupons")
+    else:
+        print_test("GET history report", False, f"Status: {r.status_code}")
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 20: PHASE 7 - Retailer History
+# ============================================================================
+def test_20_retailer_history():
+    print_section("20. PHASE 7 - RETAILER HISTORY")
+    
+    print("\n20.1 GET /dms/retailer/coupons/my-history as retailer1")
+    r = requests.get(f"{DMS_API}/retailer/coupons/my-history", headers=headers(CREDENTIALS["retailer1"]), timeout=15)
+    if r.status_code == 200:
+        result = r.json()
+        print_test("GET retailer history", True)
+        
+        data = result.get("data", [])
+        total_points = result.get("total_points", 0)
+        
+        print_test("Has redeemed coupons", len(data) >= 1, f"Found {len(data)} redeemed coupons")
+        print_test("Has total_points", total_points > 0, f"Total points: {total_points}")
+    else:
+        print_test("GET retailer history", False, f"Status: {r.status_code}")
+        return False
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 21: PHASE 7 - Excel Export
+# ============================================================================
+def test_21_excel_export():
+    print_section("21. PHASE 7 - EXCEL EXPORT")
+    
+    # Test 21.1: Export as owner
+    print("\n21.1 GET /dms/owner/products/export as owner")
+    r = requests.get(f"{DMS_API}/owner/products/export", headers=headers(CREDENTIALS["owner"]), timeout=30)
+    if r.status_code == 200:
+        print_test("Export products", True, f"Size: {len(r.content)} bytes")
+        print_test("Content-Type is xlsx", 
+                  "spreadsheetml" in r.headers.get("content-type", ""),
+                  f"Content-Type: {r.headers.get('content-type')}")
+        print_test("File size > 3KB", len(r.content) > 3000, f"Size: {len(r.content)} bytes")
+        
+        # Save for import test
+        test_state["exported_xlsx"] = r.content
+    else:
+        print_test("Export products", False, f"Status: {r.status_code}")
+        return False
+    
+    # Test 21.2: Try export as distributor (should fail)
+    print("\n21.2 GET /dms/owner/products/export as distributor → 403")
+    r = requests.get(f"{DMS_API}/owner/products/export", headers=headers(CREDENTIALS["dist1"]), timeout=15)
+    print_test("Distributor cannot export", r.status_code == 403, f"Status: {r.status_code}")
+    
+    return True
+
+
+# ============================================================================
+# TEST SCENARIO 22: PHASE 7 - Excel Import
+# ============================================================================
+def test_22_excel_import():
+    print_section("22. PHASE 7 - EXCEL IMPORT")
+    
+    # Create a test xlsx file with openpyxl
+    print("\n22.1 Create test xlsx with 2 rows (1 update, 1 new)")
+    try:
+        from openpyxl import Workbook
+        from io import BytesIO
+        
+        # Get existing product for update test
+        r = requests.get(f"{DMS_API}/products", headers=headers(CREDENTIALS["owner"]), timeout=15)
+        if r.status_code != 200:
+            print_test("Get products for import", False, f"Status: {r.status_code}")
+            return False
+        
+        products = r.json()["data"]
+        if not products:
+            print_test("Get products for import", False, "No products found")
+            return False
+        
+        existing_product = products[0]
+        
+        # Create workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Products"
+        
+        # Headers
+        headers_row = ["sku_code", "name", "category_name", "description", "box_qty", "hsn", 
+                      "gst_pct", "unit_price", "coupons_per_box", "points_value", "active"]
+        ws.append(headers_row)
+        
+        # Row A: Update existing product (price change)
+        old_price = existing_product.get("unit_price", 1000)
+        new_price = old_price + 100
+        ws.append([
+            existing_product.get("sku_code"),
+            existing_product.get("name"),
+            existing_product.get("category_name"),
+            existing_product.get("description", ""),
+            existing_product.get("box_qty", 10),
+            existing_product.get("hsn", "27101980"),
+            existing_product.get("gst_pct", 18),
+            new_price,  # Price increase
+            existing_product.get("coupons_per_box", 100),
+            existing_product.get("points_value", 10),
+            True
+        ])
+        
+        # Row B: New product
+        import time
+        ws.append([
+            f"TEST-IMPORT-{int(time.time())}",
+            "Imported Product",
+            "Engine Oil",
+            "Test imported product",
+            10,
+            "27101980",
+            18,
+            999,
+            50,
+            5,
+            True
+        ])
+        
+        # Save to BytesIO
+        buf = BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        
+        print_test("Created test xlsx", True, f"Rows: 2 (1 update, 1 new)")
+        
+        # Test 22.2: Import as owner
+        print("\n22.2 POST /dms/owner/products/import as owner")
+        files = {"file": ("test_import.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+        r = requests.post(f"{DMS_API}/owner/products/import", headers=headers(CREDENTIALS["owner"]), 
+                         files=files, timeout=30)
+        if r.status_code == 200:
+            result = r.json()
+            print_test("Import products", result.get("ok") == True)
+            print_test("Created count", result.get("created", 0) >= 1, 
+                      f"Created: {result.get('created')}")
+            print_test("Updated count", result.get("updated", 0) >= 1, 
+                      f"Updated: {result.get('updated')}")
+            print_test("Skipped count", result.get("skipped", 0) == 0,
+                      f"Skipped: {result.get('skipped')}")
+            
+            # Test 22.3: Verify imported product exists
+            print("\n22.3 Verify imported product exists with correct data")
+            r2 = requests.get(f"{DMS_API}/products", headers=headers(CREDENTIALS["owner"]), timeout=15)
+            if r2.status_code == 200:
+                products = r2.json()["data"]
+                imported = [p for p in products if "TEST-IMPORT-" in p.get("sku_code", "")]
+                if imported:
+                    prod = imported[0]
+                    print_test("Imported product found", True, f"SKU: {prod.get('sku_code')}")
+                    print_test("Unit price is 999", prod.get("unit_price") == 999)
+                    print_test("Coupons per box is 50", prod.get("coupons_per_box") == 50)
+                else:
+                    print_test("Imported product found", False, "Product not found in list")
+            
+            # Test 22.4: Verify updated product has previous_price
+            print("\n22.4 Verify updated product has previous_price set")
+            r3 = requests.get(f"{DMS_API}/products/{existing_product['id']}", 
+                             headers=headers(CREDENTIALS["owner"]), timeout=15)
+            if r3.status_code == 200:
+                updated_prod = r3.json()
+                print_test("Updated product has previous_price", 
+                          updated_prod.get("previous_price") == old_price,
+                          f"Previous: {updated_prod.get('previous_price')}, Current: {updated_prod.get('unit_price')}")
+        else:
+            print_test("Import products", False, f"Status: {r.status_code}, {r.text}")
+            return False
+        
+    except Exception as e:
+        print_test("Excel import test", False, f"Exception: {e}")
+        return False
+    
+    # Test 22.5: Try import as distributor (should fail)
+    print("\n22.5 POST /dms/owner/products/import as distributor → 403")
+    buf.seek(0)
+    files = {"file": ("test_import.xlsx", buf, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    r = requests.post(f"{DMS_API}/owner/products/import", headers=headers(CREDENTIALS["dist1"]), 
+                     files=files, timeout=15)
+    print_test("Distributor cannot import", r.status_code == 403, f"Status: {r.status_code}")
+    
+    return True
+
+
+# ============================================================================
 # MAIN TEST RUNNER
 # ============================================================================
 def run_all_tests():
@@ -944,6 +1569,73 @@ def run_all_tests():
     except Exception as e:
         print(f"❌ Test 11 failed with exception: {e}")
         results["11_security"] = False
+    
+    # PHASE 7 TESTS
+    try:
+        results["12_coupon_generation"] = test_12_coupon_generation()
+    except Exception as e:
+        print(f"❌ Test 12 failed with exception: {e}")
+        results["12_coupon_generation"] = False
+    
+    try:
+        results["13_coupon_listing"] = test_13_coupon_listing()
+    except Exception as e:
+        print(f"❌ Test 13 failed with exception: {e}")
+        results["13_coupon_listing"] = False
+    
+    try:
+        results["14_coupon_batches"] = test_14_coupon_batches()
+    except Exception as e:
+        print(f"❌ Test 14 failed with exception: {e}")
+        results["14_coupon_batches"] = False
+    
+    try:
+        results["15_coupon_auto_assign"] = test_15_coupon_auto_assign()
+    except Exception as e:
+        print(f"❌ Test 15 failed with exception: {e}")
+        results["15_coupon_auto_assign"] = False
+    
+    try:
+        results["16_retailer_scan_valid"] = test_16_retailer_scan_valid()
+    except Exception as e:
+        print(f"❌ Test 16 failed with exception: {e}")
+        results["16_retailer_scan_valid"] = False
+    
+    try:
+        results["17_retailer_scan_duplicate"] = test_17_retailer_scan_duplicate()
+    except Exception as e:
+        print(f"❌ Test 17 failed with exception: {e}")
+        results["17_retailer_scan_duplicate"] = False
+    
+    try:
+        results["18_retailer_scan_invalid"] = test_18_retailer_scan_invalid()
+    except Exception as e:
+        print(f"❌ Test 18 failed with exception: {e}")
+        results["18_retailer_scan_invalid"] = False
+    
+    try:
+        results["19_coupon_reports"] = test_19_coupon_reports()
+    except Exception as e:
+        print(f"❌ Test 19 failed with exception: {e}")
+        results["19_coupon_reports"] = False
+    
+    try:
+        results["20_retailer_history"] = test_20_retailer_history()
+    except Exception as e:
+        print(f"❌ Test 20 failed with exception: {e}")
+        results["20_retailer_history"] = False
+    
+    try:
+        results["21_excel_export"] = test_21_excel_export()
+    except Exception as e:
+        print(f"❌ Test 21 failed with exception: {e}")
+        results["21_excel_export"] = False
+    
+    try:
+        results["22_excel_import"] = test_22_excel_import()
+    except Exception as e:
+        print(f"❌ Test 22 failed with exception: {e}")
+        results["22_excel_import"] = False
     
     # Print summary
     print_section("TEST SUMMARY")

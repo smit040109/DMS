@@ -203,24 +203,24 @@ export function ProductsPage() {
   const [cats, setCats] = useState([]);
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ name: "", category_id: "", sku_code: "", box_qty: 12, unit_price: "", hsn: "", gst_pct: 18, description: "" });
+  const [form, setForm] = useState({ name: "", category_id: "", sku_code: "", box_qty: 12, unit_price: "", hsn: "", gst_pct: 18, description: "", coupons_per_box: 100, points_value: 10 });
 
   const load = () => Promise.all([dms.listProducts(), dms.listCategories()]).then(([p, c]) => { setList(p.data); setCats(c.data); });
   useEffect(() => { load(); }, []);
 
   const openNew = () => {
     setEditing(null);
-    setForm({ name: "", category_id: cats[0]?.id || "", sku_code: "", box_qty: 12, unit_price: "", hsn: "", gst_pct: 18, description: "" });
+    setForm({ name: "", category_id: cats[0]?.id || "", sku_code: "", box_qty: 12, unit_price: "", hsn: "", gst_pct: 18, description: "", coupons_per_box: 100, points_value: 10 });
     setOpen(true);
   };
   const openEdit = (p) => {
     setEditing(p);
-    setForm({ name: p.name, category_id: p.category_id, sku_code: p.sku_code, box_qty: p.box_qty, unit_price: p.unit_price, hsn: p.hsn || "", gst_pct: p.gst_pct, description: p.description || "" });
+    setForm({ name: p.name, category_id: p.category_id, sku_code: p.sku_code, box_qty: p.box_qty, unit_price: p.unit_price, hsn: p.hsn || "", gst_pct: p.gst_pct, description: p.description || "", coupons_per_box: p.coupons_per_box ?? 100, points_value: p.points_value ?? 10 });
     setOpen(true);
   };
   const save = async () => {
     try {
-      const body = { ...form, box_qty: Number(form.box_qty), unit_price: Number(form.unit_price), gst_pct: Number(form.gst_pct) };
+      const body = { ...form, box_qty: Number(form.box_qty), unit_price: Number(form.unit_price), gst_pct: Number(form.gst_pct), coupons_per_box: Number(form.coupons_per_box), points_value: Number(form.points_value) };
       if (editing) { await dms.updateProduct(editing.id, body); toast.success("Product updated"); }
       else { await dms.createProduct(body); toast.success("Product created"); }
       setOpen(false); load();
@@ -232,7 +232,12 @@ export function ProductsPage() {
       <PageHeader
         title="Products"
         subtitle="Master catalog — each product sold by the box"
-        action={<Button onClick={openNew} disabled={cats.length === 0} className="bg-teal-700 hover:bg-teal-800" data-testid="add-product-btn"><Plus size={16} className="mr-1" /> New Product</Button>}
+        action={
+          <div className="flex gap-2">
+            <ExcelButtons onImported={load} />
+            <Button onClick={openNew} disabled={cats.length === 0} className="bg-teal-700 hover:bg-teal-800" data-testid="add-product-btn"><Plus size={16} className="mr-1" /> New Product</Button>
+          </div>
+        }
       />
       {cats.length === 0 && (
         <Card className="p-4 mb-4 bg-amber-50 border-amber-200 text-amber-800 text-sm">Create a category first, then add products.</Card>
@@ -282,6 +287,8 @@ export function ProductsPage() {
             <div><Label>Price per Box (₹) *</Label><Input type="number" value={form.unit_price} onChange={e => setForm({ ...form, unit_price: e.target.value })} data-testid="prod-price-input" /></div>
             <div><Label>HSN Code</Label><Input value={form.hsn} onChange={e => setForm({ ...form, hsn: e.target.value })} /></div>
             <div><Label>GST %</Label><Input type="number" value={form.gst_pct} onChange={e => setForm({ ...form, gst_pct: e.target.value })} /></div>
+            <div><Label>Coupons per Box</Label><Input type="number" min={0} value={form.coupons_per_box} onChange={e => setForm({ ...form, coupons_per_box: e.target.value })} data-testid="p-coupons-per-box" /></div>
+            <div><Label>Points per Coupon</Label><Input type="number" min={0} value={form.points_value} onChange={e => setForm({ ...form, points_value: e.target.value })} data-testid="p-points-value" /></div>
             <div className="col-span-2"><Label>Description</Label><Textarea rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
             {editing && Number(form.unit_price) !== editing.unit_price && (
               <div className="col-span-2 text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-2.5">
@@ -808,5 +815,40 @@ export function PrimaryLedgerPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+
+// ============================================================================
+// Excel Import / Export for Products (small toolbar buttons)
+// ============================================================================
+import { FileDown, FileUp } from "lucide-react";
+export function ExcelButtons({ onImported }) {
+  const inputRef = React.useRef(null);
+  const [busy, setBusy] = useState(false);
+  const doExport = async () => {
+    setBusy(true);
+    try { await dms.exportProducts(); toast.success("Products exported"); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Export failed"); }
+    finally { setBusy(false); }
+  };
+  const doImport = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setBusy(true);
+    try {
+      const r = await dms.importProducts(f);
+      toast.success(`Imported: +${r.created} created, ${r.updated} updated, ${r.skipped} skipped`);
+      if (r.errors?.length) toast.warning(`Some rows skipped:\n${r.errors.slice(0, 3).join("\n")}`);
+      onImported?.();
+    } catch (err) { toast.error(err?.response?.data?.detail || "Import failed"); }
+    finally { setBusy(false); e.target.value = ""; }
+  };
+  return (
+    <>
+      <input ref={inputRef} type="file" accept=".xlsx" className="hidden" onChange={doImport} data-testid="import-file-input" />
+      <Button variant="outline" onClick={doExport} disabled={busy} data-testid="export-products-btn"><FileDown size={14} className="mr-1" /> Export</Button>
+      <Button variant="outline" onClick={() => inputRef.current?.click()} disabled={busy} data-testid="import-products-btn"><FileUp size={14} className="mr-1" /> Import</Button>
+    </>
   );
 }

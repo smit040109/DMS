@@ -4,9 +4,9 @@ import { useAuth } from "@/context/AuthContext";
 import { dms } from "./api";
 import { ImpersonationBanner } from "./OwnerUsersPage";
 import SalespersonGpsPinger from "@/components/SalespersonGpsPinger";
-import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight } from "lucide-react";
+import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight, Ticket, ShieldAlert, ScanLine } from "lucide-react";
 
-const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp };
+const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, Ticket, ShieldAlert, ScanLine };
 
 const NAV_BY_ROLE = {
   owner: [
@@ -22,6 +22,8 @@ const NAV_BY_ROLE = {
     { label: "Live Tracking",   to: "/dms/owner/live-tracking", icon: "MapPin" },
     { label: "TL Performance",  to: "/dms/owner/tl-performance", icon: "TrendingUp" },
     { label: "Sales Visibility",to: "/dms/owner/distributor-sales", icon: "Store" },
+    { label: "Coupons",         to: "/dms/owner/coupons",         icon: "Ticket" },
+    { label: "Coupon Reports",  to: "/dms/owner/coupon-reports",  icon: "ShieldAlert" },
   ],
   owner_accountant: [
     { label: "Dashboard",       to: "/dms",                     icon: "LayoutDashboard" },
@@ -50,6 +52,7 @@ const NAV_BY_ROLE = {
     { label: "Dashboard",       to: "/dms",                    icon: "LayoutDashboard" },
     { label: "Browse & Order",  to: "/dms/retailer/browse",    icon: "ShoppingCart" },
     { label: "My Orders",       to: "/dms/retailer/my-orders", icon: "ClipboardList" },
+    { label: "Scan Coupon",     to: "/dms/retailer/scan",      icon: "ScanLine" },
   ],
   salesperson: [
     { label: "Dashboard",       to: "/dms",                            icon: "LayoutDashboard" },

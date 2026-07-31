@@ -134,6 +134,29 @@ export const dms = {
   ownerTlPerformance: () => api.get("/dms/owner/tl-performance").then(r => r.data),
   ownerDistributorSales: (did) => api.get(`/dms/owner/distributor-sales/${did}`).then(r => r.data),
 
+  // Coupons (Phase 7)
+  ownerGenerateCoupons: (product_id, count) => api.post("/dms/owner/coupons/generate", { product_id, count }).then(r => r.data),
+  ownerListCoupons: (params = {}) => api.get("/dms/owner/coupons", { params }).then(r => r.data),
+  ownerCouponBatches: () => api.get("/dms/owner/coupons/batches").then(r => r.data),
+  ownerCouponSummary: () => api.get("/dms/owner/coupons/reports/summary").then(r => r.data),
+  ownerCouponFraud: () => api.get("/dms/owner/coupons/reports/fraud").then(r => r.data),
+  ownerCouponHistory: () => api.get("/dms/owner/coupons/reports/history").then(r => r.data),
+  retailerScanCoupon: (coupon_code) => api.post("/dms/retailer/coupons/scan", { coupon_code }).then(r => r.data),
+  retailerCouponHistory: () => api.get("/dms/retailer/coupons/my-history").then(r => r.data),
+
+  // Products import/export
+  exportProducts: async () => {
+    const r = await api.get("/dms/owner/products/export", { responseType: "blob" });
+    const url = URL.createObjectURL(new Blob([r.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const a = document.createElement("a"); a.href = url;
+    a.download = `products_${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  },
+  importProducts: (file) => {
+    const fd = new FormData(); fd.append("file", file);
+    return api.post("/dms/owner/products/import", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
+  },
+
   // Regional Manager (Phase 5)
   rmDashboard: () => api.get("/dms/dashboard/regional-manager").then(r => r.data),
   rmTeamLeaders: () => api.get("/dms/rm/team-leaders").then(r => r.data),
