@@ -25,6 +25,9 @@ import {
 import { SuperAdminUsersPage } from "@/pages/dms/SuperAdminPages";
 import { OwnerUsersPage } from "@/pages/dms/OwnerUsersPage";
 import { LiveTrackingPage } from "@/pages/dms/LiveTrackingPage";
+import { TlDashboardPage, TlDistributorsMonitoringPage, TlSalespersonsPage, TlOrdersMonitoringPage, TlRetailersPage, TlAttendancePage } from "@/pages/dms/TeamLeaderPages";
+import { OwnerTlPerformancePage, OwnerDistributorSalesListPage, OwnerDistributorSalesDetailPage } from "@/pages/dms/OwnerInsightsPages";
+import { RmDashboardPage, RmTeamLeadersPage, RmRegionPerformancePage, RmDistributorsPage, RmSalespersonsPage } from "@/pages/dms/RegionalManagerPages";
 import { PrintEbillPage, PrintRetailerBillPage } from "@/pages/dms/PrintPages";
 
 function Protected({ children }) {
@@ -77,8 +80,19 @@ function AppRoutes() {
       <Route path="/dms/owner/retailer-prices"     element={<DmsPage Component={CategoriesPage} />} />
       <Route path="/dms/owner/users"               element={<DmsPage Component={OwnerUsersPage} />} />
       <Route path="/dms/owner/live-tracking"       element={<DmsPage Component={LiveTrackingPage} />} />
+      <Route path="/dms/owner/tl-performance"      element={<DmsPage Component={OwnerTlPerformancePage} />} />
+      <Route path="/dms/owner/distributor-sales"   element={<DmsPage Component={OwnerDistributorSalesListPage} />} />
+      <Route path="/dms/owner/distributor-sales/:id" element={<DmsPage Component={OwnerDistributorSalesDetailPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
+      <Route path="/dms/team-leader/salespersons"  element={<DmsPage Component={TlSalespersonsPage} />} />
+      <Route path="/dms/team-leader/orders"        element={<DmsPage Component={TlOrdersMonitoringPage} />} />
+      <Route path="/dms/team-leader/retailers"     element={<DmsPage Component={TlRetailersPage} />} />
+      <Route path="/dms/team-leader/attendance"    element={<DmsPage Component={TlAttendancePage} />} />
       <Route path="/dms/regional-manager/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
+      <Route path="/dms/regional-manager/team-leaders"  element={<DmsPage Component={RmTeamLeadersPage} />} />
+      <Route path="/dms/regional-manager/performance"   element={<DmsPage Component={RmRegionPerformancePage} />} />
+      <Route path="/dms/regional-manager/distributors"  element={<DmsPage Component={RmDistributorsPage} />} />
+      <Route path="/dms/regional-manager/salespersons"  element={<DmsPage Component={RmSalespersonsPage} />} />
 
       {/* Distributor */}
       <Route path="/dms/distributor/browse"           element={<DmsPage Component={DistributorBrowsePage} />} />
@@ -104,7 +118,7 @@ function AppRoutes() {
       <Route path="/dms/salesperson/new-order"     element={<DmsPage Component={SpNewOrderPage} />} />
 
       {/* Team Leader */}
-      <Route path="/dms/team-leader/distributors" element={<DmsPage Component={TlDistributorsPage} />} />
+      <Route path="/dms/team-leader/distributors" element={<DmsPage Component={TlDistributorsMonitoringPage} />} />
       <Route path="/dms/team-leader/assignments"  element={<DmsPage Component={TlAssignmentsPage} />} />
 
       {/* Super Admin */}

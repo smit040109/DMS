@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { ShoppingCart, Package, TrendingUp, Plus, Minus, Truck, Receipt, Printer } from "lucide-react";
+import { ShoppingCart, Package, TrendingUp, Plus, Minus, Truck, Receipt, Printer, ChevronRight } from "lucide-react";
 
 export function RetailerDashboardPage() {
   const [kpis, setKpis] = useState(null);
@@ -62,6 +62,7 @@ export function RetailerBrowsePage() {
   const [cart, setCart] = useState({}); // { pid: { boxes, pcs } }
   const [includePending, setIncludePending] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [openCategory, setOpenCategory] = useState(null);
   const nav = useNavigate();
 
   useEffect(() => { dms.retailerBrowse().then(setData); }, []);
@@ -104,12 +105,20 @@ export function RetailerBrowsePage() {
 
   const grouped = {};
   data.data.forEach(p => { (grouped[p.category_name || "Uncategorised"] ||= []).push(p); });
+  const cats = Object.entries(grouped).map(([name, prods]) => {
+    const inCart = prods.reduce((n, p) => n + ((cart[p.id]?.boxes || 0) + (cart[p.id]?.pcs || 0) > 0 ? 1 : 0), 0);
+    return { name, count: prods.length, inCart };
+  });
 
   return (
     <div className="pb-32">
-      <PageHeader title="Browse & Order" subtitle={`Selling mode: ${data.mode === "box_pcs" ? "Box + PCS" : "Box only"}`} />
+      <PageHeader
+        title={openCategory ? openCategory : "Browse & Order"}
+        subtitle={openCategory ? "Tap + / − to set boxes (and pcs)" : `Selling mode: ${data.mode === "box_pcs" ? "Box + PCS" : "Box only"} · Pick a category`}
+        action={openCategory && (<Button variant="outline" onClick={() => setOpenCategory(null)}><ChevronRight className="rotate-180 mr-1" size={16} /> All Categories</Button>)}
+      />
 
-      {data.pending.length > 0 && (
+      {data.pending.length > 0 && !openCategory && (
         <Card className="p-4 mb-4 bg-amber-50 border-amber-200">
           <div className="font-semibold text-amber-900 mb-2">Previous Pending Items</div>
           <div className="text-sm text-amber-800 space-y-1">
@@ -124,45 +133,74 @@ export function RetailerBrowsePage() {
         </Card>
       )}
 
-      {Object.entries(grouped).map(([cat, prods]) => (
-        <div key={cat} className="mb-6">
-          <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wider mb-3">{cat}</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {prods.map(p => {
-              const q = cart[p.id] || { boxes: 0, pcs: 0 };
-              return (
-                <Card key={p.id} className="p-4" data-testid={`ret-product-${p.id}`}>
-                  <div className="font-semibold text-slate-900">{p.name}</div>
-                  <div className="text-xs font-mono text-slate-500">{p.sku_code} • {p.box_qty} bottles/box</div>
-                  <div className="mt-2 flex items-baseline gap-2"><span className="text-lg font-bold text-teal-700">{inr(p.selling_price)}</span><span className="text-xs text-slate-500">/ box</span></div>
-                  <div className="text-xs text-slate-500 mt-1">+{p.gst_pct}% GST • Distributor stock: {p.distributor_stock_boxes} boxes</div>
-                  <div className="mt-3 space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs text-slate-600 w-12">Boxes</span>
-                      <button onClick={() => setQty(p.id, "boxes", -1)} className="h-8 w-8 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center" data-testid={`ret-minus-box-${p.id}`}><Minus size={14} /></button>
-                      <div className="w-12 text-center font-semibold">{q.boxes || 0}</div>
-                      <button onClick={() => setQty(p.id, "boxes", 1)} className="h-8 w-8 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center" data-testid={`ret-plus-box-${p.id}`}><Plus size={14} /></button>
-                    </div>
-                    {data.mode === "box_pcs" && (
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs text-slate-600 w-12">PCS</span>
-                        <button onClick={() => setQty(p.id, "pcs", -1)} className="h-8 w-8 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center"><Minus size={14} /></button>
-                        <div className="w-12 text-center font-semibold">{q.pcs || 0}</div>
-                        <button onClick={() => setQty(p.id, "pcs", 1)} className="h-8 w-8 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center"><Plus size={14} /></button>
-                      </div>
-                    )}
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
+      {/* STEP 1 — categories */}
+      {!openCategory && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          {cats.length === 0 && <EmptyState icon={Package} title="No products available" description="Your distributor hasn't given you any visibility yet." />}
+          {cats.map(c => (
+            <button
+              key={c.name}
+              onClick={() => setOpenCategory(c.name)}
+              className="text-left bg-white border border-slate-200 hover:border-teal-400 hover:shadow-md transition rounded-2xl p-5 relative"
+              data-testid={`ret-cat-${c.name}`}
+            >
+              <div className="h-10 w-10 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center mb-3"><Package size={20} /></div>
+              <div className="font-semibold text-slate-900">{c.name}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{c.count} product{c.count !== 1 ? "s" : ""}</div>
+              {c.inCart > 0 && (<span className="absolute top-3 right-3 bg-teal-700 text-white text-[10px] font-bold rounded-full px-2 py-0.5">{c.inCart} in cart</span>)}
+              <div className="mt-4 text-teal-700 text-xs font-medium flex items-center">Open <ChevronRight size={12} className="ml-0.5" /></div>
+            </button>
+          ))}
         </div>
-      ))}
-      {data.data.length === 0 && <EmptyState icon={Package} title="No products available" description="Your distributor hasn't given you any visibility yet." />}
+      )}
+
+      {/* STEP 2 — products in category */}
+      {openCategory && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {(grouped[openCategory] || []).map(p => {
+            const q = cart[p.id] || { boxes: 0, pcs: 0 };
+            const priceChanged = p.previous_selling_price && p.previous_selling_price !== p.selling_price;
+            return (
+              <Card key={p.id} className="p-4" data-testid={`ret-product-${p.id}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-semibold text-slate-900">{p.name}</div>
+                  {priceChanged && <span className="text-[10px] uppercase font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">Price ↑</span>}
+                </div>
+                <div className="text-xs font-mono text-slate-500">{p.sku_code} • {p.box_qty} bottles/box</div>
+                <div className="mt-2 flex items-baseline gap-2">
+                  <span className="text-lg font-bold text-teal-700">{inr(p.selling_price)}</span>
+                  {priceChanged && (
+                    <><span className="text-xs text-slate-500 line-through">{inr(p.previous_selling_price)}</span>
+                      <span className="text-[10px] text-amber-700 font-semibold">(old)</span></>
+                  )}
+                  <span className="text-xs text-slate-500">/ box (NEW)</span>
+                </div>
+                <div className="text-xs text-slate-500 mt-1">+{p.gst_pct}% GST • Distributor stock: {p.distributor_stock_boxes} boxes</div>
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-slate-600 w-12">Boxes</span>
+                    <button onClick={() => setQty(p.id, "boxes", -1)} className="h-9 w-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center" data-testid={`ret-minus-box-${p.id}`}><Minus size={16} /></button>
+                    <div className="w-12 text-center font-semibold text-lg">{q.boxes || 0}</div>
+                    <button onClick={() => setQty(p.id, "boxes", 1)} className="h-9 w-9 rounded-lg border border-slate-200 bg-teal-50 text-teal-700 hover:bg-teal-100 flex items-center justify-center" data-testid={`ret-plus-box-${p.id}`}><Plus size={16} /></button>
+                  </div>
+                  {data.mode === "box_pcs" && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-slate-600 w-12">PCS</span>
+                      <button onClick={() => setQty(p.id, "pcs", -1)} className="h-9 w-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center"><Minus size={16} /></button>
+                      <div className="w-12 text-center font-semibold text-lg">{q.pcs || 0}</div>
+                      <button onClick={() => setQty(p.id, "pcs", 1)} className="h-9 w-9 rounded-lg border border-slate-200 bg-teal-50 text-teal-700 hover:bg-teal-100 flex items-center justify-center"><Plus size={16} /></button>
+                    </div>
+                  )}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
 
       <div className="fixed bottom-0 left-0 lg:left-60 right-0 bg-white border-t border-slate-200 shadow-lg z-40">
         <div className="p-4 flex items-center gap-4">
-          <div className="flex-1"><div className="text-xs text-slate-500">{items.length} items • Sub {inr(subtotal)} + GST {inr(gst)}</div><div className="text-xl font-bold text-slate-900">{inr(total)}</div></div>
+          <div className="flex-1"><div className="text-xs text-slate-500">{items.length} items • Sub {inr(subtotal)} + GST {inr(gst)} <span className="ml-1 text-[10px] uppercase font-semibold text-teal-700">using NEW price</span></div><div className="text-xl font-bold text-slate-900">{inr(total)}</div></div>
           <Button disabled={busy || (items.length === 0 && !(includePending && data.pending.length > 0))} onClick={place} className="bg-teal-700 hover:bg-teal-800 h-11 px-6" data-testid="ret-place-order"><ShoppingCart size={16} className="mr-2" /> Place Order</Button>
         </div>
       </div>

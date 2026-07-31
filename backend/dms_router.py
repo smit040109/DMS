@@ -1693,41 +1693,511 @@ def build_dms_router(db, get_current_user):
 
     @router.get("/dashboard/team-leader")
     async def tl_dashboard(user: dict = Depends(team_leader_only)):
+        """
+        Strict-spec TL dashboard. Returns:
+          today_sales, monthly_sales, total_orders, pending_orders, fulfillment_pct,
+          assigned_distributors, assigned_salespersons, total_retailers, stock_alerts
+        """
         my_dists = await db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0}).to_list(500)
         dids = [a["distributor_id"] for a in my_dists]
-        n_sp = await db.dms_sp_assignments.count_documents({"distributor_id": {"$in": dids}}) if dids else 0
-        # sales MTD in secondary_orders where distributor is mine
+
+        today = _today()
         mtd_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-        sales = 0.0
-        async for so in db.dms_secondary_orders.find({"distributor_id": {"$in": dids}, "created_at": {"$gte": mtd_start}}, {"_id": 0, "total": 1}):
-            sales += so.get("total", 0)
+
+        today_sales = 0.0; monthly_sales = 0.0
+        total_orders = 0; pending_orders = 0; delivered_orders = 0
+        async for so in db.dms_secondary_orders.find({"distributor_id": {"$in": dids}}, {"_id": 0}):
+            total_orders += 1
+            if so.get("created_at", "").startswith(today):
+                today_sales += so.get("total", 0)
+            if so.get("created_at", "") >= mtd_start:
+                monthly_sales += so.get("total", 0)
+            st = so.get("status")
+            if st == "pending":
+                pending_orders += 1
+            elif st in ("dispatched", "delivered"):
+                delivered_orders += 1
+        fulfillment_pct = _round((delivered_orders / total_orders * 100) if total_orders else 0, 1)
+
+        n_sp = await db.dms_sp_assignments.count_documents({"distributor_id": {"$in": dids}}) if dids else 0
+        n_ret = await db.dms_retailers.count_documents({"distributor_id": {"$in": dids}, "active": True}) if dids else 0
+
+        # Stock alerts — distributor-wise low stock (<5 boxes) — count only
+        stock_alerts = 0
+        async for inv in db.dms_distributor_inventory.find({"distributor_id": {"$in": dids}}, {"_id": 0, "qty_boxes": 1}):
+            if inv.get("qty_boxes", 0) < 5:
+                stock_alerts += 1
+
         return {
             "kpis": {
-                "distributors": len(dids),
-                "salespersons": n_sp,
-                "sales_mtd": _round(sales),
+                "today_sales": _round(today_sales),
+                "monthly_sales": _round(monthly_sales),
+                "total_orders": total_orders,
+                "pending_orders": pending_orders,
+                "fulfillment_pct": fulfillment_pct,
+                "assigned_distributors": len(dids),
+                "assigned_salespersons": n_sp,
+                "total_retailers": n_ret,
+                "stock_alerts": stock_alerts,
             }
         }
 
+    # -------- TL: Distributor performance ---------
+    @router.get("/tl/distributors")
+    async def tl_distributor_performance(user: dict = Depends(team_leader_only)):
+        assigns = await db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0}).to_list(500)
+        dids = [a["distributor_id"] for a in assigns]
+        today = _today()
+        mtd_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        out = []
+        for did in dids:
+            d = await db.dms_distributors.find_one({"id": did}, {"_id": 0})
+            if not d: continue
+            stock = 0
+            async for inv in db.dms_distributor_inventory.find({"distributor_id": did}, {"_id": 0, "qty_boxes": 1}):
+                stock += inv.get("qty_boxes", 0)
+            # Outstanding payable = primary (owner→dist) invoices - payments
+            po_billed = 0.0; po_paid = 0.0
+            async for e in db.dms_primary_ledger.find({"distributor_id": did}, {"_id": 0}):
+                if e.get("kind") == "invoice": po_billed += e.get("amount", 0)
+                elif e.get("kind") == "payment": po_paid += e.get("amount", 0)
+            outstanding_payable = po_billed - po_paid
+            # Outstanding receivable = secondary (dist→retailer) invoices - payments
+            so_billed = 0.0; so_paid = 0.0
+            async for e in db.dms_retailer_ledger.find({"distributor_id": did}, {"_id": 0}):
+                if e.get("kind") == "invoice": so_billed += e.get("amount", 0)
+                elif e.get("kind") == "payment": so_paid += e.get("amount", 0)
+            outstanding_receivable = so_billed - so_paid
+            today_s = 0.0; monthly_s = 0.0; pending = 0
+            async for so in db.dms_secondary_orders.find({"distributor_id": did}, {"_id": 0}):
+                if so.get("created_at", "").startswith(today): today_s += so.get("total", 0)
+                if so.get("created_at", "") >= mtd_start: monthly_s += so.get("total", 0)
+                if so.get("status") == "pending": pending += 1
+            out.append({
+                "id": did, "name": d.get("name"), "region": d.get("region"),
+                "available_stock": stock,
+                "outstanding_payable_to_owner": _round(outstanding_payable),
+                "outstanding_receivable_from_retailers": _round(outstanding_receivable),
+                "today_sales": _round(today_s),
+                "monthly_sales": _round(monthly_s),
+                "revenue": _round(so_billed),
+                "pending_orders": pending,
+            })
+        return {"data": out}
+
+    # -------- TL: Salesperson list with live status ---------
+    @router.get("/tl/salespersons")
+    async def tl_salespersons(user: dict = Depends(team_leader_only)):
+        assigns = await db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0}).to_list(500)
+        dids = [a["distributor_id"] for a in assigns]
+        sp_ids = set()
+        async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0}):
+            sp_ids.add(a["salesperson_id"])
+        today = _today()
+        out = []
+        async for u in db.users.find({"role": "salesperson", "id": {"$in": list(sp_ids)}}, {"_id": 0, "password_hash": 0}):
+            last_at = (u.get("last_gps") or {}).get("at") or u.get("last_active_at")
+            online = False
+            try:
+                if last_at:
+                    dt = datetime.fromisoformat(last_at.replace("Z", "+00:00"))
+                    online = (datetime.now(timezone.utc) - dt).total_seconds() < 300
+            except Exception:
+                pass
+            punch = await db.dms_punch.find_one({"salesperson_id": u["id"], "date": today}, {"_id": 0})
+            # today's orders + new retailers
+            orders_today = await db.dms_secondary_orders.count_documents({"placed_by": u["id"], "created_at": {"$gte": today + "T00:00:00"}})
+            new_ret_today = await db.dms_retailers.count_documents({"onboarded_by": u["id"], "created_at": {"$gte": today + "T00:00:00"}})
+            # unique retailer visits today (from proximity to any retailer)
+            pings = await db.dms_sp_pings.find({"salesperson_id": u["id"], "date": today}, {"_id": 0}).to_list(2000)
+            visits = 0
+            if pings:
+                async for r in db.dms_retailers.find({"distributor_id": {"$in": dids}, "gps_lat": {"$ne": None}}, {"_id": 0}):
+                    for p in pings:
+                        if _haversine_km(r["gps_lat"], r["gps_lng"], p["lat"], p["lng"]) < 0.20:
+                            visits += 1
+                            break
+            out.append({
+                "id": u["id"], "name": u.get("name"), "phone": u.get("phone"),
+                "online": online, "last_seen_at": last_at,
+                "live_location": u.get("last_gps"),
+                "punch_in": (punch or {}).get("in_at"),
+                "punch_out": (punch or {}).get("out_at"),
+                "today_visits": visits,
+                "orders_today": orders_today,
+                "new_retailers_today": new_ret_today,
+            })
+        return {"data": out}
+
+    # -------- TL: Order monitoring ---------
+    @router.get("/tl/orders")
+    async def tl_orders(
+        status: Optional[str] = None,
+        distributor_id: Optional[str] = None,
+        salesperson_id: Optional[str] = None,
+        retailer_id: Optional[str] = None,
+        user: dict = Depends(team_leader_only),
+    ):
+        assigns = await db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0}).to_list(500)
+        my_dids = [a["distributor_id"] for a in assigns]
+        q: Dict[str, Any] = {"distributor_id": {"$in": my_dids}}
+        if status: q["status"] = status
+        if distributor_id and distributor_id in my_dids: q["distributor_id"] = distributor_id
+        if salesperson_id: q["placed_by"] = salesperson_id
+        if retailer_id: q["retailer_id"] = retailer_id
+        docs = await db.dms_secondary_orders.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+        # enrich
+        for o in docs:
+            r = await db.dms_retailers.find_one({"id": o.get("retailer_id")}, {"_id": 0, "name": 1})
+            d = await db.dms_distributors.find_one({"id": o.get("distributor_id")}, {"_id": 0, "name": 1})
+            o["retailer_name"] = (r or {}).get("name")
+            o["distributor_name"] = (d or {}).get("name")
+        return {"data": docs, "count": len(docs)}
+
+    # -------- TL: Retailers ---------
+    @router.get("/tl/retailers")
+    async def tl_retailers(user: dict = Depends(team_leader_only)):
+        assigns = await db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0}).to_list(500)
+        dids = [a["distributor_id"] for a in assigns]
+        out = []
+        async for r in db.dms_retailers.find({"distributor_id": {"$in": dids}, "active": True}, {"_id": 0}):
+            # outstanding
+            billed = 0.0; paid = 0.0
+            async for e in db.dms_retailer_ledger.find({"retailer_id": r["id"]}, {"_id": 0}):
+                if e.get("kind") == "invoice": billed += e.get("amount", 0)
+                elif e.get("kind") == "payment": paid += e.get("amount", 0)
+            # last order
+            last = await db.dms_secondary_orders.find_one({"retailer_id": r["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+            total_purchases = 0.0
+            async for so in db.dms_secondary_orders.find({"retailer_id": r["id"]}, {"_id": 0, "total": 1}):
+                total_purchases += so.get("total", 0)
+            out.append({
+                "id": r["id"], "name": r.get("name"), "phone": r.get("phone"),
+                "address": r.get("address"), "region": r.get("region"),
+                "gps_lat": r.get("gps_lat"), "gps_lng": r.get("gps_lng"),
+                "location_link": r.get("location_link"),
+                "outstanding": _round(billed - paid),
+                "last_order_at": (last or {}).get("created_at"),
+                "total_purchases": _round(total_purchases),
+            })
+        return {"data": out}
+
+    # -------- TL: Attendance (own) ---------
+    @router.get("/tl/attendance")
+    async def tl_attendance(user: dict = Depends(team_leader_only)):
+        docs = await db.dms_punch.find({"salesperson_id": user["id"]}, {"_id": 0}).sort("in_at", -1).to_list(60)
+        return {"data": docs}
+
+    @router.post("/tl/punch/in")
+    async def tl_punch_in(body: Dict[str, Any] = Body(...), user: dict = Depends(team_leader_only)):
+        today = _today()
+        existing = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today, "out_at": None})
+        if existing:
+            return {"ok": True, "already": True}
+        doc = {"id": _nid("pn"), "salesperson_id": user["id"], "date": today,
+               "in_at": _now(), "out_at": None,
+               "gps_in": {"lat": body.get("lat"), "lng": body.get("lng")}, "gps_out": None}
+        await db.dms_punch.insert_one(doc)
+        return {"ok": True, "punch": _clean(doc)}
+
+    @router.post("/tl/punch/out")
+    async def tl_punch_out(body: Dict[str, Any] = Body(...), user: dict = Depends(team_leader_only)):
+        today = _today()
+        p = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today, "out_at": None})
+        if not p:
+            raise HTTPException(status_code=400, detail="Not punched in today")
+        await db.dms_punch.update_one({"id": p["id"]}, {"$set": {
+            "out_at": _now(), "gps_out": {"lat": body.get("lat"), "lng": body.get("lng")},
+        }})
+        return {"ok": True}
+
+    # =========================================================================
+    # OWNER — TL Performance Dashboard + Distributor Sales Drilldown
+    # =========================================================================
+    @router.get("/owner/tl-performance")
+    async def owner_tl_performance(user: dict = Depends(owner_only)):
+        today = _today()
+        mtd_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+        rows = []
+        async for tl in db.users.find({"role": "team_leader"}, {"_id": 0, "password_hash": 0}):
+            assigns = await db.dms_tl_assignments.find({"team_leader_id": tl["id"]}, {"_id": 0}).to_list(500)
+            dids = [a["distributor_id"] for a in assigns]
+            n_sp = await db.dms_sp_assignments.count_documents({"distributor_id": {"$in": dids}}) if dids else 0
+            total = 0.0; today_s = 0.0; monthly = 0.0; n_orders = 0; pending = 0
+            # date-wise last 7 days
+            by_date: Dict[str, float] = {}
+            async for so in db.dms_secondary_orders.find({"distributor_id": {"$in": dids}}, {"_id": 0}):
+                amt = so.get("total", 0)
+                total += amt
+                n_orders += 1
+                d = so.get("created_at", "")[:10]
+                by_date[d] = by_date.get(d, 0) + amt
+                if d == today: today_s += amt
+                if so.get("created_at", "") >= mtd_start: monthly += amt
+                if so.get("status") == "pending": pending += 1
+            # last 7 days series
+            series = []
+            for i in range(6, -1, -1):
+                d = (datetime.now(timezone.utc) - timedelta(days=i)).strftime("%Y-%m-%d")
+                series.append({"date": d, "sales": _round(by_date.get(d, 0))})
+            rows.append({
+                "team_leader_id": tl["id"],
+                "name": tl.get("name"),
+                "email": tl.get("email"),
+                "assigned_distributors": len(dids),
+                "assigned_salespersons": n_sp,
+                "total_sales": _round(total),
+                "today_sales": _round(today_s),
+                "monthly_sales": _round(monthly),
+                "total_orders": n_orders,
+                "pending_orders": pending,
+                "series_7d": series,
+            })
+        # ranking by total_sales desc
+        rows.sort(key=lambda r: r["total_sales"], reverse=True)
+        return {"data": rows}
+
+    @router.get("/owner/distributor-sales/{did}")
+    async def owner_distributor_sales(did: str, user: dict = Depends(owner_only)):
+        """Complete drilldown: which retailers, which products, quantities, prices."""
+        dist = await db.dms_distributors.find_one({"id": did}, {"_id": 0})
+        if not dist:
+            raise HTTPException(status_code=404, detail="Distributor not found")
+        # all secondary orders for this distributor
+        orders = await db.dms_secondary_orders.find({"distributor_id": did}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+        # aggregate by retailer & by product
+        by_retailer: Dict[str, Dict[str, Any]] = {}
+        by_product: Dict[str, Dict[str, Any]] = {}
+        for o in orders:
+            rid = o.get("retailer_id")
+            if rid not in by_retailer:
+                r = await db.dms_retailers.find_one({"id": rid}, {"_id": 0, "name": 1, "address": 1})
+                by_retailer[rid] = {"retailer_id": rid, "retailer_name": (r or {}).get("name"), "address": (r or {}).get("address"),
+                                    "orders": 0, "total_revenue": 0.0}
+            by_retailer[rid]["orders"] += 1
+            by_retailer[rid]["total_revenue"] += o.get("total", 0)
+            for it in (o.get("items") or []):
+                pid = it.get("product_id")
+                if pid not in by_product:
+                    p = await db.dms_products.find_one({"id": pid}, {"_id": 0, "name": 1, "sku_code": 1})
+                    by_product[pid] = {"product_id": pid, "product_name": (p or {}).get("name"),
+                                       "sku_code": (p or {}).get("sku_code"),
+                                       "qty_boxes": 0, "qty_pcs": 0, "revenue": 0.0,
+                                       "prices_seen": set()}
+                by_product[pid]["qty_boxes"] += int(it.get("qty_boxes", 0) or 0)
+                by_product[pid]["qty_pcs"] += int(it.get("qty_pcs", 0) or 0)
+                by_product[pid]["revenue"] += float(it.get("line_total", 0) or 0)
+                if it.get("box_price"): by_product[pid]["prices_seen"].add(float(it["box_price"]))
+        # normalise prices set → list
+        for p in by_product.values():
+            p["prices_seen"] = sorted(list(p["prices_seen"]))
+            p["revenue"] = _round(p["revenue"])
+        for r in by_retailer.values():
+            r["total_revenue"] = _round(r["total_revenue"])
+        # slim orders (last 30)
+        recent = []
+        for o in orders[:30]:
+            r = await db.dms_retailers.find_one({"id": o.get("retailer_id")}, {"_id": 0, "name": 1})
+            recent.append({
+                "id": o["id"], "at": o.get("created_at"),
+                "retailer": (r or {}).get("name"),
+                "total": _round(o.get("total", 0)),
+                "status": o.get("status"),
+                "items_count": len(o.get("items") or []),
+            })
+        return {
+            "distributor": {"id": dist["id"], "name": dist.get("name"), "region": dist.get("region"),
+                             "gps_lat": dist.get("gps_lat"), "gps_lng": dist.get("gps_lng")},
+            "by_retailer": list(by_retailer.values()),
+            "by_product": list(by_product.values()),
+            "recent_orders": recent,
+            "totals": {
+                "orders": len(orders),
+                "revenue": _round(sum(o.get("total", 0) for o in orders)),
+                "retailers_active": len(by_retailer),
+                "products_sold": len(by_product),
+            },
+        }
+
+    @router.get("/dashboard/team-leader-legacy-sales-mtd")
+    async def _tl_sales_mtd_legacy(user: dict = Depends(team_leader_only)):
+        # kept only so any old client that still calls this doesn't 404
+        return {"kpis": {"sales_mtd": 0}}
+
+
     @router.get("/dashboard/regional-manager")
     async def rm_dashboard(user: dict = Depends(regional_manager_only)):
+        """
+        Strict-spec RM dashboard: total_tls, total_distributors, total_retailers,
+        total_salespersons, today_sales, monthly_sales, outstanding, revenue, fulfillment_pct.
+        """
         my_tls = await db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0}).to_list(500)
         tlids = [a["team_leader_id"] for a in my_tls]
         # distributors under those TLs
-        dids = []
-        async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "distributor_id": 1}):
-            dids.append(a["distributor_id"])
+        dids = list({a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "distributor_id": 1})})
+        sp_ids = list({a["salesperson_id"] async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0, "salesperson_id": 1})})
+        n_ret = await db.dms_retailers.count_documents({"distributor_id": {"$in": dids}, "active": True}) if dids else 0
+        today = _today()
         mtd_start = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
-        sales = 0.0
-        async for so in db.dms_secondary_orders.find({"distributor_id": {"$in": dids}, "created_at": {"$gte": mtd_start}}, {"_id": 0, "total": 1}):
-            sales += so.get("total", 0)
+        today_s = 0.0; monthly = 0.0; total_rev = 0.0; total_n = 0; delivered = 0
+        async for so in db.dms_secondary_orders.find({"distributor_id": {"$in": dids}}, {"_id": 0}):
+            total_n += 1
+            total_rev += so.get("total", 0)
+            if so.get("created_at", "").startswith(today): today_s += so.get("total", 0)
+            if so.get("created_at", "") >= mtd_start: monthly += so.get("total", 0)
+            if so.get("status") in ("dispatched", "delivered"): delivered += 1
+        # outstanding (retailer ledger) across those distributors
+        billed = 0.0; paid = 0.0
+        async for e in db.dms_retailer_ledger.find({"distributor_id": {"$in": dids}}, {"_id": 0}):
+            if e.get("kind") == "invoice": billed += e.get("amount", 0)
+            elif e.get("kind") == "payment": paid += e.get("amount", 0)
         return {
             "kpis": {
                 "team_leaders": len(tlids),
-                "distributors": len(set(dids)),
-                "sales_mtd": _round(sales),
+                "distributors": len(dids),
+                "retailers": n_ret,
+                "salespersons": len(sp_ids),
+                "today_sales": _round(today_s),
+                "monthly_sales": _round(monthly),
+                "outstanding": _round(billed - paid),
+                "revenue": _round(total_rev),
+                "fulfillment_pct": _round((delivered / total_n * 100) if total_n else 0, 1),
             }
         }
+
+    # --------- RM: TL monitoring ---------
+    @router.get("/rm/team-leaders")
+    async def rm_team_leaders(user: dict = Depends(regional_manager_only)):
+        my_tls = await db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0}).to_list(500)
+        tlids = [a["team_leader_id"] for a in my_tls]
+        rows = []
+        for tlid in tlids:
+            tl = await db.users.find_one({"id": tlid}, {"_id": 0, "password_hash": 0})
+            if not tl: continue
+            dids = [a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": tlid}, {"_id": 0, "distributor_id": 1})]
+            active_sp = 0
+            for spid in [a["salesperson_id"] async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0, "salesperson_id": 1})]:
+                u = await db.users.find_one({"id": spid}, {"_id": 0, "last_active_at": 1})
+                la = (u or {}).get("last_active_at")
+                if la:
+                    try:
+                        dt = datetime.fromisoformat(la.replace("Z", "+00:00"))
+                        if (datetime.now(timezone.utc) - dt).total_seconds() < 300: active_sp += 1
+                    except Exception: pass
+            sales = 0.0; pending = 0
+            async for so in db.dms_secondary_orders.find({"distributor_id": {"$in": dids}}, {"_id": 0}):
+                sales += so.get("total", 0)
+                if so.get("status") == "pending": pending += 1
+            rows.append({
+                "id": tlid, "name": tl.get("name"), "email": tl.get("email"),
+                "sales": _round(sales),
+                "active_salespersons": active_sp,
+                "active_distributors": len(dids),
+                "pending_orders": pending,
+                "revenue": _round(sales),
+            })
+        rows.sort(key=lambda r: r["sales"], reverse=True)
+        return {"data": rows}
+
+    # --------- RM: Distributor monitoring (read only) ---------
+    @router.get("/rm/distributors")
+    async def rm_distributors(user: dict = Depends(regional_manager_only)):
+        my_tls = await db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0}).to_list(500)
+        tlids = [a["team_leader_id"] for a in my_tls]
+        dids = list({a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "distributor_id": 1})})
+        rows = []
+        for did in dids:
+            d = await db.dms_distributors.find_one({"id": did}, {"_id": 0})
+            if not d: continue
+            stock = 0
+            async for inv in db.dms_distributor_inventory.find({"distributor_id": did}, {"_id": 0, "qty_boxes": 1}):
+                stock += inv.get("qty_boxes", 0)
+            po_billed = 0.0; po_paid = 0.0
+            async for e in db.dms_primary_ledger.find({"distributor_id": did}, {"_id": 0}):
+                if e.get("kind") == "invoice": po_billed += e.get("amount", 0)
+                elif e.get("kind") == "payment": po_paid += e.get("amount", 0)
+            revenue = 0.0; orders = 0
+            async for so in db.dms_secondary_orders.find({"distributor_id": did}, {"_id": 0}):
+                revenue += so.get("total", 0); orders += 1
+            n_ret = await db.dms_retailers.count_documents({"distributor_id": did, "active": True})
+            rows.append({
+                "id": did, "name": d.get("name"), "region": d.get("region"),
+                "stock": stock, "pending_payments": _round(po_billed - po_paid),
+                "revenue": _round(revenue), "retailers": n_ret, "orders": orders,
+            })
+        return {"data": rows}
+
+    # --------- RM: Salesperson monitoring (read only) ---------
+    @router.get("/rm/salespersons")
+    async def rm_salespersons(user: dict = Depends(regional_manager_only)):
+        my_tls = await db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0}).to_list(500)
+        tlids = [a["team_leader_id"] for a in my_tls]
+        dids = list({a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "distributor_id": 1})})
+        sp_ids = list({a["salesperson_id"] async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0, "salesperson_id": 1})})
+        today = _today()
+        rows = []
+        async for u in db.users.find({"role": "salesperson", "id": {"$in": sp_ids}}, {"_id": 0, "password_hash": 0}):
+            la = (u.get("last_gps") or {}).get("at") or u.get("last_active_at")
+            online = False
+            try:
+                if la:
+                    dt = datetime.fromisoformat(la.replace("Z", "+00:00"))
+                    online = (datetime.now(timezone.utc) - dt).total_seconds() < 300
+            except Exception: pass
+            punch = await db.dms_punch.find_one({"salesperson_id": u["id"], "date": today}, {"_id": 0})
+            visits = 0
+            pings = await db.dms_sp_pings.find({"salesperson_id": u["id"], "date": today}, {"_id": 0}).to_list(2000)
+            if pings:
+                async for r in db.dms_retailers.find({"distributor_id": {"$in": dids}, "gps_lat": {"$ne": None}}, {"_id": 0}):
+                    for p in pings:
+                        if _haversine_km(r["gps_lat"], r["gps_lng"], p["lat"], p["lng"]) < 0.20:
+                            visits += 1; break
+            orders_today = await db.dms_secondary_orders.count_documents({"placed_by": u["id"], "created_at": {"$gte": today + "T00:00:00"}})
+            new_ret = await db.dms_retailers.count_documents({"onboarded_by": u["id"], "created_at": {"$gte": today + "T00:00:00"}})
+            rows.append({
+                "id": u["id"], "name": u.get("name"), "phone": u.get("phone"),
+                "online": online, "live_location": u.get("last_gps"),
+                "punch_in": (punch or {}).get("in_at"), "punch_out": (punch or {}).get("out_at"),
+                "orders_today": orders_today, "today_visits": visits, "new_retailers_today": new_ret,
+            })
+        return {"data": rows}
+
+    # --------- RM: Region performance (dist-wise, TL-wise, SP-wise sales) ---------
+    @router.get("/rm/region-performance")
+    async def rm_region_performance(user: dict = Depends(regional_manager_only)):
+        my_tls = await db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0}).to_list(500)
+        tlids = [a["team_leader_id"] for a in my_tls]
+        tl_dists = {a["team_leader_id"]: [] async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0})}
+        # accumulate
+        async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0}):
+            tl_dists.setdefault(a["team_leader_id"], []).append(a["distributor_id"])
+        all_dids = list({d for lst in tl_dists.values() for d in lst})
+
+        by_dist = {}; by_tl = {}; by_sp = {}
+        async for so in db.dms_secondary_orders.find({"distributor_id": {"$in": all_dids}}, {"_id": 0}):
+            amt = so.get("total", 0)
+            by_dist[so["distributor_id"]] = by_dist.get(so["distributor_id"], 0) + amt
+            placed_by = so.get("placed_by")
+            if placed_by: by_sp[placed_by] = by_sp.get(placed_by, 0) + amt
+
+        # attribute to TLs via TL→dist mapping
+        for tlid, dlist in tl_dists.items():
+            by_tl[tlid] = sum(by_dist.get(d, 0) for d in dlist)
+
+        # enrich with names
+        async def _name(uid):
+            u = await db.users.find_one({"id": uid}, {"_id": 0, "name": 1})
+            return (u or {}).get("name", uid)
+        async def _dname(did):
+            d = await db.dms_distributors.find_one({"id": did}, {"_id": 0, "name": 1})
+            return (d or {}).get("name", did)
+
+        out_dist = [{"id": did, "name": await _dname(did), "sales": _round(v)} for did, v in by_dist.items()]
+        out_tl = [{"id": tid, "name": await _name(tid), "sales": _round(v)} for tid, v in by_tl.items()]
+        out_sp = [{"id": sid, "name": await _name(sid), "sales": _round(v)} for sid, v in by_sp.items()]
+        for lst in (out_dist, out_tl, out_sp): lst.sort(key=lambda r: r["sales"], reverse=True)
+        return {"by_distributor": out_dist, "by_team_leader": out_tl, "by_salesperson": out_sp}
+
 
     @router.get("/dashboard/retailer")
     async def retailer_dashboard(user: dict = Depends(retailer_only)):
@@ -2102,6 +2572,7 @@ def build_dms_router(db, get_current_user):
                 doc[k] = body[k]
         await db.users.insert_one(doc)
         doc.pop("password_hash", None)
+        doc.pop("_id", None)
         return {"ok": True, "user": doc}
 
     @router.patch("/owner/users/{uid}")

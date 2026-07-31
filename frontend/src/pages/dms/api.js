@@ -120,6 +120,27 @@ export const dms = {
   trackingSalesperson: (sid, date) => api.get(`/dms/tracking/salesperson/${sid}`, { params: date ? { date } : {} }).then(r => r.data),
   trackingHistory: (sid, days = 30) => api.get(`/dms/tracking/salesperson/${sid}/history`, { params: { days } }).then(r => r.data),
 
+  // Team Leader (Phase 4)
+  tlDashboard: () => api.get("/dms/dashboard/team-leader").then(r => r.data),
+  tlDistributors: () => api.get("/dms/tl/distributors").then(r => r.data),
+  tlSalespersons: () => api.get("/dms/tl/salespersons").then(r => r.data),
+  tlOrders: (params = {}) => api.get("/dms/tl/orders", { params }).then(r => r.data),
+  tlRetailers: () => api.get("/dms/tl/retailers").then(r => r.data),
+  tlAttendance: () => api.get("/dms/tl/attendance").then(r => r.data),
+  tlPunchIn: (body) => api.post("/dms/tl/punch/in", body).then(r => r.data),
+  tlPunchOut: (body) => api.post("/dms/tl/punch/out", body).then(r => r.data),
+
+  // Owner enhancements (Phase 4)
+  ownerTlPerformance: () => api.get("/dms/owner/tl-performance").then(r => r.data),
+  ownerDistributorSales: (did) => api.get(`/dms/owner/distributor-sales/${did}`).then(r => r.data),
+
+  // Regional Manager (Phase 5)
+  rmDashboard: () => api.get("/dms/dashboard/regional-manager").then(r => r.data),
+  rmTeamLeaders: () => api.get("/dms/rm/team-leaders").then(r => r.data),
+  rmDistributors: () => api.get("/dms/rm/distributors").then(r => r.data),
+  rmSalespersons: () => api.get("/dms/rm/salespersons").then(r => r.data),
+  rmRegionPerformance: () => api.get("/dms/rm/region-performance").then(r => r.data),
+
   // print
   printEbill: (id) => api.get(`/dms/print/ebill/${id}`).then(r => r.data),
   printRetailerBill: (id) => api.get(`/dms/print/retailer-bill/${id}`).then(r => r.data),

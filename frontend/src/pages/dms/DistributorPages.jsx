@@ -85,6 +85,7 @@ export function DistributorBrowsePage() {
   const [cart, setCart] = useState({});  // { product_id: qty }
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [openCategory, setOpenCategory] = useState(null);
   const nav = useNavigate();
 
   useEffect(() => { dms.browseProducts().then(d => setProducts(d.data)).catch(() => {}); }, []);
@@ -92,15 +93,10 @@ export function DistributorBrowsePage() {
   const setQty = (pid, delta) => setCart(prev => ({ ...prev, [pid]: Math.max(0, (prev[pid] || 0) + delta) }));
   const setQtyDirect = (pid, val) => setCart(prev => ({ ...prev, [pid]: Math.max(0, Number(val) || 0) }));
 
-  const total = products.reduce((sum, p) => {
-    const q = cart[p.id] || 0;
-    if (!q) return sum;
-    const line = q * p.unit_price;
-    const gst = line * (p.gst_pct / 100);
-    return sum + line + gst;
-  }, 0);
-  const subtotal = products.reduce((sum, p) => sum + (cart[p.id] || 0) * p.unit_price, 0);
-  const gstTotal = total - subtotal;
+  // All price maths use unit_price (new price). previous_price is display-only.
+  const subtotal = products.reduce((s, p) => s + (cart[p.id] || 0) * p.unit_price, 0);
+  const gstTotal = products.reduce((s, p) => s + (cart[p.id] || 0) * p.unit_price * (p.gst_pct / 100), 0);
+  const total = subtotal + gstTotal;
   const itemsCount = Object.values(cart).filter(v => v > 0).length;
 
   const place = async () => {
@@ -115,59 +111,93 @@ export function DistributorBrowsePage() {
     setBusy(false);
   };
 
-  // Group by category
+  // Group by category with counts & totals
   const grouped = {};
   products.forEach(p => { (grouped[p.category_name || "Uncategorised"] ||= []).push(p); });
+  const categoryList = Object.entries(grouped).map(([name, prods]) => {
+    const inCart = prods.reduce((n, p) => n + (cart[p.id] > 0 ? 1 : 0), 0);
+    return { name, count: prods.length, inCart };
+  });
 
   return (
     <div className="pb-32">
-      <PageHeader title="Browse & Order" subtitle="Products available for you to order" />
-      {Object.entries(grouped).map(([cat, prods]) => (
-        <div key={cat} className="mb-6">
-          <h3 className="text-sm font-semibold text-slate-700 uppercase tracking-wider mb-3">{cat}</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {prods.map(p => {
-              const q = cart[p.id] || 0;
-              return (
-                <Card key={p.id} className="p-4 flex flex-col" data-testid={`product-card-${p.id}`}>
-                  <div className="flex-1">
-                    <div className="flex items-start justify-between gap-2 mb-1">
-                      <div className="font-semibold text-slate-900 leading-tight">{p.name}</div>
-                      {p.previous_price && p.previous_price !== p.unit_price && (
-                        <span className="text-[10px] uppercase font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded shrink-0">Price ↑</span>
-                      )}
-                    </div>
-                    <div className="text-xs font-mono text-slate-500 mb-2">{p.sku_code} • {p.box_qty} bottles/box</div>
-                    <div className="flex items-baseline gap-2 mt-2">
-                      <span className="text-lg font-bold text-teal-700">{inr(p.unit_price)}</span>
-                      {p.previous_price && p.previous_price !== p.unit_price && (
-                        <span className="text-xs text-slate-500 line-through">{inr(p.previous_price)}</span>
-                      )}
-                      <span className="text-xs text-slate-500">/ box</span>
-                    </div>
-                    <div className="text-xs text-slate-500 mt-1">+{p.gst_pct}% GST • Owner stock: {p.owner_stock_boxes} boxes</div>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between">
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => setQty(p.id, -1)} className="h-8 w-8 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center" data-testid={`minus-${p.id}`}><Minus size={14} /></button>
-                      <input type="number" min={0} value={q} onChange={e => setQtyDirect(p.id, e.target.value)} className="w-14 h-8 text-center border border-slate-200 rounded-lg text-sm font-semibold" data-testid={`qty-input-${p.id}`} />
-                      <button onClick={() => setQty(p.id, 1)} className="h-8 w-8 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center" data-testid={`plus-${p.id}`}><Plus size={14} /></button>
-                    </div>
-                    <div className="text-sm font-semibold text-slate-900">{q > 0 ? inr(q * p.unit_price) : ""}</div>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
+      <PageHeader
+        title={openCategory ? openCategory : "Browse & Order"}
+        subtitle={openCategory ? "Tap + / − to set quantity per product" : "Pick a category to see products"}
+        back={openCategory ? undefined : undefined}
+        action={openCategory && (
+          <Button variant="outline" onClick={() => setOpenCategory(null)} data-testid="back-to-cats"><ChevronRight className="rotate-180 mr-1" size={16} /> All Categories</Button>
+        )}
+      />
+
+      {/* STEP 1 — category grid */}
+      {!openCategory && (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+          {categoryList.length === 0 && <EmptyState icon={Package} title="No products available" description="Owner hasn't given you visibility yet." />}
+          {categoryList.map(c => (
+            <button
+              key={c.name}
+              onClick={() => setOpenCategory(c.name)}
+              className="text-left bg-white border border-slate-200 hover:border-teal-400 hover:shadow-md transition rounded-2xl p-5 relative"
+              data-testid={`cat-tile-${c.name}`}
+            >
+              <div className="h-10 w-10 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center mb-3"><Package size={20} /></div>
+              <div className="font-semibold text-slate-900">{c.name}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{c.count} product{c.count !== 1 ? "s" : ""}</div>
+              {c.inCart > 0 && (
+                <span className="absolute top-3 right-3 bg-teal-700 text-white text-[10px] font-bold rounded-full px-2 py-0.5">{c.inCart} in cart</span>
+              )}
+              <div className="mt-4 text-teal-700 text-xs font-medium flex items-center">Open <ChevronRight size={12} className="ml-0.5" /></div>
+            </button>
+          ))}
         </div>
-      ))}
-      {products.length === 0 && <EmptyState icon={Package} title="No products available" description="Owner hasn't given you visibility to any products yet." />}
+      )}
+
+      {/* STEP 2 — product list inside category */}
+      {openCategory && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          {(grouped[openCategory] || []).map(p => {
+            const q = cart[p.id] || 0;
+            const priceChanged = p.previous_price && p.previous_price !== p.unit_price;
+            return (
+              <Card key={p.id} className="p-4 flex flex-col" data-testid={`product-card-${p.id}`}>
+                <div className="flex-1">
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <div className="font-semibold text-slate-900 leading-tight">{p.name}</div>
+                    {priceChanged && <span className="text-[10px] uppercase font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded shrink-0">Price ↑</span>}
+                  </div>
+                  <div className="text-xs font-mono text-slate-500 mb-2">{p.sku_code} • {p.box_qty} bottles/box</div>
+                  <div className="flex items-baseline gap-2 mt-2">
+                    <span className="text-lg font-bold text-teal-700">{inr(p.unit_price)}</span>
+                    {priceChanged && (
+                      <>
+                        <span className="text-xs text-slate-500 line-through">{inr(p.previous_price)}</span>
+                        <span className="text-[10px] text-amber-700 font-semibold">(old)</span>
+                      </>
+                    )}
+                    <span className="text-xs text-slate-500">/ box (NEW)</span>
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">+{p.gst_pct}% GST • Owner stock: {p.owner_stock_boxes} boxes</div>
+                </div>
+                <div className="mt-3 flex items-center justify-between">
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setQty(p.id, -1)} className="h-9 w-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center" data-testid={`minus-${p.id}`}><Minus size={16} /></button>
+                    <input type="number" min={0} value={q} onChange={e => setQtyDirect(p.id, e.target.value)} className="w-14 h-9 text-center border border-slate-200 rounded-lg text-sm font-semibold" data-testid={`qty-input-${p.id}`} />
+                    <button onClick={() => setQty(p.id, 1)} className="h-9 w-9 rounded-lg border border-slate-200 hover:bg-slate-50 flex items-center justify-center bg-teal-50 text-teal-700" data-testid={`plus-${p.id}`}><Plus size={16} /></button>
+                  </div>
+                  <div className="text-sm font-semibold text-slate-900">{q > 0 ? inr(q * p.unit_price) : ""}</div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
 
       {/* Sticky cart footer */}
       <div className="fixed bottom-0 left-0 lg:left-60 right-0 bg-white border-t border-slate-200 shadow-lg z-40">
         <div className="p-4 flex items-center gap-4">
           <div className="flex-1">
-            <div className="text-xs text-slate-500">{itemsCount} items • Subtotal {inr(subtotal)} + GST {inr(gstTotal)}</div>
+            <div className="text-xs text-slate-500">{itemsCount} items • Subtotal {inr(subtotal)} + GST {inr(gstTotal)} <span className="ml-1 text-[10px] uppercase font-semibold text-teal-700">using NEW price</span></div>
             <div className="text-xl font-bold text-slate-900">{inr(total)}</div>
           </div>
           <div className="hidden md:block flex-1 max-w-sm"><Input placeholder="Notes for owner (optional)" value={notes} onChange={e => setNotes(e.target.value)} /></div>
