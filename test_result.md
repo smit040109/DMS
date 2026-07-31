@@ -333,3 +333,12 @@ agent_communication:
       
       RECOMMENDATION: Main agent should summarize and finish.
       Frontend testing should be done separately with user approval.
+
+  - agent: "testing"
+    message: |
+      DMS BACKEND — ITERATION 1 REGRESSION TEST COMPLETE (11/11 PASSED, 100%).
+      All Primary Sales flow endpoints verified working: auth, categories,
+      products+price-batches, distributors+KYC+visibility, orders lifecycle
+      (pending→partial→ready→received), attachments, ledger, payments,
+      notifications, dashboards, cross-role security.
+      NO CRITICAL ISSUES. Backend is production-ready for Iteration 1.
