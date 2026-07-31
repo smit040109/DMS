@@ -380,12 +380,19 @@ backend:
         agent: "testing"
         comment: |
           ✅ ALL 14 TESTS PASSED (100%) — GO OIL DMS v2 backend verified.
-          Settings, Price Circulars (list/detail/create/history), Product Master fields
-          (material_description/grade_specs/pack_size on all 135 products), GST-from-settings,
-          Old→New price flow, and full regression (categories, distributors, orders,
-          salesperson punch, notifications, TL/RM dashboards) all working.
-          Batch auto-increment, is_active toggling, RBAC (distributor 403 on owner-only
-          endpoints), GST clamp [0,100] — all correct.
+          Settings, Price Circulars (list/detail/create/history), Product Master fields,
+          Old→New price flow, and full regression all working.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ COMPLETE FRONTEND UI QA — 47/47 tests passed (100%).
+          All 9 roles verified: Super Admin, Owner, Owner Accountant, Distributor,
+          Distributor Accountant, Retailer, Salesperson, Team Leader, Regional Manager.
+          Product Master (4 fields only), Price Circular (list/detail/wizard), Settings
+          (GST config), old→new price display, mobile responsiveness, White+Gold theme
+          consistency — all confirmed. No teal colors, no console errors, all sidebars
+          restricted per role, all modals/buttons/dropdowns/filters working.
+          17 screenshots captured.
 
           1) FULL DATA RESET (dms_seed.py — SEED_VERSION="gooil-v2-may26"):
              - Deletes all old business data (products, orders, ledger, coupons, etc.)
