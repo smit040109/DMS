@@ -36,6 +36,8 @@ from tenancy import (
     current_tenant_id, bypass_scope, backfill_tenant_id, ensure_tenant_indexes,
 )
 from platform_router import build_platform_router, bootstrap_platform_data
+from dms_router import build_dms_router
+from dms_seed import seed_dms, DMS_TENANT_ID
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 
@@ -580,6 +582,9 @@ api.include_router(integrations_router)
 # Platform router (VayuERP SaaS control plane — tenants, plans, subscriptions, modules, api keys, branding, analytics)
 platform_router = build_platform_router(db, get_current_user, platform_owner_guard, tenant_admin_guard)
 api.include_router(platform_router)
+# Simple DMS router (fresh — /api/dms/*)
+dms_router = build_dms_router(db, get_current_user)
+api.include_router(dms_router)
 
 
 # ---------- Startup ----------
@@ -732,6 +737,13 @@ async def on_startup():
     # --- Tenant indexes ---
     idx = await ensure_tenant_indexes(_raw_db, TENANT_EXEMPT_COLLECTIONS)
     logger.info(f"[tenancy] tenant_id indexes ensured on {len(idx)} collections")
+
+    # --- Simple DMS demo seed (idempotent) ---
+    try:
+        await seed_dms(_raw_db)
+        logger.info("[dms] Simple DMS demo seed complete (tenant=%s)", DMS_TENANT_ID)
+    except Exception as e:
+        logger.warning(f"[dms] Seed skipped: {e}")
 
     # --- Business workflow seed (must run inside GO OIL tenant scope) ---
     if SEED_DEMO_DATA:
