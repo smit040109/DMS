@@ -38,6 +38,7 @@ const NAV_BY_ROLE = {
     { label: "My Stock",          to: "/dms/distributor/stock",          icon: "Warehouse" },
     { label: "My Retailers",      to: "/dms/distributor/retailers",      icon: "Store" },
     { label: "Retailer Orders",   to: "/dms/distributor/retail-orders",  icon: "ShoppingCart" },
+    { label: "Scan Coupon",       to: "/dms/distributor/scan",           icon: "ScanLine" },
     { label: "Secondary Ledger",  to: "/dms/distributor/sec-ledger",     icon: "ScrollText" },
     { label: "Primary Ledger",    to: "/dms/distributor/ledger",         icon: "ScrollText" },
   ],

@@ -177,6 +177,10 @@ export const dms = {
   getPriceCircular: (cid) => api.get(`/dms/price-circulars/${cid}`).then(r => r.data),
   createPriceCircular: (body) => api.post("/dms/price-circulars", body).then(r => r.data),
   productCircularHistory: (pid) => api.get(`/dms/products/${pid}/circular-history`).then(r => r.data),
+
+  // coupons — retailer + distributor scan
+  scanCouponRetailer: (code) => api.post("/dms/retailer/coupons/scan", { coupon_code: code }).then(r => r.data),
+  scanCouponDistributor: (code) => api.post("/dms/distributor/coupons/scan", { coupon_code: code }).then(r => r.data),
 };
 
 export function inr(n) {

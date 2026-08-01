@@ -397,6 +397,7 @@ def build_dms_router(db, get_current_user):
                 "notes": body.get("kyc_notes", ""),
             },
             "credit_limit": _round(body.get("credit_limit", 0)),
+            "documents": body.get("documents", []),
             "active": True,
             "created_at": _now(),
         }
@@ -414,7 +415,7 @@ def build_dms_router(db, get_current_user):
     async def update_distributor(did: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
         upd: Dict[str, Any] = {}
         for k in ["name", "phone", "address", "region", "credit_limit", "active",
-                  "location_link", "gps_lat", "gps_lng"]:
+                  "location_link", "gps_lat", "gps_lng", "documents"]:
             if k in body:
                 upd[k] = body[k]
         if "kyc" in body:
@@ -831,7 +832,7 @@ def build_dms_router(db, get_current_user):
             if e["kind"] == "invoice":
                 s["billed"] += e["amount"]
                 s["outstanding"] += e["amount"]
-            elif e["kind"] == "payment":
+            elif e["kind"] in ("payment", "coupon_credit"):
                 s["paid"] += e["amount"]
                 s["outstanding"] -= e["amount"]
         # enrich with dist names
@@ -883,7 +884,7 @@ def build_dms_router(db, get_current_user):
         async for e in db.dms_primary_ledger.find({}, {"_id": 0, "kind": 1, "amount": 1}):
             if e["kind"] == "invoice":
                 billed += e["amount"]
-            elif e["kind"] == "payment":
+            elif e["kind"] in ("payment", "coupon_credit"):
                 paid += e["amount"]
         # owner inventory value
         inv_value = 0.0
@@ -922,7 +923,7 @@ def build_dms_router(db, get_current_user):
         async for e in db.dms_primary_ledger.find({"distributor_id": did}, {"_id": 0}):
             if e["kind"] == "invoice":
                 billed += e["amount"]
-            elif e["kind"] == "payment":
+            elif e["kind"] in ("payment", "coupon_credit"):
                 paid += e["amount"]
         payable = _round(billed - paid)
         # pending orders
@@ -1515,7 +1516,7 @@ def build_dms_router(db, get_current_user):
             s = summary.setdefault(rid, {"retailer_id": rid, "billed": 0.0, "paid": 0.0, "outstanding": 0.0})
             if e["kind"] == "invoice":
                 s["billed"] += e["amount"]; s["outstanding"] += e["amount"]
-            elif e["kind"] == "payment":
+            elif e["kind"] in ("payment", "coupon_credit"):
                 s["paid"] += e["amount"]; s["outstanding"] -= e["amount"]
         rids = list(summary.keys())
         rnames = {r["id"]: r["name"] async for r in db.dms_retailers.find({"id": {"$in": rids}}, {"_id": 0, "id": 1, "name": 1})}
@@ -1800,13 +1801,13 @@ def build_dms_router(db, get_current_user):
             po_billed = 0.0; po_paid = 0.0
             async for e in db.dms_primary_ledger.find({"distributor_id": did}, {"_id": 0}):
                 if e.get("kind") == "invoice": po_billed += e.get("amount", 0)
-                elif e.get("kind") == "payment": po_paid += e.get("amount", 0)
+                elif e.get("kind") in ("payment", "coupon_credit"): po_paid += e.get("amount", 0)
             outstanding_payable = po_billed - po_paid
             # Outstanding receivable = secondary (dist→retailer) invoices - payments
             so_billed = 0.0; so_paid = 0.0
             async for e in db.dms_retailer_ledger.find({"distributor_id": did}, {"_id": 0}):
                 if e.get("kind") == "invoice": so_billed += e.get("amount", 0)
-                elif e.get("kind") == "payment": so_paid += e.get("amount", 0)
+                elif e.get("kind") in ("payment", "coupon_credit"): so_paid += e.get("amount", 0)
             outstanding_receivable = so_billed - so_paid
             today_s = 0.0; monthly_s = 0.0; pending = 0
             async for so in db.dms_secondary_orders.find({"distributor_id": did}, {"_id": 0}):
@@ -1905,7 +1906,7 @@ def build_dms_router(db, get_current_user):
             billed = 0.0; paid = 0.0
             async for e in db.dms_retailer_ledger.find({"retailer_id": r["id"]}, {"_id": 0}):
                 if e.get("kind") == "invoice": billed += e.get("amount", 0)
-                elif e.get("kind") == "payment": paid += e.get("amount", 0)
+                elif e.get("kind") in ("payment", "coupon_credit"): paid += e.get("amount", 0)
             # last order
             last = await db.dms_secondary_orders.find_one({"retailer_id": r["id"]}, {"_id": 0}, sort=[("created_at", -1)])
             total_purchases = 0.0
@@ -2090,7 +2091,7 @@ def build_dms_router(db, get_current_user):
         billed = 0.0; paid = 0.0
         async for e in db.dms_retailer_ledger.find({"distributor_id": {"$in": dids}}, {"_id": 0}):
             if e.get("kind") == "invoice": billed += e.get("amount", 0)
-            elif e.get("kind") == "payment": paid += e.get("amount", 0)
+            elif e.get("kind") in ("payment", "coupon_credit"): paid += e.get("amount", 0)
         return {
             "kpis": {
                 "team_leaders": len(tlids),
@@ -2155,7 +2156,7 @@ def build_dms_router(db, get_current_user):
             po_billed = 0.0; po_paid = 0.0
             async for e in db.dms_primary_ledger.find({"distributor_id": did}, {"_id": 0}):
                 if e.get("kind") == "invoice": po_billed += e.get("amount", 0)
-                elif e.get("kind") == "payment": po_paid += e.get("amount", 0)
+                elif e.get("kind") in ("payment", "coupon_credit"): po_paid += e.get("amount", 0)
             revenue = 0.0; orders = 0
             async for so in db.dms_secondary_orders.find({"distributor_id": did}, {"_id": 0}):
                 revenue += so.get("total", 0); orders += 1
@@ -2248,7 +2249,7 @@ def build_dms_router(db, get_current_user):
         async for e in db.dms_retailer_ledger.find({"retailer_id": rid}, {"_id": 0}):
             if e["kind"] == "invoice":
                 billed += e["amount"]
-            elif e["kind"] == "payment":
+            elif e["kind"] in ("payment", "coupon_credit"):
                 paid += e["amount"]
         pending = 0
         async for pd in db.dms_retailer_pending.find({"retailer_id": rid}, {"_id": 0}):
@@ -2792,7 +2793,8 @@ def build_dms_router(db, get_current_user):
             await _log_fraud("distributor_mismatch", cp.get("assigned_distributor_id"))
             raise HTTPException(status_code=403, detail="This coupon does not belong to your distributor network.")
 
-        # redeem
+        # redeem — mark coupon redeemed
+        coupon_value = _round(cp.get("points_value", 0))
         await db.dms_coupons.update_one(
             {"id": cp["id"]},
             {"$set": {
@@ -2800,14 +2802,83 @@ def build_dms_router(db, get_current_user):
                 "redeemed_by_retailer_id": ret["id"],
                 "redeemed_by_retailer_name": ret.get("name"),
                 "redeemed_at": _now(),
+                "redemption_channel": "retailer",
             }},
         )
+        # Ledger credit — retailer's outstanding to distributor reduces by coupon value
+        if coupon_value > 0 and my_did:
+            await db.dms_retailer_ledger.insert_one({
+                "id": _nid("rle"),
+                "distributor_id": my_did,
+                "retailer_id": ret["id"],
+                "kind": "coupon_credit",
+                "reference_no": f"CPN-{cp['coupon_code']}",
+                "amount": coupon_value,
+                "method": "coupon_redemption",
+                "description": f"Coupon {cp['coupon_code']} redeemed — {cp.get('product_name', '')}",
+                "at": _now(),
+                "recorded_by": user["id"],
+            })
         return {
             "ok": True,
             "coupon_code": cp["coupon_code"],
             "product_name": cp.get("product_name"),
-            "points_value": cp.get("points_value", 0),
-            "message": f"Redeemed successfully. You earned {cp.get('points_value', 0)} points.",
+            "points_value": coupon_value,
+            "credit_amount": coupon_value,
+            "message": f"₹{coupon_value:,.0f} credited to your ledger against your distributor.",
+        }
+
+    # ── Distributor scan coupon — same mechanic, credits Owner ledger ──
+    @router.post("/distributor/coupons/scan")
+    async def distributor_scan_coupon(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        if user.get("role") not in ("distributor", "distributor_accountant"):
+            raise HTTPException(status_code=403, detail="Only distributors can scan coupons")
+        code = (body.get("coupon_code") or "").strip().upper()
+        if not code:
+            raise HTTPException(status_code=400, detail="coupon_code required")
+        my_did = user.get("distributor_id")
+        if not my_did:
+            raise HTTPException(status_code=400, detail="Distributor profile not linked to this user")
+
+        cp = await db.dms_coupons.find_one({"coupon_code": code}, {"_id": 0})
+        if not cp:
+            raise HTTPException(status_code=400, detail="Invalid coupon code")
+        if cp.get("status") == "redeemed":
+            raise HTTPException(status_code=400, detail=f"Coupon already redeemed on {cp.get('redeemed_at','')[:10]}")
+        if not cp.get("assigned_distributor_id"):
+            raise HTTPException(status_code=400, detail="Coupon not dispatched yet")
+        if cp["assigned_distributor_id"] != my_did:
+            raise HTTPException(status_code=403, detail="This coupon does not belong to you.")
+
+        coupon_value = _round(cp.get("points_value", 0))
+        await db.dms_coupons.update_one(
+            {"id": cp["id"]},
+            {"$set": {
+                "status": "redeemed",
+                "redeemed_by_distributor_id": my_did,
+                "redeemed_at": _now(),
+                "redemption_channel": "distributor",
+            }},
+        )
+        # Ledger credit — distributor's outstanding to owner reduces by coupon value
+        if coupon_value > 0:
+            await db.dms_primary_ledger.insert_one({
+                "id": _nid("le"),
+                "distributor_id": my_did,
+                "kind": "coupon_credit",
+                "reference_no": f"CPN-{cp['coupon_code']}",
+                "amount": coupon_value,
+                "method": "coupon_redemption",
+                "description": f"Coupon {cp['coupon_code']} redeemed — {cp.get('product_name', '')}",
+                "at": _now(),
+                "recorded_by": user["id"],
+            })
+        return {
+            "ok": True,
+            "coupon_code": cp["coupon_code"],
+            "product_name": cp.get("product_name"),
+            "credit_amount": coupon_value,
+            "message": f"₹{coupon_value:,.0f} credited to your ledger against Owner.",
         }
 
     @router.get("/retailer/coupons/my-history")

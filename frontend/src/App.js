@@ -28,7 +28,7 @@ import { LiveTrackingPage } from "@/pages/dms/LiveTrackingPage";
 import { TlDashboardPage, TlDistributorsMonitoringPage, TlSalespersonsPage, TlOrdersMonitoringPage, TlRetailersPage, TlAttendancePage } from "@/pages/dms/TeamLeaderPages";
 import { OwnerTlPerformancePage, OwnerDistributorSalesListPage, OwnerDistributorSalesDetailPage } from "@/pages/dms/OwnerInsightsPages";
 import { RmDashboardPage, RmTeamLeadersPage, RmRegionPerformancePage, RmDistributorsPage, RmSalespersonsPage } from "@/pages/dms/RegionalManagerPages";
-import { OwnerCouponsPage, OwnerCouponReportsPage, RetailerScanCouponPage } from "@/pages/dms/CouponPages";
+import { OwnerCouponsPage, OwnerCouponReportsPage, RetailerScanCouponPage, DistributorScanCouponPage } from "@/pages/dms/CouponPages";
 import { PrintEbillPage, PrintRetailerBillPage } from "@/pages/dms/PrintPages";
 import { PriceCircularsPage, PriceCircularDetailPage, NewPriceCircularPage, SettingsPage } from "@/pages/dms/PriceCircularPages";
 
@@ -92,6 +92,7 @@ function AppRoutes() {
       <Route path="/dms/owner/price-circulars/:id" element={<DmsPage Component={PriceCircularDetailPage} />} />
       <Route path="/dms/owner/settings"            element={<DmsPage Component={SettingsPage} />} />
       <Route path="/dms/retailer/scan"             element={<DmsPage Component={RetailerScanCouponPage} />} />
+      <Route path="/dms/distributor/scan"           element={<DmsPage Component={DistributorScanCouponPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
       <Route path="/dms/team-leader/salespersons"  element={<DmsPage Component={TlSalespersonsPage} />} />
       <Route path="/dms/team-leader/orders"        element={<DmsPage Component={TlOrdersMonitoringPage} />} />

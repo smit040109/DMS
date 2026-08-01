@@ -305,12 +305,23 @@ export function OwnerCouponReportsPage() {
 // Retailer — Coupon Scanner
 // ============================================================================
 export function RetailerScanCouponPage() {
+  return <ScanCouponPageBase role="retailer" />;
+}
+
+export function DistributorScanCouponPage() {
+  return <ScanCouponPageBase role="distributor" />;
+}
+
+function ScanCouponPageBase({ role }) {
   const [code, setCode] = useState("");
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState({ data: [], total_points: 0 });
 
-  const loadHist = () => dms.retailerCouponHistory().then(setHistory).catch(() => {});
+  const loadHist = () => {
+    if (role !== "retailer") return;
+    dms.retailerCouponHistory().then(setHistory).catch(() => {});
+  };
   useEffect(() => { loadHist(); }, []);
 
   const scan = async () => {
@@ -318,7 +329,7 @@ export function RetailerScanCouponPage() {
     if (!c) return;
     setBusy(true); setResult(null);
     try {
-      const r = await dms.retailerScanCoupon(c);
+      const r = role === "distributor" ? await dms.scanCouponDistributor(c) : await dms.retailerScanCoupon(c);
       setResult({ ok: true, ...r });
       toast.success(r.message);
       setCode("");
@@ -328,9 +339,13 @@ export function RetailerScanCouponPage() {
     } finally { setBusy(false); }
   };
 
+  const subtitle = role === "distributor"
+    ? "Scan a coupon assigned to you — credit will reflect in your Primary Ledger against Owner"
+    : "Enter or scan a coupon code — credit will reflect in your ledger against your distributor";
+
   return (
     <div>
-      <PageHeader title="Scan Coupon" subtitle="Enter or scan a coupon code to redeem" />
+      <PageHeader title="Scan Coupon" subtitle={subtitle} />
       <div className="grid md:grid-cols-2 gap-4">
         <Card className="p-5">
           <div className="flex items-center gap-2 mb-3 text-slate-900 font-semibold"><ScanLine size={18} /> Redeem</div>
@@ -345,33 +360,43 @@ export function RetailerScanCouponPage() {
                 {result.ok ? <CheckCircle2 size={22} className="text-emerald-600 mt-0.5" /> : <XCircle size={22} className="text-rose-600 mt-0.5" />}
                 <div>
                   <div className={`font-semibold ${result.ok ? "text-emerald-900" : "text-rose-900"}`}>{result.ok ? "Redeemed" : "Rejected"}</div>
-                  {result.ok && result.coupon_code && <div className="text-sm mt-1"><span className="font-mono font-semibold">{result.coupon_code}</span> · {result.product_name} · <b>+{result.points_value} pts</b></div>}
+                  {result.ok && result.coupon_code && (
+                    <div className="text-sm mt-1">
+                      <span className="font-mono font-semibold">{result.coupon_code}</span> · {result.product_name} ·{" "}
+                      <b className="text-emerald-700">+₹{(result.credit_amount ?? result.points_value ?? 0).toLocaleString()} ledger credit</b>
+                    </div>
+                  )}
                   {result.message && <div className="text-sm text-slate-700 mt-1">{result.message}</div>}
                 </div>
               </div>
             </div>
           )}
+          <div className="mt-4 text-xs text-slate-500 bg-slate-50 rounded p-3">
+            💡 The coupon amount is added as a <b className="text-emerald-700">credit</b> to your ledger — it directly reduces your outstanding {role === "distributor" ? "with the Company" : "with your distributor"}.
+          </div>
         </Card>
 
-        <Card className="p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2 text-slate-900 font-semibold"><Award size={18} /> My Points</div>
-            <div className="text-2xl font-bold text-[#8a6600]">{history.total_points.toLocaleString()}</div>
-          </div>
-          <div className="text-xs text-slate-500 mb-3">Last {history.data.length} redemptions</div>
-          <div className="max-h-72 overflow-y-auto space-y-1">
-            {history.data.length === 0 && <div className="text-center py-6 text-sm text-slate-400">No redemptions yet</div>}
-            {history.data.map(c => (
-              <div key={c.id} className="flex items-center justify-between text-sm py-1.5 border-b border-slate-50">
-                <div>
-                  <div className="font-mono font-semibold text-slate-900">{c.coupon_code}</div>
-                  <div className="text-[11px] text-slate-500">{c.product_name} · {niceDate(c.redeemed_at)}</div>
+        {role === "retailer" && (
+          <Card className="p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2 text-slate-900 font-semibold"><Award size={18} /> My Redemptions</div>
+              <div className="text-2xl font-bold text-[#8a6600]">₹{history.total_points.toLocaleString()}</div>
+            </div>
+            <div className="text-xs text-slate-500 mb-3">Last {history.data.length} redemptions</div>
+            <div className="max-h-72 overflow-y-auto space-y-1">
+              {history.data.length === 0 && <div className="text-center py-6 text-sm text-slate-400">No redemptions yet</div>}
+              {history.data.map(c => (
+                <div key={c.id} className="flex items-center justify-between text-sm py-1.5 border-b border-slate-50">
+                  <div>
+                    <div className="font-mono font-semibold text-slate-900">{c.coupon_code}</div>
+                    <div className="text-[11px] text-slate-500">{c.product_name} · {niceDate(c.redeemed_at)}</div>
+                  </div>
+                  <div className="text-emerald-700 font-semibold">+₹{(c.points_value || 0).toLocaleString()}</div>
                 </div>
-                <div className="text-[#a67c00] font-semibold">+{c.points_value}</div>
-              </div>
-            ))}
-          </div>
-        </Card>
+              ))}
+            </div>
+          </Card>
+        )}
       </div>
     </div>
   );

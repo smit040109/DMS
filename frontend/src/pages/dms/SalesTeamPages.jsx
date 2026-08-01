@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { dms, inr, niceDate } from "./api";
 import { PageHeader } from "./OwnerPages";
+import LocationDocumentsBlock from "./LocationDocumentsBlock";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -133,23 +134,19 @@ export function SpRetailersPage() {
 }
 
 export function SpNewRetailerPage() {
-  const [form, setForm] = useState({ name: "", phone: "", address: "", region: "", email: "", password: "Demo@2026", gstin: "", shop_license: "", distributor_id: "" });
+  const [form, setForm] = useState({ name: "", phone: "", address: "", region: "", email: "", password: "Demo@2026", gstin: "", shop_license: "", distributor_id: "", gps_lat: "", gps_lng: "", location_link: "", documents: [] });
   const [dists, setDists] = useState([]);
-  const [gps, setGps] = useState(null);
   const [busy, setBusy] = useState(false);
   const nav = useNavigate();
   useEffect(() => { dms.listDistributors().then(d => { setDists(d.data); if (d.data[0]) setForm(f => ({ ...f, distributor_id: d.data[0].id })); }); }, []);
-  const captureGps = () => {
-    navigator.geolocation.getCurrentPosition(
-      pos => { setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }); toast.success("Location captured"); },
-      err => toast.error("GPS unavailable — will save without"),
-      { timeout: 5000, enableHighAccuracy: true }
-    );
-  };
   const submit = async () => {
     setBusy(true);
     try {
-      const body = { ...form, gps_lat: gps?.lat, gps_lng: gps?.lng };
+      const body = {
+        ...form,
+        gps_lat: form.gps_lat === "" ? null : Number(form.gps_lat),
+        gps_lng: form.gps_lng === "" ? null : Number(form.gps_lng),
+      };
       const r = await dms.createRetailer(body);
       toast.success(`Retailer ${r.name} onboarded`);
       nav(`/dms/salesperson/new-order?retailer_id=${r.id}`);
@@ -158,7 +155,7 @@ export function SpNewRetailerPage() {
   };
   return (
     <div className="max-w-2xl mx-auto">
-      <PageHeader title="Onboard New Retailer" subtitle="Basic info now, documents can be added later" back="/dms/salesperson/retailers" />
+      <PageHeader title="Onboard New Retailer" subtitle="Basic info + location + documents" back="/dms/salesperson/retailers" />
       <Card className="p-6 space-y-4">
         <div><Label>Assign to Distributor *</Label>
           <select value={form.distributor_id} onChange={e => setForm({ ...form, distributor_id: e.target.value })} className="mt-1 w-full h-10 px-3 rounded-lg border border-slate-200">
@@ -172,13 +169,7 @@ export function SpNewRetailerPage() {
         <div><Label>Address *</Label><Textarea rows={2} value={form.address} onChange={e => setForm({ ...form, address: e.target.value })} /></div>
         <div className="grid grid-cols-2 gap-3">
           <div><Label>Region</Label><Input value={form.region} onChange={e => setForm({ ...form, region: e.target.value })} /></div>
-          <div>
-            <Label>GPS Location</Label>
-            <div className="mt-1 flex items-center gap-2">
-              <Button type="button" size="sm" variant="outline" onClick={captureGps} data-testid="capture-gps-btn"><Navigation size={14} className="mr-1" /> Capture</Button>
-              {gps && <span className="text-xs text-emerald-700">{gps.lat.toFixed(4)}, {gps.lng.toFixed(4)}</span>}
-            </div>
-          </div>
+          <div><Label>Credit Limit (₹)</Label><Input type="number" value={form.credit_limit || ""} onChange={e => setForm({ ...form, credit_limit: Number(e.target.value) })} /></div>
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div><Label>Login Email (optional)</Label><Input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
@@ -188,6 +179,17 @@ export function SpNewRetailerPage() {
           <div><Label>GSTIN (optional)</Label><Input value={form.gstin} onChange={e => setForm({ ...form, gstin: e.target.value })} /></div>
           <div><Label>Shop License (optional)</Label><Input value={form.shop_license} onChange={e => setForm({ ...form, shop_license: e.target.value })} /></div>
         </div>
+        <LocationDocumentsBlock
+          lat={form.gps_lat}
+          lng={form.gps_lng}
+          locationLink={form.location_link}
+          onLat={(v) => setForm(f => ({ ...f, gps_lat: v }))}
+          onLng={(v) => setForm(f => ({ ...f, gps_lng: v }))}
+          onLocationLink={(v) => setForm(f => ({ ...f, location_link: v }))}
+          documents={form.documents}
+          onDocuments={(docs) => setForm(f => ({ ...f, documents: docs }))}
+          helpText="Tap Use my current location for the shop's exact GPS pin."
+        />
         <Button onClick={submit} disabled={busy || !form.name || !form.phone || !form.address} className="w-full bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="sp-save-retailer">Onboard & Place First Order</Button>
       </Card>
     </div>

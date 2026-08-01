@@ -13,6 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
 import { Plus, ChevronRight, Store, Truck, Receipt, IndianRupee, MapPin, Printer } from "lucide-react";
+import LocationDocumentsBlock from "./LocationDocumentsBlock";
 
 // Distributor: retailers list
 export function DistRetailersPage() {
@@ -56,18 +57,18 @@ export function DistRetailersPage() {
             <div><Label>Password</Label><Input value={form.password || ""} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
             <div><Label>GSTIN</Label><Input value={form.gstin || ""} onChange={e => setForm({ ...form, gstin: e.target.value })} /></div>
             <div><Label>Shop License</Label><Input value={form.shop_license || ""} onChange={e => setForm({ ...form, shop_license: e.target.value })} /></div>
-            <div className="col-span-2 pt-2 border-t border-slate-100">
-              <Label className="flex items-center gap-1 mb-1"><MapPin size={12} /> Shop Location (for Live Map)</Label>
-              <Input placeholder="Paste Google Maps link (https://maps.google.com/?q=lat,lng)" value={form.location_link || ""}
-                onChange={e => {
-                  const v = e.target.value;
-                  const m = v.match(/@?(-?\d+\.\d+),\s*(-?\d+\.\d+)/);
-                  setForm({ ...form, location_link: v, gps_lat: m ? Number(m[1]) : form.gps_lat, gps_lng: m ? Number(m[2]) : form.gps_lng });
-                }} data-testid="ret-map-link" />
-              <div className="grid grid-cols-2 gap-2 mt-2">
-                <Input type="number" step="0.000001" placeholder="Latitude" value={form.gps_lat ?? ""} onChange={e => setForm({ ...form, gps_lat: e.target.value === "" ? null : Number(e.target.value) })} />
-                <Input type="number" step="0.000001" placeholder="Longitude" value={form.gps_lng ?? ""} onChange={e => setForm({ ...form, gps_lng: e.target.value === "" ? null : Number(e.target.value) })} />
-              </div>
+            <div className="col-span-2">
+              <LocationDocumentsBlock
+                lat={form.gps_lat ?? ""}
+                lng={form.gps_lng ?? ""}
+                locationLink={form.location_link || ""}
+                onLat={(v) => setForm(f => ({ ...f, gps_lat: v === "" ? null : Number(v) }))}
+                onLng={(v) => setForm(f => ({ ...f, gps_lng: v === "" ? null : Number(v) }))}
+                onLocationLink={(v) => setForm(f => ({ ...f, location_link: v }))}
+                documents={form.documents || []}
+                onDocuments={(docs) => setForm(f => ({ ...f, documents: docs }))}
+                helpText="After the retailer logs in, they can update their exact Latitude / Longitude if needed."
+              />
             </div>
           </div>
           <DialogFooter><Button onClick={save} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-retailer-btn">Create</Button></DialogFooter>
