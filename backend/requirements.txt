@@ -32,3 +32,4 @@ reportlab==5.0.0
 limits
 openpyxl
 deprecated
+wrapt>=1.16.0
