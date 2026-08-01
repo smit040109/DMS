@@ -7,7 +7,6 @@ import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, Loader2, Droplet, Users, ShoppingCart, TrendingUp } from "lucide-react";
 
 const DEMO = [
-  { role: "super_admin",             email: "superadmin@gooil.com",     label: "Super Admin",             tag: "Admin"       },
   { role: "owner",                   email: "owner@gooil.com",          label: "Company Owner",           tag: "Owner"       },
   { role: "owner_accountant",        email: "accountant@gooil.com",     label: "Owner Accountant",        tag: "Accounts"    },
   { role: "distributor",             email: "distributor1@gooil.com",   label: "Distributor — Delhi",     tag: "Distributor" },

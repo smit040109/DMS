@@ -2266,9 +2266,9 @@ def build_dms_router(db, get_current_user):
 
     @router.get("/dashboard/super-admin")
     async def superadmin_dashboard(user: dict = Depends(_guard())):
-        # super_admin implicit — allow only super_admin
-        if user["role"] != "super_admin":
-            raise HTTPException(status_code=403, detail="Super admin only")
+        # Owner + super_admin both allowed (roles unified per user request)
+        if user["role"] not in ("super_admin", "owner"):
+            raise HTTPException(status_code=403, detail="Owner only")
         n_owners = await db.users.count_documents({"role": "owner"})
         n_tl = await db.users.count_documents({"role": "team_leader"})
         n_sp = await db.users.count_documents({"role": "salesperson"})
@@ -3009,15 +3009,15 @@ def build_dms_router(db, get_current_user):
     # =========================================================================
     @router.get("/admin/users")
     async def admin_list_users(user: dict = Depends(get_current_user)):
-        if user["role"] != "super_admin":
-            raise HTTPException(status_code=403, detail="Super admin only")
+        if user["role"] not in ("super_admin", "owner"):
+            raise HTTPException(status_code=403, detail="Owner only")
         docs = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
         return {"data": docs}
 
     @router.post("/admin/impersonate/{uid}")
     async def impersonate(uid: str, user: dict = Depends(get_current_user)):
-        if user["role"] != "super_admin":
-            raise HTTPException(status_code=403, detail="Super admin only")
+        if user["role"] not in ("super_admin", "owner"):
+            raise HTTPException(status_code=403, detail="Owner only")
         target = await db.users.find_one({"id": uid}, {"_id": 0, "password_hash": 0})
         if not target:
             raise HTTPException(status_code=404, detail="User not found")

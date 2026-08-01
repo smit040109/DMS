@@ -12,8 +12,6 @@ const NAV_BY_ROLE = {
   owner: [
     { label: "Dashboard",       to: "/dms",                       icon: "LayoutDashboard" },
     { label: "Product Master",  to: "/dms/owner/products",        icon: "Package" },
-    { label: "Price Circular",  to: "/dms/owner/price-circulars", icon: "FileText" },
-    { label: "Categories",      to: "/dms/owner/categories",      icon: "Boxes" },
     { label: "Distributors",    to: "/dms/owner/distributors",    icon: "Handshake" },
     { label: "Primary Orders",  to: "/dms/owner/primary-orders",  icon: "ShoppingCart" },
     { label: "Owner Inventory", to: "/dms/owner/inventory",       icon: "Warehouse" },

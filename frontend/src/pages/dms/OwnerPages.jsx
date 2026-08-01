@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Plus, Edit, ArrowLeft, Package, TrendingUp, ShoppingCart, Warehouse, ScrollText, Users, ChevronRight, Truck, CheckCircle2, ClipboardList, Trash2, IndianRupee, Percent, Handshake, IdCard, Paperclip } from "lucide-react";
+import { Plus, Edit, ArrowLeft, Package, TrendingUp, ShoppingCart, Warehouse, ScrollText, Users, ChevronRight, Truck, CheckCircle2, ClipboardList, Trash2, IndianRupee, Percent, Handshake, IdCard, Paperclip, Boxes, History } from "lucide-react";
 
 // ============================================================================
 // Shared: PageHeader
@@ -198,26 +198,64 @@ export function CategoriesPage() {
 // ============================================================================
 // Owner — Products
 // ============================================================================
+// ============================================================================
+// Owner — UNIFIED Product Master (products + categories + current pricing in ONE page)
+// ============================================================================
 export function ProductsPage() {
   const nav = useNavigate();
   const [list, setList] = useState([]);
   const [cats, setCats] = useState([]);
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null);
+  const [activeLines, setActiveLines] = useState({});     // product_id -> latest active circular line
+  const [circulars, setCirculars] = useState([]);         // batch history
+  const [loading, setLoading] = useState(true);
+
+  const [prodOpen, setProdOpen] = useState(false);
+  const [editingProd, setEditingProd] = useState(null);
   const [form, setForm] = useState({ material_description: "", grade_specs: "", pack_size: "", category_id: "", sku_code: "" });
+
+  const [catsOpen, setCatsOpen] = useState(false);        // manage-categories modal
+  const [histOpen, setHistOpen] = useState(false);        // price history / batch modal
+
   const [q, setQ] = useState("");
   const [catFilter, setCatFilter] = useState("all");
 
-  const load = () => Promise.all([dms.listProducts(), dms.listCategories()]).then(([p, c]) => { setList(p.data); setCats(c.data); });
+  const load = async () => {
+    setLoading(true);
+    try {
+      const [pRes, cRes, ccRes] = await Promise.all([
+        dms.listProducts(),
+        dms.listCategories(),
+        dms.listPriceCirculars(),
+      ]);
+      setList(pRes.data || []);
+      setCats(cRes.data || []);
+      const cs = ccRes.data || [];
+      setCirculars(cs);
+      // Fetch the LATEST active line for each product by pulling the current top circular's details
+      // Build a merged map: for each product, find the newest active line across all circulars
+      const map = {};
+      // Fetch details of the top 5 circulars (batches are usually recent-heavy)
+      const details = await Promise.all(cs.slice(0, 5).map(c => dms.getPriceCircular(c.id)));
+      details.forEach(det => {
+        (det.lines || []).forEach(l => {
+          if (!l.is_active) return;
+          const prev = map[l.product_id];
+          if (!prev || (l.batch_no || 0) > (prev.batch_no || 0)) map[l.product_id] = l;
+        });
+      });
+      setActiveLines(map);
+    } finally { setLoading(false); }
+  };
   useEffect(() => { load(); }, []);
 
-  const openNew = () => {
-    setEditing(null);
-    setForm({ material_description: "", grade_specs: "-", pack_size: "", category_id: cats[0]?.id || "", sku_code: "" });
-    setOpen(true);
+  const openNewProduct = () => {
+    if (cats.length === 0) { toast.error("Create a category first"); return; }
+    setEditingProd(null);
+    setForm({ material_description: "", grade_specs: "-", pack_size: "", category_id: cats[0].id, sku_code: "" });
+    setProdOpen(true);
   };
-  const openEdit = (p) => {
-    setEditing(p);
+  const openEditProduct = (p) => {
+    setEditingProd(p);
     setForm({
       material_description: p.material_description || p.name || "",
       grade_specs: p.grade_specs || "-",
@@ -225,11 +263,10 @@ export function ProductsPage() {
       category_id: p.category_id,
       sku_code: p.sku_code,
     });
-    setOpen(true);
+    setProdOpen(true);
   };
-  const save = async () => {
+  const saveProduct = async () => {
     try {
-      // Product Master fields — no pricing here
       const body = {
         name: `${form.material_description} (${form.pack_size})`,
         material_description: form.material_description,
@@ -237,12 +274,12 @@ export function ProductsPage() {
         pack_size: form.pack_size,
         category_id: form.category_id,
         sku_code: form.sku_code,
-        box_qty: editing?.box_qty ?? 1,
-        unit_price: editing?.unit_price ?? 0,
+        box_qty: editingProd?.box_qty ?? 1,
+        unit_price: editingProd?.unit_price ?? 0,
       };
-      if (editing) { await dms.updateProduct(editing.id, body); toast.success("Product updated"); }
-      else { await dms.createProduct(body); toast.success("Product created — set pricing via Price Circular"); }
-      setOpen(false); load();
+      if (editingProd) { await dms.updateProduct(editingProd.id, body); toast.success("Product updated"); }
+      else { await dms.createProduct(body); toast.success("Product created — set pricing via Update Prices"); }
+      setProdOpen(false); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
 
@@ -263,72 +300,124 @@ export function ProductsPage() {
     if (!grouped[k]) grouped[k] = [];
     grouped[k].push(p);
   });
+  const catOrder = Object.keys(grouped).sort();
+
+  const activeCircular = circulars.find(c => c.is_active) || circulars[0];
 
   return (
     <div>
       <PageHeader
         title="Product Master"
-        subtitle={`${list.length} products · Only product info — pricing lives in Price Circular`}
+        subtitle={`${list.length} products · ${cats.length} categories · ${activeCircular ? `Current pricing from ${activeCircular.batch_label}` : "No pricing set"}`}
         action={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => nav("/dms/owner/price-circulars")} className="border-[#c9a227] text-[#8a6600] hover:bg-[#faf6e6]">View Price Circulars</Button>
+          <div className="flex gap-2 flex-wrap">
+            <Button variant="outline" onClick={() => setCatsOpen(true)} className="border-slate-300" data-testid="manage-categories-btn">
+              <Boxes size={15} className="mr-1.5" /> Manage Categories
+            </Button>
+            <Button variant="outline" onClick={() => setHistOpen(true)} className="border-slate-300" data-testid="price-history-btn">
+              <History size={15} className="mr-1.5" /> Price History
+            </Button>
             <ExcelButtons onImported={load} />
-            <Button onClick={openNew} disabled={cats.length === 0} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white shadow-sm" data-testid="add-product-btn"><Plus size={16} className="mr-1" /> New Product</Button>
+            <Button onClick={openNewProduct} disabled={cats.length === 0} variant="outline" className="border-[#c9a227] text-[#8a6600] hover:bg-[#faf6e6]" data-testid="add-product-btn">
+              <Plus size={15} className="mr-1.5" /> New Product
+            </Button>
+            <Button onClick={() => nav("/dms/owner/price-circulars/new")} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white shadow-sm" data-testid="update-prices-btn">
+              <IndianRupee size={15} className="mr-1.5" /> Update Prices
+            </Button>
           </div>
         }
       />
+
       {cats.length === 0 && (
-        <Card className="p-4 mb-4 bg-[#faf6e6] border-[#c9a227]/40 text-[#8a6600] text-sm">Create a category first, then add products.</Card>
+        <Card className="p-4 mb-4 bg-[#faf6e6] border-[#c9a227]/40 text-[#8a6600] text-sm flex items-center justify-between">
+          <span>No categories yet. Click <b>Manage Categories</b> to add your first category, then add products.</span>
+          <Button size="sm" onClick={() => setCatsOpen(true)} className="bg-[#c9a227] hover:bg-[#a67c00] text-white">Manage Categories</Button>
+        </Card>
       )}
+
       <div className="flex flex-wrap gap-2 mb-4">
-        <div className="flex-1 min-w-[200px]"><Input placeholder="Search Material / Grade / Pack…" value={q} onChange={e => setQ(e.target.value)} data-testid="prod-search-input" /></div>
-        <div className="w-56">
+        <div className="flex-1 min-w-[220px]"><Input placeholder="Search Material / Grade / Pack…" value={q} onChange={e => setQ(e.target.value)} data-testid="prod-search-input" /></div>
+        <div className="w-64">
           <Select value={catFilter} onValueChange={setCatFilter}>
             <SelectTrigger data-testid="prod-cat-filter"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Categories</SelectItem>
+              <SelectItem value="all">All Categories ({cats.length})</SelectItem>
               {cats.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
       </div>
 
-      {Object.keys(grouped).length === 0 && <div className="p-8 text-center text-sm text-slate-500">No products match your filter</div>}
+      {loading && <div className="p-8 text-center text-sm text-slate-500">Loading…</div>}
 
-      {Object.entries(grouped).map(([catName, rows]) => (
-        <Card key={catName} className="mb-4 overflow-hidden border-[#c9a227]/15 shadow-sm">
-          <div className="px-4 py-2.5 bg-gradient-to-r from-[#faf6e6] to-white border-b border-[#c9a227]/20 flex items-center justify-between">
-            <div className="font-display font-bold text-[#8a6600] text-sm uppercase tracking-wide">{catName}</div>
-            <div className="text-xs text-slate-500">{rows.length} SKU{rows.length !== 1 ? "s" : ""}</div>
-          </div>
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-slate-50/50">
-                <TableHead className="w-[45%]">Material Description</TableHead>
-                <TableHead>Grade / Specs</TableHead>
-                <TableHead>Pack Size</TableHead>
-                <TableHead className="w-24 text-right"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {rows.map(p => (
-                <TableRow key={p.id} className="hover:bg-[#faf6e6]/40">
-                  <TableCell className="font-medium text-slate-900">{p.material_description || p.name}</TableCell>
-                  <TableCell><span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono">{p.grade_specs || "-"}</span></TableCell>
-                  <TableCell className="text-slate-700 font-medium">{p.pack_size || "-"}</TableCell>
-                  <TableCell className="text-right">
-                    <button onClick={() => openEdit(p)} className="p-1.5 hover:bg-[#faf6e6] rounded" data-testid={`edit-prod-${p.id}`}><Edit size={14} className="text-[#a67c00]" /></button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Card>
-      ))}
+      {!loading && catOrder.length === 0 && list.length > 0 && (
+        <div className="p-8 text-center text-sm text-slate-500">No products match your filter</div>
+      )}
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      {!loading && catOrder.map((catName) => {
+        const rows = grouped[catName];
+        return (
+          <Card key={catName} className="mb-4 overflow-hidden border-[#c9a227]/15 shadow-sm">
+            <div className="px-4 py-2.5 bg-gradient-to-r from-[#faf6e6] to-white border-b border-[#c9a227]/20 flex items-center justify-between">
+              <div className="font-display font-bold text-[#8a6600] text-sm uppercase tracking-wide">{catName}</div>
+              <div className="text-xs text-slate-500">{rows.length} SKU{rows.length !== 1 ? "s" : ""}</div>
+            </div>
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-slate-50/60">
+                    <TableHead className="min-w-[220px]">Material Description</TableHead>
+                    <TableHead>Grade / Specs</TableHead>
+                    <TableHead>Pack Size</TableHead>
+                    <TableHead className="text-right">MRP</TableHead>
+                    <TableHead className="text-right">DLP (current)</TableHead>
+                    <TableHead>Margin %</TableHead>
+                    <TableHead>Cash Coupon</TableHead>
+                    <TableHead>FOC</TableHead>
+                    <TableHead>Monthly Gift</TableHead>
+                    <TableHead>Trade Disc.</TableHead>
+                    <TableHead className="w-12 text-right"></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map(p => {
+                    const line = activeLines[p.id];
+                    const dlp = line?.dlp ?? p.unit_price;
+                    const prev = p.previous_price;
+                    return (
+                      <TableRow key={p.id} className="hover:bg-[#faf6e6]/40">
+                        <TableCell className="font-medium text-slate-900">{p.material_description || p.name}</TableCell>
+                        <TableCell><span className="text-xs bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-mono">{p.grade_specs || "-"}</span></TableCell>
+                        <TableCell className="text-slate-700 font-medium">{p.pack_size || "-"}</TableCell>
+                        <TableCell className="text-right text-slate-700">{line?.mrp ? inr(line.mrp) : "—"}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="font-bold text-[#8a6600]">{dlp ? inr(dlp) : "—"}</div>
+                          {prev && prev !== dlp && (
+                            <div className="text-[10px] text-slate-400 line-through">{inr(prev)}</div>
+                          )}
+                        </TableCell>
+                        <TableCell>{line?.distributor_margin_pct ? <span className="text-xs bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded font-semibold">{line.distributor_margin_pct}%</span> : "—"}</TableCell>
+                        <TableCell className="text-xs text-slate-600 max-w-[110px] truncate" title={line?.cash_coupon}>{line?.cash_coupon || "—"}</TableCell>
+                        <TableCell className="text-xs text-slate-600">{line?.foc_benefits || "—"}</TableCell>
+                        <TableCell className="text-xs text-slate-600">{line?.monthly_gift || "—"}</TableCell>
+                        <TableCell className="text-xs">{line?.trade_discount ? <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded font-semibold">{line.trade_discount}</span> : "—"}</TableCell>
+                        <TableCell className="text-right">
+                          <button onClick={() => openEditProduct(p)} className="p-1.5 hover:bg-[#faf6e6] rounded" data-testid={`edit-prod-${p.id}`} title="Edit product info"><Edit size={14} className="text-[#a67c00]" /></button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          </Card>
+        );
+      })}
+
+      {/* ── Product create/edit modal ── */}
+      <Dialog open={prodOpen} onOpenChange={setProdOpen}>
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>{editing ? "Edit Product" : "New Product"}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editingProd ? "Edit Product" : "New Product"}</DialogTitle></DialogHeader>
           <div className="grid grid-cols-2 gap-3">
             <div className="col-span-2"><Label>Material Description *</Label><Input value={form.material_description} onChange={e => setForm({ ...form, material_description: e.target.value })} data-testid="prod-name-input" placeholder="e.g. POWER 4T 20W40" /></div>
             <div><Label>Grade / Specs</Label><Input value={form.grade_specs} onChange={e => setForm({ ...form, grade_specs: e.target.value })} placeholder="e.g. SN, GL5" /></div>
@@ -339,15 +428,106 @@ export function ProductsPage() {
                 <SelectContent>{cats.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <div><Label>SKU Code *</Label><Input value={form.sku_code} onChange={e => setForm({ ...form, sku_code: e.target.value })} disabled={!!editing} data-testid="prod-sku-input" /></div>
+            <div><Label>SKU Code *</Label><Input value={form.sku_code} onChange={e => setForm({ ...form, sku_code: e.target.value })} disabled={!!editingProd} data-testid="prod-sku-input" /></div>
             <div className="col-span-2 text-xs bg-[#faf6e6] border border-[#c9a227]/30 text-[#8a6600] rounded-lg p-3 mt-2">
-              💡 Pricing (MRP, DLP, margin, coupons, discounts) is managed separately in the <b>Price Circular</b> module.
+              💡 To set MRP / DLP / margin / coupons for this product, click <b>Update Prices</b> on the main page — it publishes a new pricing batch and preserves history.
             </div>
           </div>
-          <DialogFooter><Button onClick={save} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-prod-btn">{editing ? "Update" : "Create"}</Button></DialogFooter>
+          <DialogFooter><Button onClick={saveProduct} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-prod-btn">{editingProd ? "Update" : "Create"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ── Manage categories modal ── */}
+      <ManageCategoriesModal open={catsOpen} onOpenChange={setCatsOpen} onChanged={load} />
+
+      {/* ── Price history / batches modal ── */}
+      <PriceHistoryModal open={histOpen} onOpenChange={setHistOpen} circulars={circulars} />
     </div>
+  );
+}
+
+// ── Inline: Categories management modal ──
+function ManageCategoriesModal({ open, onOpenChange, onChanged }) {
+  const [list, setList] = useState([]);
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [editing, setEditing] = useState(null);
+
+  const load = () => dms.listCategories().then(d => setList(d.data || []));
+  useEffect(() => { if (open) load(); }, [open]);
+
+  const submit = async () => {
+    if (!name.trim()) { toast.error("Name required"); return; }
+    try {
+      if (editing) { await dms.updateCategory(editing.id, { name, description: desc }); toast.success("Updated"); }
+      else { await dms.createCategory({ name, description: desc }); toast.success("Created"); }
+      setName(""); setDesc(""); setEditing(null); load(); onChanged?.();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+  const del = async (c) => {
+    if (!window.confirm(`Delete "${c.name}"? Products in this category will be unassigned.`)) return;
+    try { await dms.deleteCategory(c.id); toast.success("Deleted"); load(); onChanged?.(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader><DialogTitle>Manage Categories</DialogTitle></DialogHeader>
+        <div className="grid grid-cols-3 gap-2 mb-3 items-end">
+          <div className="col-span-1"><Label>Category Name</Label><Input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. MCO — Synthetic Blend" data-testid="cat-name-input" /></div>
+          <div className="col-span-1"><Label>Description</Label><Input value={desc} onChange={e => setDesc(e.target.value)} placeholder="optional" /></div>
+          <div><Button onClick={submit} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white w-full" data-testid="save-cat-btn">{editing ? "Update" : "Add"}</Button></div>
+        </div>
+        {editing && <div className="text-xs text-slate-500 mb-2">Editing "{editing.name}" — <button className="text-[#a67c00] underline" onClick={() => { setEditing(null); setName(""); setDesc(""); }}>cancel</button></div>}
+        <Card className="max-h-[420px] overflow-y-auto">
+          <Table>
+            <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Description</TableHead><TableHead className="w-24 text-right"></TableHead></TableRow></TableHeader>
+            <TableBody>
+              {list.map(c => (
+                <TableRow key={c.id} className="hover:bg-slate-50">
+                  <TableCell className="font-medium">{c.name}</TableCell>
+                  <TableCell className="text-slate-600 text-sm">{c.description || "—"}</TableCell>
+                  <TableCell className="text-right">
+                    <button onClick={() => { setEditing(c); setName(c.name); setDesc(c.description || ""); }} className="p-1.5 hover:bg-[#faf6e6] rounded" data-testid={`edit-cat-${c.id}`}><Edit size={14} className="text-[#a67c00]" /></button>
+                    <button onClick={() => del(c)} className="p-1.5 hover:bg-rose-50 text-rose-600 rounded ml-1"><Trash2 size={14} /></button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          {list.length === 0 && <div className="p-6 text-center text-sm text-slate-500">No categories yet</div>}
+        </Card>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Inline: Price history modal (batch list) ──
+function PriceHistoryModal({ open, onOpenChange, circulars }) {
+  const nav = useNavigate();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl">
+        <DialogHeader><DialogTitle>Price History — All Batches</DialogTitle></DialogHeader>
+        <div className="space-y-2 max-h-[500px] overflow-y-auto">
+          {circulars.length === 0 && <div className="p-6 text-center text-sm text-slate-500">No price batches yet. Click <b>Update Prices</b> to publish the first one.</div>}
+          {circulars.map(c => (
+            <button key={c.id} onClick={() => { onOpenChange(false); nav(`/dms/owner/price-circulars/${c.id}`); }}
+                    className="w-full text-left p-4 rounded-lg border border-[#c9a227]/15 hover:border-[#c9a227] hover:bg-[#faf6e6]/40 transition flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <div className="font-display font-bold text-slate-900">{c.title}</div>
+                  {c.is_active && <span className="text-[10px] uppercase font-bold bg-[#c9a227] text-white px-2 py-0.5 rounded">Active</span>}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">Effective {c.effective_date} · {c.lines_count || 0} products · {c.batch_label}</div>
+              </div>
+              <ChevronRight size={18} className="text-slate-400" />
+            </button>
+          ))}
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

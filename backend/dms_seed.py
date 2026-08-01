@@ -94,10 +94,13 @@ async def _reset_dms_business_data(raw_db):
 
 
 async def _seed_users(raw_db):
-    """Fresh GO OIL-themed demo accounts."""
+    """Fresh GO OIL-themed demo accounts.
+
+    Note: Super Admin and Company Owner are UNIFIED into a single Owner login
+    (per user request) — the Owner has full god-mode access across the app.
+    """
     users_spec = [
         # email, name, role, phone
-        ("superadmin@gooil.com",     "Aarav Mehta (Super Admin)", "super_admin",           "+91-9000000001"),
         ("owner@gooil.com",          "Rakesh Agarwal (Owner)",    "owner",                 "+91-9000000010"),
         ("accountant@gooil.com",     "Sunita Sharma (Accounts)",  "owner_accountant",      "+91-9000000011"),
         ("distributor1@gooil.com",   "Anil Distributor — Delhi",  "distributor",           "+91-9000000021"),
