@@ -4,7 +4,7 @@ import requests
 import time
 import json
 
-BASE_URL = "https://dms-premium.preview.emergentagent.com/api"
+BASE_URL = "https://github-deploy-79.preview.emergentagent.com/api"
 
 def login():
     resp = requests.post(f"{BASE_URL}/auth/login", 

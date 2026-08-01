@@ -1513,7 +1513,7 @@ agent_communication:
       User-reported login issue "Something went wrong. Please try again." is RESOLVED.
       
       ✅ CORS CONFIGURATION FIX CONFIRMED:
-      - Backend /app/backend/.env: CORS_ORIGINS set to specific origin (https://dms-premium.preview.emergentagent.com)
+      - Backend /app/backend/.env: CORS_ORIGINS set to specific origin (https://github-deploy-79.preview.emergentagent.com)
       - Frontend axios withCredentials: true working correctly
       - Preflight requests returning access-control-allow-credentials: true
       - access_token cookie being set and sent correctly

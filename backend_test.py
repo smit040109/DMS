@@ -10,7 +10,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Backend URL from frontend/.env
-BASE_URL = "https://a60b5825-6973-46c0-8c85-613e7fb2f44a.preview.emergentagent.com/api"
+BASE_URL = "https://github-deploy-79.preview.emergentagent.com/api"
 
 # Test credentials
 CORRECT_PASSWORD = "GoOil@2026"
