@@ -218,16 +218,35 @@ export function PrintDocumentPage() {
   const [d, setD] = useState(null);
   useEffect(() => { dms.printDocument(id).then(setD); }, [id]);
   if (!d) return <div className="p-8 text-center text-slate-500">Loading…</div>;
+
+  const DOC_STYLES = {
+    estimate:         { color: "#3b82f6", bg: "bg-blue-50",    border: "border-blue-500",    text: "text-blue-700",    tag: "PROPOSAL" },
+    delivery_challan: { color: "#059669", bg: "bg-emerald-50", border: "border-emerald-600", text: "text-emerald-700", tag: "DISPATCH" },
+    sale_return:      { color: "#e11d48", bg: "bg-rose-50",    border: "border-rose-600",    text: "text-rose-700",    tag: "RETURN" },
+    credit_note:      { color: "#7c3aed", bg: "bg-violet-50",  border: "border-violet-600",  text: "text-violet-700",  tag: "CR NOTE" },
+    debit_note:       { color: "#ea580c", bg: "bg-orange-50",  border: "border-orange-600",  text: "text-orange-700",  tag: "DR NOTE" },
+  };
+  const s = DOC_STYLES[d.type] || { color: "#a67c00", bg: "bg-amber-50", border: "border-amber-600", text: "text-amber-700", tag: "DOCUMENT" };
+
   return (
     <PrintFrame title={`${d.doc_type_label} ${d.doc_no}`}>
-      <div className="border-b-2 border-[#a67c00] pb-4 mb-6 flex items-start justify-between">
+      <div className={`border-b-2 ${s.border} pb-4 mb-6 flex items-start justify-between`}>
         <div>
-          <div className="text-2xl font-bold text-slate-900 uppercase">{d.doc_type_label}</div>
-          <div className="text-sm text-slate-500">Not a Tax Invoice</div>
+          <div className={`text-2xl font-bold uppercase ${s.text}`}>{d.doc_type_label}</div>
+          <div className="mt-1">
+            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold tracking-widest ${s.bg} ${s.text} border ${s.border}`} data-testid={`doc-tag-${d.type}`}>
+              {s.tag}
+            </span>
+            <span className="ml-2 text-xs text-slate-500">Not a Tax Invoice</span>
+          </div>
         </div>
-        <div className="text-right"><div className="text-lg font-bold text-[#a67c00]">{d.company_name}</div></div>
+        <div className="text-right">
+          <div className={`text-lg font-bold ${s.text}`}>{d.company_name}</div>
+          <div className="text-xs text-slate-500 mt-1">{d.doc_type_label} No: <span className="font-mono">{d.doc_no}</span></div>
+          <div className="text-xs text-slate-500">Date: {d.date}</div>
+        </div>
       </div>
-      <div className="grid grid-cols-2 gap-8 mb-6">
+      <div className={`grid grid-cols-2 gap-8 mb-6 p-3 rounded-lg ${s.bg} border ${s.border}`}>
         <div>
           <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Party</div>
           <div className="font-semibold text-slate-900">{d.party_name}</div>
@@ -241,7 +260,7 @@ export function PrintDocumentPage() {
         </div>
       </div>
       <table className="w-full text-sm border border-slate-200 mb-6">
-        <thead><tr className="bg-slate-50 text-left"><th className="p-2">#</th><th className="p-2">Description</th><th className="p-2 text-right">Qty</th><th className="p-2 text-right">Rate</th><th className="p-2 text-right">Amount</th></tr></thead>
+        <thead><tr className={`${s.bg} text-left`}><th className="p-2">#</th><th className="p-2">Description</th><th className="p-2 text-right">Qty</th><th className="p-2 text-right">Rate</th><th className="p-2 text-right">Amount</th></tr></thead>
         <tbody>{(d.items || []).map((it, i) => (
           <tr key={i} className="border-t border-slate-100">
             <td className="p-2">{i + 1}</td><td className="p-2">{it.description}</td>
@@ -255,11 +274,11 @@ export function PrintDocumentPage() {
         <div className="w-64">
           <Row label="Subtotal" value={inr(d.subtotal)} />
           <Row label={`GST (${d.gst_pct}%)`} value={inr(d.gst_total)} />
-          <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className="text-lg font-bold text-[#a67c00]">{inr(d.total)}</span>} /></div>
+          <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className={`text-lg font-bold ${s.text}`}>{inr(d.total)}</span>} /></div>
         </div>
       </div>
       {d.notes && <div className="mt-6 p-3 rounded-lg bg-slate-50 text-sm text-slate-700"><strong>Notes:</strong> {d.notes}</div>}
-      {d.invoice_message && <div className="mt-4 p-3 rounded-lg bg-[#faf6e6] border border-[#c9a227]/30 text-sm text-slate-700">{d.invoice_message}</div>}
+      {d.invoice_message && <div className={`mt-4 p-3 rounded-lg ${s.bg} border ${s.border} text-sm text-slate-700`}>{d.invoice_message}</div>}
       {d.invoice_terms && <div className="mt-4 border-t border-slate-200 pt-3"><div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 font-semibold">Terms &amp; Conditions</div><div className="text-xs text-slate-600 whitespace-pre-wrap">{d.invoice_terms}</div></div>}
     </PrintFrame>
   );
