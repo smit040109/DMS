@@ -3117,7 +3117,9 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Phase 2C Frontend UI QA — COMPLETED ✅ (8/8 tests passed, 1 minor bug fixed: missing Receipt import in OwnerPages.jsx). Awaiting client go-ahead for Phase 3 (Reports Module)."
+    - "Phase 2C Frontend UI QA — COMPLETED ✅ (8/8 tests passed, 1 minor bug fixed: missing Receipt import in OwnerPages.jsx)."
+    - "Godown Seed Boost — COMPLETED ✅ (SEED_VERSION bumped to gooil-v2c-aug26; 2 godowns + 10 inventory rows seeded; 4 low-stock rows to demo the red 'Low' badge end-to-end)."
+    - "Awaiting the actual Phase 3 Reports Module spec (~40 reports across 5 categories) — user's paste came through as a placeholder."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"

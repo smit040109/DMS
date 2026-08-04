@@ -17,7 +17,7 @@ DMS_TENANT_ID = "tnt-dms-oil"
 DMS_PASSWORD = "GoOil@2026"
 
 # Bump this whenever you want a full data reset on the next server boot.
-SEED_VERSION = "gooil-v2b-aug26"
+SEED_VERSION = "gooil-v2c-aug26"
 
 
 def _hash(pw: str) -> str:
@@ -589,6 +589,79 @@ async def _seed_sample_terms(raw_db):
     )
 
 
+async def _seed_godowns_with_stock(raw_db):
+    """Phase 2C: seed 2 demo godowns with mixed stock so low-stock badge + reorder-level
+    flow can be demoed end-to-end. First 5 products get stock in both godowns; the last
+    2 of those get a reorder_level greater than qty to trigger the red 'Low' badge."""
+    products = await raw_db.dms_products.find(
+        {"tenant_id": DMS_TENANT_ID}, {"_id": 0}
+    ).to_list(2000)
+    if not products:
+        return
+    subset = products[:5]  # first 5 products across both godowns
+
+    godowns_spec = [
+        {
+            "name": "Delhi Main Warehouse",
+            "manager_name": "Ramesh Verma",
+            "manager_phone": "+91-9000010001",
+            "address": "Plot 12, Naraina Industrial Area, Phase 1, New Delhi 110028",
+            "capacity_boxes": 5000,
+            "active": True,
+        },
+        {
+            "name": "Mumbai Regional Warehouse",
+            "manager_name": "Suresh Kadam",
+            "manager_phone": "+91-9000010002",
+            "address": "Warehouse Complex, Bhiwandi-Nashik Highway, Bhiwandi 421302",
+            "capacity_boxes": 3000,
+            "active": True,
+        },
+    ]
+
+    for gspec in godowns_spec:
+        gid = _nid("god")
+        await raw_db.dms_godowns.insert_one({
+            "id": gid,
+            "tenant_id": DMS_TENANT_ID,
+            "name": gspec["name"],
+            "manager_name": gspec["manager_name"],
+            "manager_phone": gspec["manager_phone"],
+            "address": gspec["address"],
+            "capacity_boxes": gspec["capacity_boxes"],
+            "active": gspec["active"],
+            "created_at": _now(),
+        })
+        # Seed inventory rows for the first 5 products
+        # idx 0,1,2 → healthy stock (25 boxes, reorder=10)
+        # idx 3,4  → LOW stock trigger (3 boxes, reorder=15)
+        for idx, p in enumerate(subset):
+            if idx < 3:
+                qty, reorder = 25, 10
+            else:
+                qty, reorder = 3, 15
+            await raw_db.dms_godown_inventory.insert_one({
+                "id": _nid("ginv"),
+                "tenant_id": DMS_TENANT_ID,
+                "godown_id": gid,
+                "product_id": p["id"],
+                "qty_boxes": qty,
+                "reorder_level_boxes": reorder,
+                "updated_at": _now(),
+            })
+            await raw_db.dms_stock_ledger.insert_one({
+                "id": _nid("sl"),
+                "tenant_id": DMS_TENANT_ID,
+                "scope": "godown",
+                "godown_id": gid,
+                "product_id": p["id"],
+                "delta_boxes": qty,
+                "reason": "initial_stock",
+                "reference": "seed",
+                "at": _now(),
+            })
+
+
 async def seed_dms(raw_db):
     """Idempotent seed guarded by SEED_VERSION marker."""
     await ensure_dms_tenant(raw_db)
@@ -609,6 +682,8 @@ async def seed_dms(raw_db):
     await _seed_sample_terms(raw_db)
     # Phase 2B: seed one sample e-bill + one sample retailer bill
     await _seed_sample_bills(raw_db, ids, dist_ids)
+    # Phase 2C: seed 2 godowns with mixed stock (incl. low-stock rows) for demo
+    await _seed_godowns_with_stock(raw_db)
 
     await raw_db.dms_meta.update_one(
         {"id": "seed_marker"},
