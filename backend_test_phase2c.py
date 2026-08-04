@@ -15,7 +15,7 @@ import sys
 from datetime import datetime
 
 # Backend URL
-BASE_URL = "https://8c45e563-2411-451a-a210-d052d43103fd.preview.emergentagent.com/api"
+BASE_URL = "https://phase2c-qa.preview.emergentagent.com/api"
 PASSWORD = "GoOil@2026"
 
 # Test credentials
