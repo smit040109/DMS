@@ -17,7 +17,7 @@ DMS_TENANT_ID = "tnt-dms-oil"
 DMS_PASSWORD = "GoOil@2026"
 
 # Bump this whenever you want a full data reset on the next server boot.
-SEED_VERSION = "gooil-v2c-aug26"
+SEED_VERSION = "gooil-v3-coupons-oct26"
 
 
 def _hash(pw: str) -> str:
@@ -75,7 +75,13 @@ async def _reset_dms_business_data(raw_db):
         "dms_notifications",
         "dms_tl_assignments", "dms_sp_assignments", "dms_rm_assignments",
         "dms_punch", "dms_gps_pings", "dms_visits",
-        "dms_coupons", "dms_coupon_batches", "dms_coupon_fraud",
+        "dms_coupons", "dms_coupon_batches", "dms_coupon_fraud", "dms_coupon_fraud_attempts",
+        # NEW GO OIL Coupon Engine collections — always fresh
+        "dms_v2_coupon_batches", "dms_v2_coupons",
+        "dms_v2_retailer_wallets", "dms_v2_wallet_transactions",
+        "dms_v2_redemption_requests", "dms_v2_credit_notes",
+        "dms_v2_dispatch_advices", "dms_v2_coupon_audit_log",
+        "dms_v2_coupon_fraud_attempts", "dms_v2_meta",
         "dms_settings",
         # Phase 2A + 2B
         "dms_expenses",
@@ -684,6 +690,23 @@ async def seed_dms(raw_db):
     await _seed_sample_bills(raw_db, ids, dist_ids)
     # Phase 2C: seed 2 godowns with mixed stock (incl. low-stock rows) for demo
     await _seed_godowns_with_stock(raw_db)
+
+    # ── GO OIL Coupon Engine — indexes ──
+    try:
+        await raw_db.dms_v2_coupons.create_index("coupon_code", unique=True)
+        await raw_db.dms_v2_coupons.create_index([("batch_id", 1), ("status", 1)])
+        await raw_db.dms_v2_coupons.create_index("retailer_id")
+        await raw_db.dms_v2_coupons.create_index("distributor_id")
+        await raw_db.dms_v2_wallet_transactions.create_index(
+            [("retailer_id", 1), ("wallet_type", 1)]
+        )
+        await raw_db.dms_v2_retailer_wallets.create_index(
+            [("retailer_id", 1), ("wallet_type", 1)], unique=True
+        )
+        await raw_db.dms_v2_coupon_batches.create_index("batch_no", unique=True)
+        await raw_db.dms_v2_coupon_audit_log.create_index([("entity_id", 1), ("at", -1)])
+    except Exception:
+        pass
 
     await raw_db.dms_meta.update_one(
         {"id": "seed_marker"},

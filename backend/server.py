@@ -37,6 +37,7 @@ from tenancy import (
 )
 from platform_router import build_platform_router, bootstrap_platform_data
 from dms_router import build_dms_router
+from dms_coupons import build_coupons_router
 from dms_seed import seed_dms, DMS_TENANT_ID
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
@@ -599,6 +600,23 @@ api.include_router(platform_router)
 # Simple DMS router (fresh — /api/dms/*)
 dms_router = build_dms_router(db, get_current_user)
 api.include_router(dms_router)
+
+# GO OIL — Enterprise Coupon & Reward Engine (/api/dms/coupons/*)
+# Uses notifications helper from dms_router's notify() if available; we pass None for
+# now (endpoint is functional without it) — main app has its own notifications channel.
+async def _coupon_notify(user_id, kind, title, body, url):
+    try:
+        await db.dms_notifications.insert_one({
+            "id": f"ntf-{__import__('uuid').uuid4().hex[:10]}",
+            "user_id": user_id, "kind": kind, "title": title,
+            "body": body, "url": url, "read": False,
+            "at": __import__('datetime').datetime.now(__import__('datetime').timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
+
+coupons_router = build_coupons_router(db, get_current_user, notify=_coupon_notify)
+api.include_router(coupons_router)
 
 
 # ---------- Startup ----------

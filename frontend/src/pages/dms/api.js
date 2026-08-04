@@ -137,15 +137,61 @@ export const dms = {
   ownerTlPerformance: () => api.get("/dms/owner/tl-performance").then(r => r.data),
   ownerDistributorSales: (did) => api.get(`/dms/owner/distributor-sales/${did}`).then(r => r.data),
 
-  // Coupons (Phase 7)
-  ownerGenerateCoupons: (product_id, count) => api.post("/dms/owner/coupons/generate", { product_id, count }).then(r => r.data),
-  ownerListCoupons: (params = {}) => api.get("/dms/owner/coupons", { params }).then(r => r.data),
-  ownerCouponBatches: () => api.get("/dms/owner/coupons/batches").then(r => r.data),
-  ownerCouponSummary: () => api.get("/dms/owner/coupons/reports/summary").then(r => r.data),
-  ownerCouponFraud: () => api.get("/dms/owner/coupons/reports/fraud").then(r => r.data),
-  ownerCouponHistory: () => api.get("/dms/owner/coupons/reports/history").then(r => r.data),
-  retailerScanCoupon: (coupon_code) => api.post("/dms/retailer/coupons/scan", { coupon_code }).then(r => r.data),
-  retailerCouponHistory: () => api.get("/dms/retailer/coupons/my-history").then(r => r.data),
+  // ════════════════════════════════════════════════════════════════════════
+  // GO OIL — Enterprise Coupon & Reward Engine  (/dms/coupons/*)
+  // ════════════════════════════════════════════════════════════════════════
+  // Batches
+  cpnCreateBatch: (body) => api.post("/dms/coupons/batches", body).then(r => r.data),
+  cpnListBatches: (params = {}) => api.get("/dms/coupons/batches", { params }).then(r => r.data),
+  cpnGetBatch: (bid) => api.get(`/dms/coupons/batches/${bid}`).then(r => r.data),
+  cpnActivateBatch: (bid) => api.post(`/dms/coupons/batches/${bid}/activate`).then(r => r.data),
+  cpnMarkPrinted: (bid) => api.post(`/dms/coupons/batches/${bid}/mark-printed`).then(r => r.data),
+  cpnIssueToProd: (bid) => api.post(`/dms/coupons/batches/${bid}/issue-to-production`).then(r => r.data),
+  cpnDeactivateBatch: (bid) => api.post(`/dms/coupons/batches/${bid}/deactivate`).then(r => r.data),
+  cpnExportPdfUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-pdf`,
+  cpnExportXlsxUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-xlsx`,
+  cpnExportPdf: async (bid, filename) => {
+    const r = await api.get(`/dms/coupons/batches/${bid}/export-pdf`, { responseType: "blob" });
+    const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+    const a = document.createElement("a"); a.href = url; a.download = filename || `batch_${bid}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  },
+  cpnExportXlsx: async (bid, filename) => {
+    const r = await api.get(`/dms/coupons/batches/${bid}/export-xlsx`, { responseType: "blob" });
+    const url = URL.createObjectURL(new Blob([r.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const a = document.createElement("a"); a.href = url; a.download = filename || `batch_${bid}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  },
+  // Coupons
+  cpnListCoupons: (params = {}) => api.get("/dms/coupons", { params }).then(r => r.data),
+  cpnGetCoupon: (cid) => api.get(`/dms/coupons/detail/${cid}`).then(r => r.data),
+  // Sales Officer (salesperson) scan
+  cpnSoRetailers: () => api.get("/dms/coupons/so/retailers").then(r => r.data),
+  cpnScan: (body) => api.post("/dms/coupons/scan", body).then(r => r.data),
+  // Retailer wallet
+  cpnRetailerWallet: () => api.get("/dms/coupons/retailer/wallet").then(r => r.data),
+  cpnRetailerTransactions: (wallet_type) => api.get("/dms/coupons/retailer/transactions", { params: wallet_type ? { wallet_type } : {} }).then(r => r.data),
+  cpnRetailerCoupons: () => api.get("/dms/coupons/retailer/coupons").then(r => r.data),
+  cpnRetailerRedemptions: () => api.get("/dms/coupons/retailer/redemptions").then(r => r.data),
+  // Redemptions
+  cpnCreateRedemption: (body) => api.post("/dms/coupons/redemptions", body).then(r => r.data),
+  cpnListRedemptions: (params = {}) => api.get("/dms/coupons/redemptions", { params }).then(r => r.data),
+  cpnApproveRedemption: (rid, body = {}) => api.post(`/dms/coupons/redemptions/${rid}/approve`, body).then(r => r.data),
+  cpnRejectRedemption: (rid, reason) => api.post(`/dms/coupons/redemptions/${rid}/reject`, { reason }).then(r => r.data),
+  // Distributor
+  cpnDistSummary: () => api.get("/dms/coupons/dist/summary").then(r => r.data),
+  cpnDistCreditNotes: () => api.get("/dms/coupons/dist/credit-notes").then(r => r.data),
+  cpnDistDispatchAdvices: () => api.get("/dms/coupons/dist/dispatch-advices").then(r => r.data),
+  // Owner — CN / DA / Audit / Reports
+  cpnCreditNotes: () => api.get("/dms/coupons/credit-notes").then(r => r.data),
+  cpnDispatchAdvices: () => api.get("/dms/coupons/dispatch-advices").then(r => r.data),
+  cpnMarkDispatched: (id) => api.post(`/dms/coupons/dispatch-advices/${id}/mark-dispatched`).then(r => r.data),
+  cpnAuditLog: (params = {}) => api.get("/dms/coupons/audit-log", { params }).then(r => r.data),
+  cpnReportsSummary: () => api.get("/dms/coupons/reports/summary").then(r => r.data),
+  cpnReportsSalesperson: () => api.get("/dms/coupons/reports/salesperson").then(r => r.data),
+  cpnReportsFraud: () => api.get("/dms/coupons/reports/fraud").then(r => r.data),
+  cpnReportsDuplicate: () => api.get("/dms/coupons/reports/duplicate-scans").then(r => r.data),
+  cpnReportsWalletSummary: () => api.get("/dms/coupons/reports/wallet-summary").then(r => r.data),
 
   // Products import/export
   exportProducts: async () => {
@@ -261,9 +307,8 @@ export const dms = {
   createPriceCircular: (body) => api.post("/dms/price-circulars", body).then(r => r.data),
   productCircularHistory: (pid) => api.get(`/dms/products/${pid}/circular-history`).then(r => r.data),
 
-  // coupons — retailer + distributor scan
-  scanCouponRetailer: (code) => api.post("/dms/retailer/coupons/scan", { coupon_code: code }).then(r => r.data),
-  scanCouponDistributor: (code) => api.post("/dms/distributor/coupons/scan", { coupon_code: code }).then(r => r.data),
+  // coupons — legacy scan endpoints REMOVED (see cpn* namespace below for the new
+  // GO OIL enterprise coupon engine).
 
   // Phase 3: Reports
   reportsCatalog: () => api.get("/dms/reports/catalog").then(r => r.data),

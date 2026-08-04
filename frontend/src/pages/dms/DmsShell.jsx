@@ -4,9 +4,9 @@ import { useAuth } from "@/context/AuthContext";
 import { dms } from "./api";
 import { ImpersonationBanner } from "./OwnerUsersPage";
 import SalespersonGpsPinger from "@/components/SalespersonGpsPinger";
-import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight, Ticket, ShieldAlert, ScanLine, Droplet, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet } from "lucide-react";
+import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight, Ticket, ShieldAlert, ScanLine, Droplet, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity } from "lucide-react";
 
-const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, Ticket, ShieldAlert, ScanLine, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet };
+const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, Ticket, ShieldAlert, ScanLine, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity };
 
 // Phase 2A: Expenses nav item (all roles except retailer)
 const EXPENSES_NAV = { label: "Expenses", to: "/dms/expenses", icon: "Receipt" };
@@ -34,8 +34,13 @@ const NAV_BY_ROLE = {
     { label: "Live Tracking",   to: "/dms/owner/live-tracking",   icon: "MapPin" },
     { label: "TL Performance",  to: "/dms/owner/tl-performance",  icon: "TrendingUp" },
     { label: "Sales Visibility",to: "/dms/owner/distributor-sales", icon: "Store" },
-    { label: "Coupons",         to: "/dms/owner/coupons",         icon: "Ticket" },
-    { label: "Coupon Reports",  to: "/dms/owner/coupon-reports",  icon: "ShieldAlert" },
+    { label: "Coupons",            to: "/dms/owner/coupons",                     icon: "Ticket" },
+    { label: "All Coupons",        to: "/dms/owner/coupons/all",                 icon: "Ticket" },
+    { label: "Redemptions",        to: "/dms/owner/coupons/redemptions",         icon: "Wallet" },
+    { label: "Credit Notes",       to: "/dms/owner/coupons/credit-notes",        icon: "FileText" },
+    { label: "Dispatch Advices",   to: "/dms/owner/coupons/dispatch-advices",    icon: "Truck" },
+    { label: "Coupon Reports",     to: "/dms/owner/coupon-reports",              icon: "ShieldAlert" },
+    { label: "Coupon Audit Log",   to: "/dms/owner/coupons/audit-log",           icon: "Activity" },
     // Phase 2C
     { label: "+Add Sales",      to: "/dms/direct-sales",          icon: "Receipt" },
     { label: "Documents",       to: "/dms/documents",             icon: "FileText" },
@@ -50,6 +55,10 @@ const NAV_BY_ROLE = {
     { label: "Primary Orders",  to: "/dms/owner/primary-orders",  icon: "Receipt" },
     { label: "Owner Inventory", to: "/dms/owner/inventory",       icon: "Warehouse" },
     { label: "Expenses",        to: "/dms/expenses",              icon: "Receipt" },
+    // Coupon accounting
+    { label: "Coupon Redemptions", to: "/dms/owner/coupons/redemptions",     icon: "Wallet" },
+    { label: "Credit Notes",       to: "/dms/owner/coupons/credit-notes",    icon: "FileText" },
+    { label: "Dispatch Advices",   to: "/dms/owner/coupons/dispatch-advices", icon: "Truck" },
     // Phase 2B — Cash & Bank
     { label: "Bank Accounts",   to: "/dms/finance/bank-accounts", icon: "Landmark" },
     { label: "Bank Transactions", to: "/dms/finance/bank-transactions", icon: "Wallet" },
@@ -75,7 +84,7 @@ const NAV_BY_ROLE = {
     // Phase 2C — direct sales + documents
     { label: "+Add Sales",        to: "/dms/direct-sales",               icon: "Receipt" },
     { label: "Documents",         to: "/dms/documents",                  icon: "FileText" },
-    { label: "Scan Coupon",       to: "/dms/distributor/scan",           icon: "ScanLine" },
+    { label: "Coupon Rewards",    to: "/dms/distributor/coupons",        icon: "Award" },
     { label: "Secondary Ledger",  to: "/dms/distributor/sec-ledger",     icon: "ScrollText" },
     { label: "Primary Ledger",    to: "/dms/distributor/ledger",         icon: "ScrollText" },
     { label: "Expenses",          to: "/dms/expenses",                   icon: "Receipt" },
@@ -96,10 +105,11 @@ const NAV_BY_ROLE = {
     { label: "Dashboard",       to: "/dms",                    icon: "LayoutDashboard" },
     { label: "Browse & Order",  to: "/dms/retailer/browse",    icon: "ShoppingCart" },
     { label: "My Orders",       to: "/dms/retailer/my-orders", icon: "ClipboardList" },
-    { label: "Scan Coupon",     to: "/dms/retailer/scan",      icon: "ScanLine" },
+    { label: "My Wallet",       to: "/dms/retailer/wallet",    icon: "Wallet" },
   ],
   salesperson: [
     { label: "Dashboard",       to: "/dms",                            icon: "LayoutDashboard" },
+    { label: "Scan Coupon",     to: "/dms/salesperson/scan",           icon: "ScanLine" },
     { label: "My Distributors", to: "/dms/salesperson/distributors",   icon: "Handshake" },
     { label: "My Retailers",    to: "/dms/salesperson/retailers",      icon: "Store" },
     { label: "My Orders",       to: "/dms/salesperson/orders",         icon: "ClipboardList" },
