@@ -5,7 +5,12 @@ export const API_URL = `${BASE}/api`;
 
 const api = axios.create({
   baseURL: API_URL,
-  withCredentials: true,
+  // NOTE: We use JWT Bearer tokens via the Authorization header (see interceptor
+  // below), not cookies. `withCredentials: true` is intentionally OFF so that
+  // (a) the browser does not enforce the "no wildcard CORS with credentials" rule
+  //     when the app is deployed on a different subdomain than the backend, and
+  // (b) preflight requests remain simple.
+  withCredentials: false,
 });
 
 api.interceptors.request.use((config) => {
