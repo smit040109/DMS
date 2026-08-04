@@ -33,6 +33,8 @@ import { OwnerCouponsPage, OwnerCouponReportsPage, RetailerScanCouponPage, Distr
 import { PrintEbillPage, PrintRetailerBillPage } from "@/pages/dms/PrintPages";
 import { PriceCircularsPage, PriceCircularDetailPage, NewPriceCircularPage, SettingsPage } from "@/pages/dms/PriceCircularPages";
 import { ExpensesPage } from "@/pages/dms/ExpensesPage";
+import { BankAccountsPage, BankTransactionsPage, CashRegisterPage, ChequesPage, LoanAccountsPage } from "@/pages/dms/CashBankPages";
+import { GodownsPage, StockTransfersPage } from "@/pages/dms/WarehousePages";
 
 function Protected({ children }) {
   const { user } = useAuth();
@@ -94,6 +96,15 @@ function AppRoutes() {
       <Route path="/dms/owner/price-circulars/:id" element={<DmsPage Component={PriceCircularDetailPage} />} />
       <Route path="/dms/owner/settings"            element={<DmsPage Component={SettingsPage} />} />
       <Route path="/dms/expenses"                  element={<DmsPage Component={ExpensesPage} />} />
+      {/* Phase 2B — Cash & Bank */}
+      <Route path="/dms/finance/bank-accounts"     element={<DmsPage Component={BankAccountsPage} />} />
+      <Route path="/dms/finance/bank-transactions" element={<DmsPage Component={BankTransactionsPage} />} />
+      <Route path="/dms/finance/cash-register"     element={<DmsPage Component={CashRegisterPage} />} />
+      <Route path="/dms/finance/cheques"           element={<DmsPage Component={ChequesPage} />} />
+      <Route path="/dms/finance/loans"             element={<DmsPage Component={LoanAccountsPage} />} />
+      {/* Phase 2B — Warehouse */}
+      <Route path="/dms/warehouse/godowns"         element={<DmsPage Component={GodownsPage} />} />
+      <Route path="/dms/warehouse/transfers"       element={<DmsPage Component={StockTransfersPage} />} />
       <Route path="/dms/retailer/scan"             element={<DmsPage Component={RetailerScanCouponPage} />} />
       <Route path="/dms/distributor/scan"           element={<DmsPage Component={DistributorScanCouponPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />

@@ -508,6 +508,35 @@ export function SettingsPage() {
             </div>
           </div>
         </Card>
+
+        {/* Phase 2B: Stop Sale on Negative Stock */}
+        <Card className="p-6 border-amber-200 shadow-sm md:col-span-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center"><Lock size={20} /></div>
+              <div>
+                <div className="font-display font-bold text-slate-900">Stop Sale on Negative Stock</div>
+                <div className="text-xs text-slate-500">When ON, primary-order fulfillment and secondary dispatch are blocked if they would push stock below zero.</div>
+              </div>
+            </div>
+            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+              <span className="text-sm text-slate-700">{settings.stop_sale_on_negative === false ? "OFF" : "ON"}</span>
+              <input
+                type="checkbox"
+                checked={settings.stop_sale_on_negative !== false}
+                onChange={async (e) => {
+                  try {
+                    await dms.toggleStopSale(e.target.checked);
+                    const s = await dms.getSettings(); setSettings(s);
+                    toast.success(`Stop-Sale ${e.target.checked ? "enabled" : "disabled"}`);
+                  } catch (err) { toast.error(err?.response?.data?.detail || "Failed"); }
+                }}
+                data-testid="stop-sale-toggle"
+                className="h-5 w-9 appearance-none rounded-full bg-slate-300 checked:bg-amber-600 relative cursor-pointer transition-colors before:content-[''] before:absolute before:top-0.5 before:left-0.5 before:h-4 before:w-4 before:rounded-full before:bg-white before:transition-transform checked:before:translate-x-4"
+              />
+            </label>
+          </div>
+        </Card>
       </div>
 
       <div className="mt-6 flex justify-end">

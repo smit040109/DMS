@@ -2530,22 +2530,31 @@ backend:
           
           NO CRITICAL ISSUES FOUND. Sample bills and print T&C feature production-ready.
 
+frontend:
+  - task: "Phase 2B Frontend: Bank Accounts, Bank Transactions, Cash Register, Cheques, Loan Accounts (+ledger drill-down), Godowns (+inventory drill-down), Stock Transfers, Stop-Sale toggle in Settings"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/dms/CashBankPages.jsx, WarehousePages.jsx, PriceCircularPages.jsx (Settings), DmsShell.jsx (nav), App.js (routes), api.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+
 metadata:
   current_phase: "Phase 2B"
-  test_phase_focus: "Cash & Bank standalone registers, Godowns, Stock Transfer, Stop-Sale on Negative"
+  test_phase_focus: "Phase 2B Frontend UI QA — Cash & Bank pages, Godowns, Stock Transfers, Stop-Sale toggle"
 
 test_plan:
   current_focus:
-    - "Bank Accounts: GET/POST/PUT/DELETE /api/dms/bank-accounts — owner/accountant only (SP=403, retailer=403); delete blocked if txns exist"
-    - "Bank Transactions: POST deposit + withdrawal → current_balance updates; DELETE reverses balance; FY lock enforced"
-    - "Cash Register: POST type=in and type=out → balance_after correct; current_balance aggregate correct; RBAC + FY lock"
-    - "Cheques: POST received/issued with status pending; PUT status → cleared; RBAC + FY lock; delete owner-only"
-    - "Loan Accounts: POST creates loan + auto disbursement txn; POST loan-transaction repayment → outstanding decreases; disbursement/interest → outstanding increases; delete blocked if extra txns"
-    - "Godowns: POST/PUT/DELETE — delete blocked if stock > 0; GET /godowns/{id}/inventory returns product-level rows"
-    - "Stock Transfer: POST owner→godown moves stock (owner decrements, godown increments); godown→godown; godown→owner; insufficient stock at source → 400; same source/destination → 400; FY lock enforced"
-    - "Stop Sale on Negative: POST /primary-orders/{oid}/fulfill-line with qty > owner_stock → 400; POST /secondary-orders/{oid}/dispatch with db_qty > distributor stock → 400; PUT /settings with stop_sale_on_negative=false disables the check"
-    - "Sample bills: GET /api/dms/print/ebill/{EB-SAMPLE-*} and /api/dms/print/retailer-bill/{RB-SAMPLE-*} include invoice_terms + invoice_message + company_name"
-    - "Regression: existing Phase 1 + 2A flows (place primary order, fulfill within stock, expenses CRUD) still work"
+    - "Sidebar nav: Owner & Owner Accountant see Bank Accounts, Bank Transactions, Cash Register, Cheques, Loan Accounts, Godowns, Stock Transfers — 7 new items. Other roles (SP, TL, RSM, distributor, retailer) should NOT see these."
+    - "Bank Accounts page (as owner): Add / Edit / Delete works; Total Cash In Bank card sums correctly."
+    - "Bank Transactions page: Filter by account/type/date works; Add deposit + withdrawal — parent account current_balance updates."
+    - "Cash Register page: Add cash-in / cash-out; balance card sums correctly; delete reverses."
+    - "Cheques page: Add received/issued; edit status through pending → cleared → bounced; filter by direction+status works."
+    - "Loan Accounts page: Create loan → outstanding = principal; open Ledger drill-down → shows auto disbursement; add repayment reduces outstanding; add interest increases."
+    - "Godowns page: Create/edit; Inventory drill-down opens dialog with product-level rows including value; delete blocked if stock exists (should show 400 toast)."
+    - "Stock Transfers page: New Transfer form supports owner→godown, godown→godown, godown→owner; validation for same source/dest; multiple product lines; created transfers list shows correctly; View opens detail dialog with items."
+    - "Settings page (owner only): Stop-Sale toggle switch — flipping OFF persists; refresh page shows same state; flip back ON."
+    - "Regression sanity: Existing Expenses + Settings T&C still work; Phase 2A Print pages still render sample bill T&C."
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -2553,13 +2562,19 @@ test_plan:
 agent_communication:
   - agent: "main"
     message: |
-      Phase 2B backend complete. New endpoints under /api/dms/:
-      - bank-accounts, bank-transactions, cash-register, cheques, loan-accounts, loan-transactions (RBAC: owner/owner_accountant; delete=owner_only)
-      - godowns, godowns/{id}/inventory, stock-transfers (RBAC: owner/owner_accountant; create=owner_only)
-      - stop-sale check added to fulfill-line and secondary dispatch; toggle via PUT /settings body {"stop_sale_on_negative": true/false} or PUT /settings/stop-sale
-      Also seeded 1 sample e-bill (EB-SAMPLE-*) and 1 retailer-bill (RB-SAMPLE-*) so Phase 2A print T&C can be verified.
-      Please run comprehensive backend tests focused on the current_focus above. All demo users in /app/memory/test_credentials.md, password GoOil@2026.
-      Do NOT re-test Phase 1 or Phase 2A features unless doing regression sanity — focus on Phase 2B only.
+      Phase 2B frontend complete. New pages/routes:
+      - /dms/finance/bank-accounts (BankAccountsPage)
+      - /dms/finance/bank-transactions (BankTransactionsPage)
+      - /dms/finance/cash-register (CashRegisterPage)
+      - /dms/finance/cheques (ChequesPage)
+      - /dms/finance/loans (LoanAccountsPage — with ledger drill-down dialog)
+      - /dms/warehouse/godowns (GodownsPage — with inventory drill-down dialog)
+      - /dms/warehouse/transfers (StockTransfersPage — with new-transfer wizard)
+      - Settings page: added Stop-Sale on Negative Stock toggle
+      Sidebar nav items added for owner + owner_accountant ONLY.
+      Manual verification via screenshots confirmed pages render correctly with existing data from backend tests.
+      Please run frontend UI tests focused on the plan above. All demo users in /app/memory/test_credentials.md, password GoOil@2026.
+      Do NOT re-test Phase 1 or Phase 2A features beyond quick regression sanity.
   - agent: "testing"
     message: |
       ✅ PHASE 2A FRONTEND UI TESTING COMPLETE — ALL CRITICAL FEATURES WORKING (28/28 tests passed)
