@@ -5105,6 +5105,8 @@ def build_dms_router(db, get_current_user):
     # Per-user saved filters (Polish item)
     @router.get("/reports/saved-filters/{report_id}")
     async def list_saved_filters(report_id: str, user: dict = Depends(get_current_user)):
+        if user.get("role") == "retailer":
+            raise HTTPException(status_code=403, detail="Retailers cannot access reports")
         rows = await db.dms_report_saved_filters.find(
             {"user_id": user["id"], "report_id": report_id}, {"_id": 0}
         ).to_list(50)
@@ -5113,6 +5115,8 @@ def build_dms_router(db, get_current_user):
     @router.post("/reports/saved-filters/{report_id}")
     async def save_filter(report_id: str, payload: Dict[str, Any] = Body(...),
                           user: dict = Depends(get_current_user)):
+        if user.get("role") == "retailer":
+            raise HTTPException(status_code=403, detail="Retailers cannot access reports")
         name = (payload.get("name") or "").strip()
         filters = payload.get("filters") or {}
         if not name:
@@ -5130,6 +5134,8 @@ def build_dms_router(db, get_current_user):
 
     @router.delete("/reports/saved-filters/{filter_id}")
     async def delete_saved_filter(filter_id: str, user: dict = Depends(get_current_user)):
+        if user.get("role") == "retailer":
+            raise HTTPException(status_code=403, detail="Retailers cannot access reports")
         r = await db.dms_report_saved_filters.delete_one(
             {"id": filter_id, "user_id": user["id"]}
         )
@@ -5172,7 +5178,9 @@ def build_dms_router(db, get_current_user):
         filters = _extract_filters(request)
         data = await run_report(db, user, report_id, filters)
         wb = Workbook(); ws = wb.active
-        ws.title = report["name"][:31]
+        # Excel sheet title cannot contain \/?*[]: characters
+        safe_title = "".join(c for c in report["name"] if c not in "\\/?*[]:")[:31]
+        ws.title = safe_title or "Report"
         ws.append([report["name"]])
         param_summary = " | ".join(f"{k}={v}" for k, v in filters.items()) or "(no filters)"
         ws.append([f"Filters: {param_summary}", f"Generated: {_now()}"])
