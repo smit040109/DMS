@@ -17,7 +17,7 @@ DMS_TENANT_ID = "tnt-dms-oil"
 DMS_PASSWORD = "GoOil@2026"
 
 # Bump this whenever you want a full data reset on the next server boot.
-SEED_VERSION = "gooil-v2-may26"
+SEED_VERSION = "gooil-v2b-aug26"
 
 
 def _hash(pw: str) -> str:
@@ -77,6 +77,13 @@ async def _reset_dms_business_data(raw_db):
         "dms_punch", "dms_gps_pings", "dms_visits",
         "dms_coupons", "dms_coupon_batches", "dms_coupon_fraud",
         "dms_settings",
+        # Phase 2A + 2B
+        "dms_expenses",
+        "dms_bank_accounts", "dms_bank_transactions",
+        "dms_cash_register", "dms_cheques",
+        "dms_loan_accounts", "dms_loan_transactions",
+        "dms_godowns", "dms_godown_inventory", "dms_stock_transfers",
+        "dms_retailer_pending",
     ]
     for coll in collections_full_drop:
         try:
@@ -406,6 +413,180 @@ async def _seed_assignments(raw_db, ids):
         })
 
 
+async def _seed_sample_bills(raw_db, ids, dist_ids):
+    """Create one primary e-bill and one retailer bill so print T&C can be verified visually."""
+    products = await raw_db.dms_products.find({"tenant_id": DMS_TENANT_ID}, {"_id": 0}).to_list(3)
+    if not products:
+        return
+    # ── Sample primary order → e-bill (Owner → distributor1) ──
+    d1_id = dist_ids.get("distributor1@gooil.com")
+    d1 = await raw_db.dms_distributors.find_one({"id": d1_id}, {"_id": 0})
+    if d1 and products:
+        p = products[0]
+        qty = 5
+        line_sub = round(float(p["unit_price"]) * qty, 2)
+        line_gst = 0.0  # gst_pct default 0
+        line_total = round(line_sub + line_gst, 2)
+        order_no = f"PO-SAMPLE-{datetime.now().strftime('%y%m%d')}"
+        oid = _nid("pord")
+        item = {
+            "product_id": p["id"],
+            "product_name": p["name"],
+            "sku_code": p["sku_code"],
+            "box_qty": p.get("box_qty", 1),
+            "unit_price": p["unit_price"],
+            "gst_pct": 0.0,
+            "qty_boxes_ordered": qty,
+            "qty_boxes_fulfilled": qty,
+            "billed_qty_boxes": qty,
+            "line_subtotal": line_sub,
+            "line_gst": line_gst,
+            "line_total": line_total,
+        }
+        await raw_db.dms_primary_orders.insert_one({
+            "id": oid,
+            "tenant_id": DMS_TENANT_ID,
+            "order_no": order_no,
+            "distributor_id": d1_id,
+            "distributor_name": d1["name"],
+            "placed_by": ids.get("distributor1@gooil.com"),
+            "items": [item],
+            "subtotal": line_sub,
+            "gst_total": line_gst,
+            "total": line_total,
+            "fulfillment_pct": 100,
+            "status": "ready_to_go",
+            "created_at": _now(),
+            "updated_at": _now(),
+            "ready_at": _now(),
+        })
+        eb_id = _nid("eb")
+        ebill_no = f"EB-SAMPLE-{datetime.now().strftime('%y%m%d')}"
+        await raw_db.dms_ebills.insert_one({
+            "id": eb_id,
+            "tenant_id": DMS_TENANT_ID,
+            "ebill_no": ebill_no,
+            "order_id": oid,
+            "order_no": order_no,
+            "distributor_id": d1_id,
+            "distributor_name": d1["name"],
+            "items": [item],
+            "subtotal": line_sub,
+            "gst_total": line_gst,
+            "total": line_total,
+            "status": "issued",
+            "created_at": _now(),
+        })
+        await raw_db.dms_primary_orders.update_one({"id": oid}, {"$set": {"ebill_id": eb_id}})
+        await raw_db.dms_primary_ledger.insert_one({
+            "id": _nid("le"),
+            "tenant_id": DMS_TENANT_ID,
+            "distributor_id": d1_id,
+            "kind": "invoice",
+            "reference_id": eb_id,
+            "reference_no": ebill_no,
+            "amount": line_total,
+            "description": f"Invoice for order {order_no}",
+            "at": _now(),
+        })
+
+    # ── Sample secondary order → retailer bill (distributor1 → retailer1) ──
+    r1 = await raw_db.dms_retailers.find_one({"email": "retailer1@gooil.com"}, {"_id": 0})
+    if d1 and r1 and products:
+        p = products[0]
+        qty_boxes = 2
+        # get retailer price
+        rp = await raw_db.dms_retailer_prices.find_one({"distributor_id": d1_id, "product_id": p["id"]}, {"_id": 0})
+        box_price = float(rp["selling_price"]) if rp else float(p["unit_price"])
+        line_sub = round(box_price * qty_boxes, 2)
+        line_gst = 0.0
+        line_total = round(line_sub + line_gst, 2)
+        sord_no = f"SO-SAMPLE-{datetime.now().strftime('%y%m%d')}"
+        sord_id = _nid("sord")
+        s_item = {
+            "product_id": p["id"],
+            "product_name": p["name"],
+            "sku_code": p["sku_code"],
+            "box_qty": p.get("box_qty", 1),
+            "box_price": box_price,
+            "pcs_price": 0.0,
+            "gst_pct": 0.0,
+            "qty_boxes_ordered": qty_boxes,
+            "qty_pcs_ordered": 0,
+            "qty_boxes_dispatched": qty_boxes,
+            "qty_pcs_dispatched": 0,
+            "dispatched_qty_boxes": qty_boxes,
+            "dispatched_qty_pcs": 0,
+            "line_subtotal": line_sub,
+            "line_gst": line_gst,
+            "line_total": line_total,
+        }
+        await raw_db.dms_secondary_orders.insert_one({
+            "id": sord_id,
+            "tenant_id": DMS_TENANT_ID,
+            "order_no": sord_no,
+            "distributor_id": d1_id,
+            "distributor_name": d1["name"],
+            "retailer_id": r1["id"],
+            "retailer_name": r1["name"],
+            "placed_by": ids.get("retailer1@gooil.com"),
+            "placed_by_role": "retailer",
+            "mode": "box",
+            "items": [s_item],
+            "subtotal": line_sub,
+            "gst_total": line_gst,
+            "total": line_total,
+            "fulfillment_pct": 100,
+            "status": "dispatched",
+            "created_at": _now(),
+            "updated_at": _now(),
+            "dispatched_at": _now(),
+        })
+        rb_id = _nid("rb")
+        bill_no = f"RB-SAMPLE-{datetime.now().strftime('%y%m%d')}"
+        await raw_db.dms_retailer_bills.insert_one({
+            "id": rb_id,
+            "tenant_id": DMS_TENANT_ID,
+            "bill_no": bill_no,
+            "order_id": sord_id,
+            "order_no": sord_no,
+            "retailer_id": r1["id"],
+            "distributor_id": d1_id,
+            "items": [s_item],
+            "subtotal": line_sub,
+            "gst_total": line_gst,
+            "total": line_total,
+            "status": "issued",
+            "created_at": _now(),
+        })
+        await raw_db.dms_secondary_orders.update_one({"id": sord_id}, {"$set": {"bill_id": rb_id}})
+        await raw_db.dms_retailer_ledger.insert_one({
+            "id": _nid("rle"),
+            "tenant_id": DMS_TENANT_ID,
+            "distributor_id": d1_id,
+            "retailer_id": r1["id"],
+            "kind": "invoice",
+            "reference_id": rb_id,
+            "reference_no": bill_no,
+            "amount": line_total,
+            "description": f"Bill for {sord_no}",
+            "at": _now(),
+        })
+
+
+async def _seed_sample_terms(raw_db):
+    """Pre-populate invoice_terms/invoice_message so print pages have something to render."""
+    await raw_db.dms_settings.update_one(
+        {"id": "global"},
+        {"$set": {
+            "invoice_message": "Thank you for your business — GO OIL Lubricants!",
+            "invoice_terms": "Goods once sold will not be taken back. Payment due within 30 days. Subject to Delhi jurisdiction.",
+            "updated_at": _now(),
+        }},
+        upsert=True,
+    )
+
+
 async def seed_dms(raw_db):
     """Idempotent seed guarded by SEED_VERSION marker."""
     await ensure_dms_tenant(raw_db)
@@ -422,6 +603,10 @@ async def seed_dms(raw_db):
     dist_ids = await _seed_distributors_and_retailers(raw_db, ids)
     await _seed_inventory_and_retailer_prices(raw_db, dist_ids)
     await _seed_assignments(raw_db, ids)
+    # Phase 2A: pre-populate T&C so print pages have something to render
+    await _seed_sample_terms(raw_db)
+    # Phase 2B: seed one sample e-bill + one sample retailer bill
+    await _seed_sample_bills(raw_db, ids, dist_ids)
 
     await raw_db.dms_meta.update_one(
         {"id": "seed_marker"},

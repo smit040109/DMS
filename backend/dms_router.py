@@ -601,6 +601,13 @@ def build_dms_router(db, get_current_user):
         if not line:
             raise HTTPException(status_code=400, detail="Line not in order")
         qty = max(0, min(qty, line["qty_boxes_ordered"]))
+        # Stop-sale-on-negative check: current owner stock must cover this fulfillment
+        # (compare qty against owner_stock; other fulfilled lines' stock is not yet decremented,
+        #  so we only need this line's requested amount ≤ current owner stock).
+        if qty > 0 and await _stop_sale_enabled():
+            avail = await _get_owner_stock(pid)
+            if qty > avail:
+                raise HTTPException(status_code=400, detail=f"Insufficient owner stock: available {avail} boxes, requested {qty}. Enable stock or reduce fulfilled quantity.")
         line["qty_boxes_fulfilled"] = qty
         # recompute fulfillment_pct
         ord_total = sum(it["qty_boxes_ordered"] for it in order["items"])
@@ -1438,6 +1445,19 @@ def build_dms_router(db, get_current_user):
         did = order["distributor_id"]; rid = order["retailer_id"]
         items = body.get("items") or []
         item_map = {it["product_id"]: it for it in items}
+        # Stop-sale-on-negative pre-check for distributor stock
+        if await _stop_sale_enabled():
+            for it in order["items"]:
+                di = item_map.get(it["product_id"], {})
+                db_qty = int(di.get("qty_boxes_dispatched", 0))
+                dp_qty = int(di.get("qty_pcs_dispatched", 0)) if order["mode"] == "box_pcs" else 0
+                if db_qty <= 0 and dp_qty <= 0:
+                    continue
+                inv = await db.dms_distributor_inventory.find_one({"distributor_id": did, "product_id": it["product_id"]}, {"_id": 0, "qty_boxes": 1})
+                avail = int((inv or {}).get("qty_boxes", 0) or 0)
+                need_boxes = db_qty + (1 if (dp_qty > 0 and (dp_qty % max(it["box_qty"], 1)) > 0) else 0) + (dp_qty // max(it["box_qty"], 1))
+                if need_boxes > avail:
+                    raise HTTPException(status_code=400, detail=f"Insufficient distributor stock for {it.get('product_name', it['product_id'])}: available {avail} boxes, need {need_boxes}. Reduce dispatch qty or receive more stock.")
         # apply
         billed_items = []
         subtotal = 0.0
@@ -3342,6 +3362,9 @@ def build_dms_router(db, get_current_user):
     @router.get("/settings")
     async def get_settings(user: dict = Depends(get_current_user)):
         s = await _get_settings()
+        # ensure default for stop_sale_on_negative
+        if "stop_sale_on_negative" not in s:
+            s["stop_sale_on_negative"] = True
         return _clean(s)
 
     @router.put("/settings")
@@ -3375,6 +3398,9 @@ def build_dms_router(db, get_current_user):
                 if cur_lock and lock < cur_lock:
                     raise HTTPException(status_code=400, detail=f"fy_lock_date can only move forward (current: {cur_lock})")
             upd["fy_lock_date"] = lock or None
+        # Phase 2B: Stop Sale on Negative Stock toggle
+        if "stop_sale_on_negative" in body:
+            upd["stop_sale_on_negative"] = bool(body.get("stop_sale_on_negative"))
         upd["updated_at"] = _now()
         await db.dms_settings.update_one({"id": "global"}, {"$set": upd}, upsert=True)
         s = await _get_settings()
@@ -3786,5 +3812,702 @@ def build_dms_router(db, get_current_user):
             {"kind": "line", "circular_id": cid, "is_active": True}, {"_id": 0}
         ).to_list(2000)
         return {"data": lines, "count": len(lines)}
+
+    # =========================================================================
+    # PHASE 2B — CASH & BANK MANAGEMENT (standalone; no auto-link to payments)
+    # =========================================================================
+    owner_or_owner_acct = _guard("owner", "owner_accountant")
+
+    async def _stop_sale_enabled() -> bool:
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0, "stop_sale_on_negative": 1}) or {}
+        # default True
+        v = s.get("stop_sale_on_negative")
+        return True if v is None else bool(v)
+
+    # -- Bank Accounts --
+    @router.get("/bank-accounts")
+    async def list_bank_accounts(user: dict = Depends(owner_or_owner_acct)):
+        rows = await db.dms_bank_accounts.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+        return {"data": rows, "count": len(rows)}
+
+    @router.post("/bank-accounts")
+    async def create_bank_account(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name required")
+        try:
+            opening = float(body.get("opening_balance") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="opening_balance must be a number")
+        doc = {
+            "id": _nid("bank"),
+            "name": name,
+            "account_number": str(body.get("account_number") or "").strip(),
+            "ifsc": str(body.get("ifsc") or "").strip(),
+            "branch": str(body.get("branch") or "").strip(),
+            "opening_balance": _round(opening),
+            "current_balance": _round(opening),
+            "notes": str(body.get("notes") or "").strip(),
+            "active": True,
+            "created_by": user["id"],
+            "created_at": _now(),
+        }
+        await db.dms_bank_accounts.insert_one(doc)
+        doc.pop("_id", None)
+        return _clean(doc)
+
+    @router.put("/bank-accounts/{bid}")
+    async def update_bank_account(bid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        cur = await db.dms_bank_accounts.find_one({"id": bid}, {"_id": 0})
+        if not cur:
+            raise HTTPException(status_code=404, detail="Bank account not found")
+        upd: Dict[str, Any] = {}
+        for k in ("name", "account_number", "ifsc", "branch", "notes"):
+            if k in body:
+                upd[k] = str(body.get(k) or "").strip()
+        if "active" in body:
+            upd["active"] = bool(body.get("active"))
+        upd["updated_at"] = _now()
+        await db.dms_bank_accounts.update_one({"id": bid}, {"$set": upd})
+        return {"ok": True}
+
+    @router.delete("/bank-accounts/{bid}")
+    async def delete_bank_account(bid: str, user: dict = Depends(owner_only)):
+        # only allow delete if no transactions
+        c = await db.dms_bank_transactions.count_documents({"bank_account_id": bid})
+        if c > 0:
+            raise HTTPException(status_code=400, detail=f"Cannot delete: {c} transactions exist. Deactivate instead.")
+        await db.dms_bank_accounts.delete_one({"id": bid})
+        return {"ok": True}
+
+    # -- Bank Transactions --
+    @router.get("/bank-transactions")
+    async def list_bank_transactions(user: dict = Depends(owner_or_owner_acct), account_id: Optional[str] = None,
+                                     start: Optional[str] = None, end: Optional[str] = None, type: Optional[str] = None):
+        q: Dict[str, Any] = {}
+        if account_id: q["bank_account_id"] = account_id
+        if type: q["type"] = type
+        if start: q.setdefault("date", {})["$gte"] = start
+        if end: q.setdefault("date", {})["$lte"] = end
+        rows = await db.dms_bank_transactions.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
+        return {"data": rows, "count": len(rows)}
+
+    @router.post("/bank-transactions")
+    async def create_bank_transaction(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        aid = str(body.get("bank_account_id") or "").strip()
+        acct = await db.dms_bank_accounts.find_one({"id": aid}, {"_id": 0})
+        if not acct:
+            raise HTTPException(status_code=400, detail="bank_account_id invalid")
+        typ = str(body.get("type") or "").strip().lower()
+        if typ not in ("deposit", "withdrawal"):
+            raise HTTPException(status_code=400, detail="type must be deposit or withdrawal")
+        try:
+            amt = float(body.get("amount") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="amount must be a number")
+        if amt <= 0:
+            raise HTTPException(status_code=400, detail="amount must be > 0")
+        date = str(body.get("date") or _now()[:10]).strip()
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        await _check_fy_lock(date, "bank transaction")
+        # compute new balance
+        delta = amt if typ == "deposit" else -amt
+        new_balance = _round(float(acct.get("current_balance") or 0) + delta)
+        doc = {
+            "id": _nid("btx"),
+            "bank_account_id": aid,
+            "bank_account_name": acct.get("name"),
+            "date": date,
+            "type": typ,
+            "amount": _round(amt),
+            "reference": str(body.get("reference") or "").strip(),
+            "notes": str(body.get("notes") or "").strip(),
+            "balance_after": new_balance,
+            "created_by": user["id"],
+            "created_by_name": user.get("name"),
+            "created_at": _now(),
+        }
+        await db.dms_bank_transactions.insert_one(doc)
+        await db.dms_bank_accounts.update_one({"id": aid}, {"$set": {"current_balance": new_balance, "updated_at": _now()}})
+        doc.pop("_id", None)
+        return _clean(doc)
+
+    @router.delete("/bank-transactions/{tid}")
+    async def delete_bank_transaction(tid: str, user: dict = Depends(owner_only)):
+        tx = await db.dms_bank_transactions.find_one({"id": tid}, {"_id": 0})
+        if not tx:
+            raise HTTPException(status_code=404, detail="Transaction not found")
+        await _check_fy_lock(tx.get("date"), "bank transaction")
+        # reverse balance
+        delta = float(tx["amount"]) if tx["type"] == "deposit" else -float(tx["amount"])
+        acct = await db.dms_bank_accounts.find_one({"id": tx["bank_account_id"]}, {"_id": 0})
+        if acct:
+            new_balance = _round(float(acct.get("current_balance") or 0) - delta)
+            await db.dms_bank_accounts.update_one({"id": tx["bank_account_id"]}, {"$set": {"current_balance": new_balance}})
+        await db.dms_bank_transactions.delete_one({"id": tid})
+        return {"ok": True}
+
+    # -- Cash Register --
+    @router.get("/cash-register")
+    async def list_cash_register(user: dict = Depends(owner_or_owner_acct), start: Optional[str] = None,
+                                 end: Optional[str] = None, type: Optional[str] = None):
+        q: Dict[str, Any] = {}
+        if type: q["type"] = type
+        if start: q.setdefault("date", {})["$gte"] = start
+        if end: q.setdefault("date", {})["$lte"] = end
+        rows = await db.dms_cash_register.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
+        # compute current balance
+        agg = await db.dms_cash_register.aggregate([
+            {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}
+        ]).to_list(10)
+        totals = {r["_id"]: r["total"] for r in agg}
+        current_balance = _round((totals.get("in") or 0) - (totals.get("out") or 0))
+        return {"data": rows, "count": len(rows), "current_balance": current_balance}
+
+    @router.post("/cash-register")
+    async def create_cash_entry(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        typ = str(body.get("type") or "").strip().lower()
+        if typ not in ("in", "out"):
+            raise HTTPException(status_code=400, detail="type must be 'in' or 'out'")
+        try:
+            amt = float(body.get("amount") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="amount must be a number")
+        if amt <= 0:
+            raise HTTPException(status_code=400, detail="amount must be > 0")
+        date = str(body.get("date") or _now()[:10]).strip()
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        await _check_fy_lock(date, "cash entry")
+        # compute new balance
+        agg = await db.dms_cash_register.aggregate([
+            {"$group": {"_id": "$type", "total": {"$sum": "$amount"}}}
+        ]).to_list(10)
+        totals = {r["_id"]: r["total"] for r in agg}
+        current_balance = (totals.get("in") or 0) - (totals.get("out") or 0)
+        delta = amt if typ == "in" else -amt
+        new_balance = _round(current_balance + delta)
+        doc = {
+            "id": _nid("cash"),
+            "date": date,
+            "type": typ,
+            "amount": _round(amt),
+            "reference": str(body.get("reference") or "").strip(),
+            "notes": str(body.get("notes") or "").strip(),
+            "balance_after": new_balance,
+            "created_by": user["id"],
+            "created_by_name": user.get("name"),
+            "created_at": _now(),
+        }
+        await db.dms_cash_register.insert_one(doc)
+        doc.pop("_id", None)
+        return _clean(doc)
+
+    @router.delete("/cash-register/{cid}")
+    async def delete_cash_entry(cid: str, user: dict = Depends(owner_only)):
+        cur = await db.dms_cash_register.find_one({"id": cid}, {"_id": 0})
+        if not cur:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        await _check_fy_lock(cur.get("date"), "cash entry")
+        await db.dms_cash_register.delete_one({"id": cid})
+        return {"ok": True}
+
+    # -- Cheques --
+    @router.get("/cheques")
+    async def list_cheques(user: dict = Depends(owner_or_owner_acct), direction: Optional[str] = None,
+                           status: Optional[str] = None, start: Optional[str] = None, end: Optional[str] = None):
+        q: Dict[str, Any] = {}
+        if direction: q["direction"] = direction
+        if status: q["status"] = status
+        if start: q.setdefault("date", {})["$gte"] = start
+        if end: q.setdefault("date", {})["$lte"] = end
+        rows = await db.dms_cheques.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
+        return {"data": rows, "count": len(rows)}
+
+    @router.post("/cheques")
+    async def create_cheque(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        cheque_no = str(body.get("cheque_no") or "").strip()
+        if not cheque_no:
+            raise HTTPException(status_code=400, detail="cheque_no required")
+        direction = str(body.get("direction") or "").strip().lower()
+        if direction not in ("received", "issued"):
+            raise HTTPException(status_code=400, detail="direction must be received or issued")
+        try:
+            amt = float(body.get("amount") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="amount must be a number")
+        if amt <= 0:
+            raise HTTPException(status_code=400, detail="amount must be > 0")
+        date = str(body.get("date") or _now()[:10]).strip()
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        await _check_fy_lock(date, "cheque")
+        status_val = str(body.get("status") or "pending").strip().lower()
+        if status_val not in ("pending", "cleared", "bounced", "cancelled"):
+            raise HTTPException(status_code=400, detail="status must be pending/cleared/bounced/cancelled")
+        doc = {
+            "id": _nid("chq"),
+            "cheque_no": cheque_no,
+            "date": date,
+            "direction": direction,
+            "party_name": str(body.get("party_name") or "").strip(),
+            "amount": _round(amt),
+            "bank_name": str(body.get("bank_name") or "").strip(),
+            "status": status_val,
+            "notes": str(body.get("notes") or "").strip(),
+            "created_by": user["id"],
+            "created_by_name": user.get("name"),
+            "created_at": _now(),
+        }
+        await db.dms_cheques.insert_one(doc)
+        doc.pop("_id", None)
+        return _clean(doc)
+
+    @router.put("/cheques/{cqid}")
+    async def update_cheque(cqid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        cur = await db.dms_cheques.find_one({"id": cqid}, {"_id": 0})
+        if not cur:
+            raise HTTPException(status_code=404, detail="Cheque not found")
+        await _check_fy_lock(cur.get("date"), "cheque")
+        upd: Dict[str, Any] = {}
+        for k in ("cheque_no", "party_name", "bank_name", "notes"):
+            if k in body:
+                upd[k] = str(body.get(k) or "").strip()
+        if "amount" in body:
+            try:
+                amt = float(body["amount"])
+            except Exception:
+                raise HTTPException(status_code=400, detail="amount must be a number")
+            if amt <= 0:
+                raise HTTPException(status_code=400, detail="amount must be > 0")
+            upd["amount"] = _round(amt)
+        if "status" in body:
+            sv = str(body.get("status") or "").strip().lower()
+            if sv not in ("pending", "cleared", "bounced", "cancelled"):
+                raise HTTPException(status_code=400, detail="invalid status")
+            upd["status"] = sv
+        if "date" in body:
+            d = str(body.get("date") or "").strip()
+            try:
+                datetime.strptime(d, "%Y-%m-%d")
+            except Exception:
+                raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+            await _check_fy_lock(d, "cheque")
+            upd["date"] = d
+        upd["updated_at"] = _now()
+        await db.dms_cheques.update_one({"id": cqid}, {"$set": upd})
+        return {"ok": True}
+
+    @router.delete("/cheques/{cqid}")
+    async def delete_cheque(cqid: str, user: dict = Depends(owner_only)):
+        cur = await db.dms_cheques.find_one({"id": cqid}, {"_id": 0})
+        if not cur:
+            raise HTTPException(status_code=404, detail="Cheque not found")
+        await _check_fy_lock(cur.get("date"), "cheque")
+        await db.dms_cheques.delete_one({"id": cqid})
+        return {"ok": True}
+
+    # -- Loan Accounts --
+    @router.get("/loan-accounts")
+    async def list_loans(user: dict = Depends(owner_or_owner_acct)):
+        rows = await db.dms_loan_accounts.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+        return {"data": rows, "count": len(rows)}
+
+    @router.post("/loan-accounts")
+    async def create_loan(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name required")
+        try:
+            principal = float(body.get("principal") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="principal must be a number")
+        if principal <= 0:
+            raise HTTPException(status_code=400, detail="principal must be > 0")
+        try:
+            rate = float(body.get("interest_rate") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="interest_rate must be a number")
+        start_date = str(body.get("start_date") or _now()[:10]).strip()
+        try:
+            datetime.strptime(start_date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="start_date must be YYYY-MM-DD")
+        try:
+            tenure = int(body.get("tenure_months") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="tenure_months must be integer")
+        doc = {
+            "id": _nid("loan"),
+            "name": name,
+            "lender_name": str(body.get("lender_name") or "").strip(),
+            "principal": _round(principal),
+            "interest_rate": _round(rate),
+            "start_date": start_date,
+            "tenure_months": tenure,
+            "outstanding": _round(principal),  # start with principal
+            "notes": str(body.get("notes") or "").strip(),
+            "active": True,
+            "created_by": user["id"],
+            "created_at": _now(),
+        }
+        await db.dms_loan_accounts.insert_one(doc)
+        # auto-log a disbursement txn
+        await db.dms_loan_transactions.insert_one({
+            "id": _nid("lntx"),
+            "loan_account_id": doc["id"],
+            "date": start_date,
+            "type": "disbursement",
+            "amount": _round(principal),
+            "notes": "Initial disbursement",
+            "outstanding_after": _round(principal),
+            "created_by": user["id"],
+            "created_at": _now(),
+        })
+        doc.pop("_id", None)
+        return _clean(doc)
+
+    @router.put("/loan-accounts/{lid}")
+    async def update_loan(lid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        cur = await db.dms_loan_accounts.find_one({"id": lid}, {"_id": 0})
+        if not cur:
+            raise HTTPException(status_code=404, detail="Loan not found")
+        upd: Dict[str, Any] = {}
+        for k in ("name", "lender_name", "notes"):
+            if k in body:
+                upd[k] = str(body.get(k) or "").strip()
+        if "interest_rate" in body:
+            try:
+                upd["interest_rate"] = _round(float(body["interest_rate"]))
+            except Exception:
+                raise HTTPException(status_code=400, detail="interest_rate must be a number")
+        if "tenure_months" in body:
+            try:
+                upd["tenure_months"] = int(body["tenure_months"])
+            except Exception:
+                raise HTTPException(status_code=400, detail="tenure_months must be integer")
+        if "active" in body:
+            upd["active"] = bool(body["active"])
+        upd["updated_at"] = _now()
+        await db.dms_loan_accounts.update_one({"id": lid}, {"$set": upd})
+        return {"ok": True}
+
+    @router.delete("/loan-accounts/{lid}")
+    async def delete_loan(lid: str, user: dict = Depends(owner_only)):
+        c = await db.dms_loan_transactions.count_documents({"loan_account_id": lid})
+        if c > 1:  # allow deletion if only initial disbursement
+            raise HTTPException(status_code=400, detail=f"Cannot delete: {c} transactions exist")
+        await db.dms_loan_transactions.delete_many({"loan_account_id": lid})
+        await db.dms_loan_accounts.delete_one({"id": lid})
+        return {"ok": True}
+
+    # -- Loan Transactions --
+    @router.get("/loan-transactions")
+    async def list_loan_transactions(user: dict = Depends(owner_or_owner_acct), loan_id: Optional[str] = None):
+        q: Dict[str, Any] = {}
+        if loan_id: q["loan_account_id"] = loan_id
+        rows = await db.dms_loan_transactions.find(q, {"_id": 0}).sort("date", -1).to_list(2000)
+        return {"data": rows, "count": len(rows)}
+
+    @router.post("/loan-transactions")
+    async def create_loan_transaction(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        lid = str(body.get("loan_account_id") or "").strip()
+        loan = await db.dms_loan_accounts.find_one({"id": lid}, {"_id": 0})
+        if not loan:
+            raise HTTPException(status_code=400, detail="loan_account_id invalid")
+        typ = str(body.get("type") or "").strip().lower()
+        if typ not in ("disbursement", "repayment", "interest"):
+            raise HTTPException(status_code=400, detail="type must be disbursement/repayment/interest")
+        try:
+            amt = float(body.get("amount") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="amount must be a number")
+        if amt <= 0:
+            raise HTTPException(status_code=400, detail="amount must be > 0")
+        date = str(body.get("date") or _now()[:10]).strip()
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        await _check_fy_lock(date, "loan transaction")
+        # outstanding: disbursement/interest increase; repayment decreases
+        delta = -amt if typ == "repayment" else amt
+        new_outstanding = _round(float(loan.get("outstanding") or 0) + delta)
+        doc = {
+            "id": _nid("lntx"),
+            "loan_account_id": lid,
+            "date": date,
+            "type": typ,
+            "amount": _round(amt),
+            "notes": str(body.get("notes") or "").strip(),
+            "outstanding_after": new_outstanding,
+            "created_by": user["id"],
+            "created_by_name": user.get("name"),
+            "created_at": _now(),
+        }
+        await db.dms_loan_transactions.insert_one(doc)
+        await db.dms_loan_accounts.update_one({"id": lid}, {"$set": {"outstanding": new_outstanding, "updated_at": _now()}})
+        doc.pop("_id", None)
+        return _clean(doc)
+
+    # =========================================================================
+    # PHASE 2B — GODOWN MANAGEMENT + INVENTORY
+    # =========================================================================
+
+    async def _adjust_godown_stock(godown_id: str, product_id: str, delta_boxes: int, reason: str, ref: str = ""):
+        cur = await db.dms_godown_inventory.find_one({"godown_id": godown_id, "product_id": product_id})
+        if cur:
+            new_qty = int(cur.get("qty_boxes", 0)) + int(delta_boxes)
+            await db.dms_godown_inventory.update_one(
+                {"godown_id": godown_id, "product_id": product_id},
+                {"$set": {"qty_boxes": max(new_qty, 0), "updated_at": _now()}},
+            )
+        else:
+            await db.dms_godown_inventory.insert_one({
+                "id": _nid("ginv"),
+                "godown_id": godown_id,
+                "product_id": product_id,
+                "qty_boxes": max(int(delta_boxes), 0),
+                "updated_at": _now(),
+            })
+        await db.dms_stock_ledger.insert_one({
+            "id": _nid("sl"),
+            "scope": "godown",
+            "godown_id": godown_id,
+            "product_id": product_id,
+            "delta_boxes": int(delta_boxes),
+            "reason": reason,
+            "reference": ref,
+            "at": _now(),
+        })
+
+    async def _get_godown_stock(godown_id: str, product_id: str) -> int:
+        doc = await db.dms_godown_inventory.find_one({"godown_id": godown_id, "product_id": product_id}, {"_id": 0, "qty_boxes": 1})
+        return int(doc.get("qty_boxes", 0)) if doc else 0
+
+    @router.get("/godowns")
+    async def list_godowns(user: dict = Depends(owner_or_owner_acct)):
+        rows = await db.dms_godowns.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+        # attach total_boxes per godown
+        for r in rows:
+            agg = await db.dms_godown_inventory.aggregate([
+                {"$match": {"godown_id": r["id"]}},
+                {"$group": {"_id": None, "total_boxes": {"$sum": "$qty_boxes"}}},
+            ]).to_list(2)
+            r["total_boxes"] = int((agg[0]["total_boxes"] if agg else 0) or 0)
+        return {"data": rows, "count": len(rows)}
+
+    @router.post("/godowns")
+    async def create_godown(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        name = str(body.get("name") or "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name required")
+        doc = {
+            "id": _nid("gdn"),
+            "name": name,
+            "address": str(body.get("address") or "").strip(),
+            "manager_name": str(body.get("manager_name") or "").strip(),
+            "phone": str(body.get("phone") or "").strip(),
+            "capacity_boxes": int(body.get("capacity_boxes") or 0),
+            "notes": str(body.get("notes") or "").strip(),
+            "active": True,
+            "created_by": user["id"],
+            "created_at": _now(),
+        }
+        await db.dms_godowns.insert_one(doc)
+        doc.pop("_id", None)
+        return _clean(doc)
+
+    @router.put("/godowns/{gid}")
+    async def update_godown(gid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        cur = await db.dms_godowns.find_one({"id": gid}, {"_id": 0})
+        if not cur:
+            raise HTTPException(status_code=404, detail="Godown not found")
+        upd: Dict[str, Any] = {}
+        for k in ("name", "address", "manager_name", "phone", "notes"):
+            if k in body:
+                upd[k] = str(body.get(k) or "").strip()
+        if "capacity_boxes" in body:
+            try:
+                upd["capacity_boxes"] = int(body["capacity_boxes"])
+            except Exception:
+                raise HTTPException(status_code=400, detail="capacity_boxes must be integer")
+        if "active" in body:
+            upd["active"] = bool(body["active"])
+        upd["updated_at"] = _now()
+        await db.dms_godowns.update_one({"id": gid}, {"$set": upd})
+        return {"ok": True}
+
+    @router.delete("/godowns/{gid}")
+    async def delete_godown(gid: str, user: dict = Depends(owner_only)):
+        # only allow delete if no stock
+        agg = await db.dms_godown_inventory.aggregate([
+            {"$match": {"godown_id": gid}},
+            {"$group": {"_id": None, "total_boxes": {"$sum": "$qty_boxes"}}},
+        ]).to_list(2)
+        total = int((agg[0]["total_boxes"] if agg else 0) or 0)
+        if total > 0:
+            raise HTTPException(status_code=400, detail=f"Cannot delete: {total} boxes in godown. Transfer stock first.")
+        await db.dms_godown_inventory.delete_many({"godown_id": gid})
+        await db.dms_godowns.delete_one({"id": gid})
+        return {"ok": True}
+
+    @router.get("/godowns/{gid}/inventory")
+    async def get_godown_inventory(gid: str, user: dict = Depends(owner_or_owner_acct)):
+        godown = await db.dms_godowns.find_one({"id": gid}, {"_id": 0})
+        if not godown:
+            raise HTTPException(status_code=404, detail="Godown not found")
+        rows = await db.dms_godown_inventory.find({"godown_id": gid}, {"_id": 0}).to_list(2000)
+        pids = [r["product_id"] for r in rows]
+        prods = {p["id"]: p async for p in db.dms_products.find({"id": {"$in": pids}}, {"_id": 0})}
+        for r in rows:
+            p = prods.get(r["product_id"], {})
+            r["product_name"] = p.get("name", "")
+            r["sku_code"] = p.get("sku_code", "")
+            r["material_description"] = p.get("material_description", "")
+            r["pack_size"] = p.get("pack_size", "")
+            r["unit_price"] = p.get("unit_price", 0)
+            r["value"] = _round((r.get("qty_boxes", 0) or 0) * (p.get("unit_price", 0) or 0))
+        rows.sort(key=lambda x: x.get("product_name", ""))
+        return {
+            "godown": godown,
+            "data": rows,
+            "total_value": _round(sum(r.get("value", 0) for r in rows)),
+            "total_boxes": int(sum(r.get("qty_boxes", 0) for r in rows)),
+        }
+
+    # =========================================================================
+    # PHASE 2B — STOCK TRANSFER (owner <-> godown, godown <-> godown)
+    # =========================================================================
+    @router.get("/stock-transfers")
+    async def list_stock_transfers(user: dict = Depends(owner_or_owner_acct), start: Optional[str] = None, end: Optional[str] = None):
+        q: Dict[str, Any] = {}
+        if start: q.setdefault("date", {})["$gte"] = start
+        if end: q.setdefault("date", {})["$lte"] = end
+        rows = await db.dms_stock_transfers.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+        return {"data": rows, "count": len(rows)}
+
+    @router.get("/stock-transfers/{tid}")
+    async def get_stock_transfer(tid: str, user: dict = Depends(owner_or_owner_acct)):
+        row = await db.dms_stock_transfers.find_one({"id": tid}, {"_id": 0})
+        if not row:
+            raise HTTPException(status_code=404, detail="Transfer not found")
+        return row
+
+    @router.post("/stock-transfers")
+    async def create_stock_transfer(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        """Body: {date, from_type: 'owner'|'godown', from_godown_id?, to_type: 'godown'|'owner', to_godown_id?, items: [{product_id, qty_boxes}], notes}"""
+        date = str(body.get("date") or _now()[:10]).strip()
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        await _check_fy_lock(date, "stock transfer")
+        from_type = str(body.get("from_type") or "").strip().lower()
+        to_type = str(body.get("to_type") or "").strip().lower()
+        if from_type not in ("owner", "godown") or to_type not in ("owner", "godown"):
+            raise HTTPException(status_code=400, detail="from_type/to_type must be owner or godown")
+        if from_type == "owner" and to_type == "owner":
+            raise HTTPException(status_code=400, detail="Source and destination cannot both be owner")
+        from_gid = str(body.get("from_godown_id") or "").strip() or None
+        to_gid = str(body.get("to_godown_id") or "").strip() or None
+        if from_type == "godown" and not from_gid:
+            raise HTTPException(status_code=400, detail="from_godown_id required")
+        if to_type == "godown" and not to_gid:
+            raise HTTPException(status_code=400, detail="to_godown_id required")
+        if from_type == "godown" and to_type == "godown" and from_gid == to_gid:
+            raise HTTPException(status_code=400, detail="Source and destination godowns cannot be the same")
+        # verify godowns exist
+        from_godown = None; to_godown = None
+        if from_gid:
+            from_godown = await db.dms_godowns.find_one({"id": from_gid}, {"_id": 0})
+            if not from_godown:
+                raise HTTPException(status_code=400, detail="from_godown_id invalid")
+        if to_gid:
+            to_godown = await db.dms_godowns.find_one({"id": to_gid}, {"_id": 0})
+            if not to_godown:
+                raise HTTPException(status_code=400, detail="to_godown_id invalid")
+        items = body.get("items") or []
+        if not items:
+            raise HTTPException(status_code=400, detail="items required")
+        # normalize + validate stock at source
+        norm_items: List[Dict[str, Any]] = []
+        pids = [str(i.get("product_id") or "").strip() for i in items if i.get("product_id")]
+        prods = {p["id"]: p async for p in db.dms_products.find({"id": {"$in": pids}}, {"_id": 0})}
+        for it in items:
+            pid = str(it.get("product_id") or "").strip()
+            try:
+                qty = int(it.get("qty_boxes") or 0)
+            except Exception:
+                raise HTTPException(status_code=400, detail="qty_boxes must be integer")
+            if qty <= 0:
+                raise HTTPException(status_code=400, detail=f"qty_boxes must be > 0 for {pid}")
+            p = prods.get(pid)
+            if not p:
+                raise HTTPException(status_code=400, detail=f"product_id invalid: {pid}")
+            # verify source has enough stock
+            if from_type == "owner":
+                avail = await _get_owner_stock(pid)
+            else:
+                avail = await _get_godown_stock(from_gid, pid)
+            if qty > avail:
+                raise HTTPException(status_code=400, detail=f"Insufficient stock for {p.get('name', pid)}: available {avail}, requested {qty}")
+            norm_items.append({
+                "product_id": pid,
+                "product_name": p.get("name", ""),
+                "sku_code": p.get("sku_code", ""),
+                "material_description": p.get("material_description", ""),
+                "pack_size": p.get("pack_size", ""),
+                "qty_boxes": qty,
+            })
+        # Build transfer_no like ST-{yymmdd}-{count+1}
+        cnt = await db.dms_stock_transfers.count_documents({})
+        transfer_no = f"ST-{datetime.now().strftime('%y%m%d')}-{cnt + 1:04d}"
+        transfer = {
+            "id": _nid("stx"),
+            "transfer_no": transfer_no,
+            "date": date,
+            "from_type": from_type,
+            "from_godown_id": from_gid,
+            "from_godown_name": (from_godown or {}).get("name") if from_godown else "Owner Warehouse",
+            "to_type": to_type,
+            "to_godown_id": to_gid,
+            "to_godown_name": (to_godown or {}).get("name") if to_godown else "Owner Warehouse",
+            "items": norm_items,
+            "total_boxes": int(sum(i["qty_boxes"] for i in norm_items)),
+            "notes": str(body.get("notes") or "").strip(),
+            "created_by": user["id"],
+            "created_by_name": user.get("name"),
+            "created_at": _now(),
+        }
+        await db.dms_stock_transfers.insert_one(transfer)
+        # apply movements
+        for it in norm_items:
+            if from_type == "owner":
+                await _adjust_owner_stock(it["product_id"], -it["qty_boxes"], "stock_transfer_out", transfer_no)
+            else:
+                await _adjust_godown_stock(from_gid, it["product_id"], -it["qty_boxes"], "stock_transfer_out", transfer_no)
+            if to_type == "owner":
+                await _adjust_owner_stock(it["product_id"], it["qty_boxes"], "stock_transfer_in", transfer_no)
+            else:
+                await _adjust_godown_stock(to_gid, it["product_id"], it["qty_boxes"], "stock_transfer_in", transfer_no)
+        transfer.pop("_id", None)
+        return _clean(transfer)
+
+    # =========================================================================
+    # PHASE 2B — settings endpoint extension for stop_sale_on_negative
+    # =========================================================================
+    @router.put("/settings/stop-sale")
+    async def toggle_stop_sale(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        v = bool(body.get("enabled", True))
+        await db.dms_settings.update_one({"id": "global"}, {"$set": {"stop_sale_on_negative": v, "updated_at": _now()}}, upsert=True)
+        return {"ok": True, "stop_sale_on_negative": v}
 
     return router

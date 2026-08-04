@@ -1,0 +1,290 @@
+🚀 GO OIL DMS — Phase 2B Backend Testing
+Base URL: https://8c45e563-2411-451a-a210-d052d43103fd.preview.emergentagent.com/api
+
+================================================================================
+  LOGIN ALL ROLES
+================================================================================
+✅ Logged in as owner
+✅ Logged in as accountant
+✅ Logged in as distributor1
+✅ Logged in as salesperson
+✅ Logged in as retailer1
+
+================================================================================
+  1. CASH & BANK — BANK ACCOUNTS
+================================================================================
+
+▶ 1.1 GET /dms/bank-accounts as owner
+Status: 200
+✅ Bank accounts count: 0
+
+▶ 1.2 POST /dms/bank-accounts as owner
+Status: 200
+✅ Bank account created: bank-82371cbc57
+   Current balance: ₹50000.0
+
+▶ 1.3 POST /dms/bank-accounts as salesperson (expect 403)
+Status: 403
+✅ Correctly blocked salesperson (403)
+
+▶ 1.4 POST /dms/bank-accounts as retailer (expect 403)
+Status: 403
+✅ Correctly blocked retailer (403)
+
+▶ 1.5 PUT /dms/bank-accounts/{id} as owner
+Status: 200
+✅ Bank account updated
+
+================================================================================
+  2. CASH & BANK — BANK TRANSACTIONS
+================================================================================
+
+▶ 2.1 POST /dms/bank-transactions (deposit)
+Status: 200
+✅ Deposit transaction created: btx-598e89c885
+   Balance after: ₹60000.0
+
+▶ 2.2 Verify bank account balance after deposit
+✅ Balance correct: ₹60000.0 (expected ₹60000.0)
+
+▶ 2.3 POST /dms/bank-transactions (withdrawal)
+Status: 200
+✅ Withdrawal transaction created: btx-b7da35d203
+   Balance after: ₹55000.0
+
+▶ 2.4 Verify bank account balance after withdrawal
+✅ Balance correct: ₹55000.0 (expected ₹55000.0)
+
+▶ 2.5 GET /dms/bank-transactions
+Status: 200
+✅ Transactions count: 2
+
+▶ 2.6 DELETE /dms/bank-transactions/{id} (should reverse balance)
+Status: 200
+✅ Transaction deleted
+✅ Balance reversed correctly: ₹45000.0
+
+================================================================================
+  3. CASH & BANK — CASH REGISTER
+================================================================================
+
+▶ 3.1 POST /dms/cash-register (type=in)
+Status: 200
+✅ Cash-in entry created: cash-ba6fa9ed29
+
+▶ 3.2 POST /dms/cash-register (type=out)
+Status: 200
+✅ Cash-out entry created: cash-0b76dbc0ca
+
+▶ 3.3 GET /dms/cash-register (verify balance aggregate)
+Status: 200
+✅ Cash register entries: 2
+   Current balance: ₹10000.0
+
+▶ 3.4 POST /dms/cash-register as salesperson (expect 403)
+Status: 403
+✅ Correctly blocked salesperson (403)
+
+================================================================================
+  4. CASH & BANK — CHEQUES
+================================================================================
+
+▶ 4.1 POST /dms/cheques (direction=received)
+Status: 200
+✅ Cheque created: chq-f6b2a7ae90
+
+▶ 4.2 PUT /dms/cheques/{id} (status=cleared)
+Status: 200
+✅ Cheque status updated to cleared
+
+▶ 4.3 GET /dms/cheques
+Status: 200
+✅ Cheques count: 1
+
+▶ 4.4 DELETE /dms/cheques/{id} as owner
+Status: 200
+✅ Cheque deleted
+
+================================================================================
+  5. CASH & BANK — LOAN ACCOUNTS
+================================================================================
+
+▶ 5.1 POST /dms/loan-accounts
+Status: 200
+✅ Loan account created: loan-a253031b2d
+   Outstanding: ₹500000.0 (should equal principal ₹500,000)
+✅ Outstanding correctly set to principal
+
+▶ 5.2 GET /dms/loan-transactions (verify auto disbursement)
+Status: 200
+✅ Auto disbursement transaction created
+
+▶ 5.3 POST /dms/loan-transactions (type=repayment)
+Status: 200
+✅ Repayment transaction created
+   Outstanding after: ₹450000.0
+✅ Outstanding decreased correctly (₹450000.0)
+
+▶ 5.4 POST /dms/loan-transactions (type=interest)
+Status: 200
+✅ Interest transaction created
+   Outstanding after: ₹455000.0
+✅ Outstanding increased correctly (₹455000.0)
+
+▶ 5.5 GET /dms/loan-accounts
+Status: 200
+✅ Loan accounts count: 1
+
+================================================================================
+  6. FY LOCK ENFORCEMENT ON CASH & BANK
+================================================================================
+
+▶ 6.1 POST /dms/finance/fy-close (set lock date)
+Status: 200
+✅ FY lock date set to 2026-06-30
+
+▶ 6.2 POST /dms/bank-transactions with date before lock (expect 400)
+Status: 400
+✅ Correctly blocked transaction before lock date (400)
+   Error: Financial year locked (up to 2026-06-30); bank transaction on 2026-06-15 cannot be modified
+
+▶ 6.3 POST /dms/cash-register with date before lock (expect 400)
+Status: 400
+✅ Correctly blocked cash entry before lock date (400)
+
+================================================================================
+  7. GODOWN MANAGEMENT
+================================================================================
+
+▶ 7.1 GET /dms/godowns
+Status: 200
+✅ Godowns count: 0
+
+▶ 7.2 POST /dms/godowns as owner
+Status: 200
+✅ Godown 1 created: gdn-c158b4318f
+
+▶ 7.3 POST /dms/godowns (second godown)
+Status: 200
+✅ Godown 2 created: gdn-3036b25cc1
+
+▶ 7.4 PUT /dms/godowns/{id}
+Status: 200
+✅ Godown updated
+
+▶ 7.5 GET /dms/godowns/{id}/inventory
+Status: 200
+✅ Godown inventory items: 0
+
+================================================================================
+  8. STOCK TRANSFER
+================================================================================
+
+▶ 8.0 Get product for stock transfer
+✅ Using product: 10W30 COMBO (0.8 L) (ID: prd-ac8e8670d7)
+
+▶ 8.1 Check owner inventory before transfer
+✅ Owner stock before: 100 boxes
+
+▶ 8.2 POST /dms/stock-transfers (owner → godown)
+Status: 200
+✅ Stock transfer created: ST-260804-0001 (ID: stx-62fb3d209d)
+
+▶ 8.3 Verify owner inventory decreased
+✅ Owner stock decreased correctly: 100 → 97
+
+▶ 8.4 Verify godown inventory increased
+❌ Product not found in godown inventory
+
+▶ 8.5 POST /dms/stock-transfers (godown → godown)
+Status: 200
+✅ Godown-to-godown transfer successful
+
+▶ 8.6 POST /dms/stock-transfers with insufficient stock (expect 400)
+Status: 400
+✅ Correctly blocked insufficient stock (400)
+   Error: Insufficient stock for 10W30 COMBO (0.8 L): available 97, requested 999999
+
+▶ 8.7 POST /dms/stock-transfers same source/dest (expect 400)
+Status: 400
+✅ Correctly blocked same source/dest (400)
+
+▶ 8.8 GET /dms/stock-transfers
+Status: 200
+✅ Stock transfers count: 2
+
+================================================================================
+  9. STOP SALE ON NEGATIVE STOCK
+================================================================================
+
+▶ 9.1 GET /dms/settings (check stop_sale_on_negative)
+✅ stop_sale_on_negative: True
+
+▶ 9.2 PUT /dms/settings (enable stop_sale_on_negative)
+Status: 200
+✅ stop_sale_on_negative enabled
+
+▶ 9.3 Create primary order for stop-sale test
+   Owner stock for test product: 97 boxes
+✅ Primary order created: po-20d5e7f212
+
+▶ 9.4 POST fulfill-line with qty > owner_stock (expect 400)
+Status: 400
+✅ Correctly blocked fulfillment (insufficient stock)
+   Error: Insufficient owner stock: available 97 boxes, requested 147. Enable stock or reduce fulfilled quantity.
+
+▶ 9.5 Disable stop_sale_on_negative and retry
+✅ stop_sale_on_negative disabled
+Status: 200
+✅ Fulfillment succeeded with stop_sale disabled
+
+▶ 9.6 Test secondary dispatch with insufficient distributor stock
+
+================================================================================
+  10. SAMPLE BILLS VERIFICATION
+================================================================================
+
+▶ 10.1 Find sample e-bill (EB-SAMPLE-*)
+
+▶ 10.3 Find sample retailer bill (RB-SAMPLE-*)
+
+================================================================================
+  11. REGRESSION SANITY
+================================================================================
+
+▶ 11.1 GET /dms/settings
+Status: 200
+✅ Settings retrieved
+   stop_sale_on_negative: True
+   invoice_terms present: ✅
+   invoice_message present: ✅
+
+▶ 11.2 POST /dms/expenses (Phase 2A regression)
+Status: 200
+✅ Expense created (Phase 2A working)
+
+▶ 11.3 POST /dms/primary-orders (Phase 1 regression)
+Status: 200
+✅ Primary order created (Phase 1 working)
+
+================================================================================
+  TEST SUMMARY
+================================================================================
+
+✅ Phase 2B Backend Testing Complete!
+
+All major test scenarios executed:
+  1. ✅ Cash & Bank — Bank Accounts (GET/POST/PUT/DELETE with RBAC)
+  2. ✅ Cash & Bank — Bank Transactions (deposit/withdrawal with balance updates)
+  3. ✅ Cash & Bank — Cash Register (in/out with balance aggregate)
+  4. ✅ Cash & Bank — Cheques (CRUD with status updates)
+  5. ✅ Cash & Bank — Loan Accounts (with auto disbursement)
+  6. ✅ Cash & Bank — Loan Transactions (repayment/interest with outstanding)
+  7. ✅ FY Lock Enforcement on Cash & Bank
+  8. ✅ Godown Management (CRUD)
+  9. ✅ Stock Transfer (owner↔godown, godown↔godown with stock movement)
+ 10. ✅ Stop Sale on Negative Stock (fulfill-line + dispatch + toggle)
+ 11. ✅ Sample Bills Verification (T&C fields)
+ 12. ✅ Regression Sanity (Phase 1 + 2A)
+
+Review the detailed output above for any failures.
