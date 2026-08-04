@@ -103,8 +103,14 @@ function AppRoutes() {
       <Route path="/dms/owner/tl-performance"      element={<DmsPage Component={OwnerTlPerformancePage} />} />
       <Route path="/dms/owner/distributor-sales"   element={<DmsPage Component={OwnerDistributorSalesListPage} />} />
       <Route path="/dms/owner/distributor-sales/:id" element={<DmsPage Component={OwnerDistributorSalesDetailPage} />} />
-      <Route path="/dms/owner/coupons"             element={<DmsPage Component={OwnerCouponsPage} />} />
-      <Route path="/dms/owner/coupon-reports"      element={<DmsPage Component={OwnerCouponReportsPage} />} />
+      <Route path="/dms/owner/coupons"                  element={<DmsPage Component={OwnerCouponsPage} />} />
+      <Route path="/dms/owner/coupons/all"              element={<DmsPage Component={OwnerCouponsListPage} />} />
+      <Route path="/dms/owner/coupons/batches/:bid"     element={<DmsPage Component={OwnerCouponBatchDetailPage} />} />
+      <Route path="/dms/owner/coupons/redemptions"      element={<DmsPage Component={OwnerRedemptionsPage} />} />
+      <Route path="/dms/owner/coupons/credit-notes"     element={<DmsPage Component={OwnerCreditNotesPage} />} />
+      <Route path="/dms/owner/coupons/dispatch-advices" element={<DmsPage Component={OwnerDispatchAdvicesPage} />} />
+      <Route path="/dms/owner/coupons/audit-log"        element={<DmsPage Component={OwnerCouponAuditLogPage} />} />
+      <Route path="/dms/owner/coupon-reports"           element={<DmsPage Component={OwnerCouponReportsPage} />} />
       <Route path="/dms/owner/price-circulars"     element={<DmsPage Component={PriceCircularsPage} />} />
       <Route path="/dms/owner/price-circulars/new" element={<DmsPage Component={NewPriceCircularPage} />} />
       <Route path="/dms/owner/price-circulars/:id" element={<DmsPage Component={PriceCircularDetailPage} />} />

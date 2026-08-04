@@ -4660,3 +4660,137 @@ agent_communication:
       The NEW GO OIL Coupon Engine is production-ready with only 1 minor enhancement needed
       (add pending_redemptions field to retailer wallet response).
 
+
+  - task: "GO OIL Coupon Engine — Frontend Navigation Bug Fix"
+    implemented: true
+    working: true
+    file: "frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          🐛 BUG FIX — Navigation routes missing for coupon pages
+          
+          User reported: Clicking sidebar items for coupon-related pages (All Coupons, 
+          Redemptions, Credit Notes, Dispatch Advices, Audit Log, Batch Detail) was 
+          redirecting to /dms dashboard instead of staying on the intended page.
+          
+          ROOT CAUSE:
+          Routes for the following paths were missing in App.js:
+          - /dms/owner/coupons/all
+          - /dms/owner/coupons/redemptions
+          - /dms/owner/coupons/credit-notes
+          - /dms/owner/coupons/dispatch-advices
+          - /dms/owner/coupons/audit-log
+          - /dms/owner/coupons/batches/:bid
+          
+          The catch-all Navigate to="/dms" was catching these routes and redirecting 
+          to the dashboard.
+          
+          FIX APPLIED:
+          Added all missing routes to App.js (lines 107-113):
+          - Route path="/dms/owner/coupons/all" → OwnerCouponsListPage
+          - Route path="/dms/owner/coupons/batches/:bid" → OwnerCouponBatchDetailPage
+          - Route path="/dms/owner/coupons/redemptions" → OwnerRedemptionsPage
+          - Route path="/dms/owner/coupons/credit-notes" → OwnerCreditNotesPage
+          - Route path="/dms/owner/coupons/dispatch-advices" → OwnerDispatchAdvicesPage
+          - Route path="/dms/owner/coupons/audit-log" → OwnerCouponAuditLogPage
+          
+          All routes now properly render their respective components instead of 
+          redirecting to the dashboard.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ NAVIGATION BUG FIX VERIFIED — ALL 10 CHECKS PASSED (100%)
+          
+          Comprehensive navigation testing completed across all 4 roles.
+          Verified that all coupon-related sidebar items navigate to the correct 
+          pages and DO NOT redirect to /dms dashboard.
+          
+          **OWNER ROLE (8/8 PASSED):**
+          1. ✅ Coupons → /dms/owner/coupons
+             - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/owner/coupons
+             - Heading: "Coupon Management"
+             - Page renders with KPI cards and batches table
+          
+          2. ✅ All Coupons → /dms/owner/coupons/all
+             - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/owner/coupons/all
+             - Heading: "All Coupons"
+             - Page renders correctly
+          
+          3. ✅ Redemptions → /dms/owner/coupons/redemptions
+             - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/owner/coupons/redemptions
+             - Heading: "Redemption Requests"
+             - Page renders correctly
+          
+          4. ✅ Credit Notes → /dms/owner/coupons/credit-notes
+             - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/owner/coupons/credit-notes
+             - Heading: "Credit Notes"
+             - Page renders correctly
+          
+          5. ✅ Dispatch Advices → /dms/owner/coupons/dispatch-advices
+             - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/owner/coupons/dispatch-advices
+             - Heading: "Dispatch Advices"
+             - Page renders correctly
+          
+          6. ✅ Coupon Reports → /dms/owner/coupon-reports
+             - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/owner/coupon-reports
+             - Heading: "Coupon Reports"
+             - Page renders correctly
+          
+          7. ✅ Coupon Audit Log → /dms/owner/coupons/audit-log
+             - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/owner/coupons/audit-log
+             - Heading: "Coupon Audit Log"
+             - Page renders correctly
+          
+          8. ✅ Batch Detail → /dms/owner/coupons/batches/cbt-a936658197c6
+             - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/owner/coupons/batches/cbt-a936658197c6
+             - Heading: "Batch GO-R-00003"
+             - Clicked "Open" button on batch row, navigated to batch detail page
+             - Page shows batch details with status cards and coupons table
+          
+          **SALESPERSON ROLE (1/1 PASSED):**
+          9. ✅ Scan Coupon → /dms/salesperson/scan
+             - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/salesperson/scan
+             - Heading: "Scan Coupon"
+             - Page renders with two-column layout (Retailer picker + Scan panel)
+          
+          **RETAILER ROLE (1/1 PASSED):**
+          10. ✅ My Wallet → /dms/retailer/wallet
+              - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/retailer/wallet
+              - Heading: "My Wallets & Coupons"
+              - Page renders with two large wallet cards (Cash Wallet + Reward Wallet)
+          
+          **DISTRIBUTOR ROLE (1/1 PASSED):**
+          11. ✅ Coupon Rewards → /dms/distributor/coupons
+              - URL: https://8b990fff-53a8-4722-be4b-98ef0f962049.preview.emergentagent.com/dms/distributor/coupons
+              - Heading: "Coupon Rewards"
+              - Page renders with KPI cards and tabs (Retailer Wallets, Redemptions, 
+                Credit Notes, Dispatch Advices)
+          
+          🎯 CRITICAL VERIFICATION:
+          - All 10 navigation checks passed (100%)
+          - No redirects to /dms dashboard detected
+          - All URLs stay on the intended pages
+          - All page headings match expected values
+          - All pages render correctly without errors
+          - Sidebar navigation working for all roles
+          
+          📊 TEST COVERAGE:
+          - Owner: 8/8 coupon pages (100%)
+          - Salesperson: 1/1 page (100%)
+          - Retailer: 1/1 page (100%)
+          - Distributor: 1/1 page (100%)
+          - Total: 11/11 navigation checks (100%)
+          
+          🔧 FIX CONFIRMED WORKING:
+          The reported navigation bug is RESOLVED. All coupon-related sidebar items 
+          now correctly navigate to their respective pages without redirecting to 
+          the dashboard. The missing routes in App.js have been successfully added 
+          and are functioning as expected.
+          
+          NO CRITICAL ISSUES FOUND. Navigation bug fix verified and production-ready.
+
