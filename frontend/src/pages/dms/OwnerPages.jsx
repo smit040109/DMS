@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Plus, Edit, ArrowLeft, Package, TrendingUp, ShoppingCart, Warehouse, ScrollText, Users, ChevronRight, Truck, CheckCircle2, ClipboardList, Trash2, IndianRupee, Percent, Handshake, IdCard, Paperclip, Boxes, History } from "lucide-react";
+import { Plus, Edit, ArrowLeft, Package, TrendingUp, ShoppingCart, Warehouse, ScrollText, Users, ChevronRight, Truck, CheckCircle2, ClipboardList, Trash2, IndianRupee, Percent, Handshake, IdCard, Paperclip, Boxes, History, Receipt } from "lucide-react";
 import LocationDocumentsBlock from "./LocationDocumentsBlock";
 
 // ============================================================================
