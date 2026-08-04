@@ -1532,6 +1532,8 @@ def build_dms_router(db, get_current_user):
             raise HTTPException(status_code=404, detail="Order not found")
         if order.get("status") in ("dispatched", "delivered", "completed", "cancelled"):
             raise HTTPException(status_code=400, detail=f"Cannot cancel — order is {order.get('status')}")
+        # Phase 2A: FY lock check
+        await _check_fy_lock(order.get("created_at"), "order")
 
         # RBAC
         allowed = False
@@ -1576,6 +1578,8 @@ def build_dms_router(db, get_current_user):
             raise HTTPException(status_code=404, detail="Order not found")
         if order.get("status") != "pending":
             raise HTTPException(status_code=400, detail=f"Can only edit pending orders (current: {order.get('status')})")
+        # Phase 2A: FY lock check
+        await _check_fy_lock(order.get("created_at"), "order")
 
         # RBAC (same as cancel)
         allowed = False
@@ -3297,6 +3301,11 @@ def build_dms_router(db, get_current_user):
             raise HTTPException(status_code=403, detail="Forbidden")
         dist = await db.dms_distributors.find_one({"id": eb["distributor_id"]}, {"_id": 0})
         eb["distributor"] = dist
+        # Phase 2A: expose invoice T&C / message from global settings
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0, "invoice_terms": 1, "invoice_message": 1, "company_name": 1}) or {}
+        eb["invoice_terms"] = s.get("invoice_terms") or ""
+        eb["invoice_message"] = s.get("invoice_message") or ""
+        eb["company_name"] = s.get("company_name") or "GO OIL Lubricants"
         return eb
 
     @router.get("/print/retailer-bill/{bill_id}")
@@ -3313,6 +3322,11 @@ def build_dms_router(db, get_current_user):
         distributor = await db.dms_distributors.find_one({"id": b["distributor_id"]}, {"_id": 0})
         b["retailer"] = retailer
         b["distributor"] = distributor
+        # Phase 2A: expose invoice T&C / message from global settings
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0, "invoice_terms": 1, "invoice_message": 1, "company_name": 1}) or {}
+        b["invoice_terms"] = s.get("invoice_terms") or ""
+        b["invoice_message"] = s.get("invoice_message") or ""
+        b["company_name"] = s.get("company_name") or "GO OIL Lubricants"
         return b
 
     # =========================================================================
@@ -3343,10 +3357,235 @@ def build_dms_router(db, get_current_user):
             upd["gst_pct"] = gst
         if "company_name" in body and isinstance(body["company_name"], str):
             upd["company_name"] = body["company_name"].strip() or "GO OIL Lubricants"
+        # Phase 2A: invoice customization
+        if "invoice_terms" in body:
+            upd["invoice_terms"] = str(body.get("invoice_terms") or "").strip()
+        if "invoice_message" in body:
+            upd["invoice_message"] = str(body.get("invoice_message") or "").strip()
+        # Phase 2A: Financial Year lock date (YYYY-MM-DD). Can only move forward.
+        if "fy_lock_date" in body:
+            lock = str(body.get("fy_lock_date") or "").strip()
+            if lock:
+                try:
+                    datetime.strptime(lock, "%Y-%m-%d")
+                except Exception:
+                    raise HTTPException(status_code=400, detail="fy_lock_date must be YYYY-MM-DD")
+                cur = await _get_settings()
+                cur_lock = cur.get("fy_lock_date") or ""
+                if cur_lock and lock < cur_lock:
+                    raise HTTPException(status_code=400, detail=f"fy_lock_date can only move forward (current: {cur_lock})")
+            upd["fy_lock_date"] = lock or None
         upd["updated_at"] = _now()
         await db.dms_settings.update_one({"id": "global"}, {"$set": upd}, upsert=True)
         s = await _get_settings()
         return _clean(s)
+
+    # -- Financial year lock helper -----------------------------------------
+    async def _fy_lock_date() -> Optional[str]:
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0, "fy_lock_date": 1}) or {}
+        return s.get("fy_lock_date")
+
+    async def _check_fy_lock(entity_date_iso: Optional[str], what: str = "record") -> None:
+        """Raise 400 if entity's date is on/before the FY lock date. Accepts ISO datetime or YYYY-MM-DD."""
+        lock = await _fy_lock_date()
+        if not lock or not entity_date_iso:
+            return
+        try:
+            d = entity_date_iso[:10]
+        except Exception:
+            return
+        if d <= lock:
+            raise HTTPException(status_code=400, detail=f"Financial year locked (up to {lock}); {what} on {d} cannot be modified")
+
+    @router.post("/finance/fy-close")
+    async def fy_close(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        """Close (lock) the financial year up to a given date. Alias of PUT /settings with fy_lock_date."""
+        lock = str(body.get("lock_date") or "").strip()
+        if not lock:
+            raise HTTPException(status_code=400, detail="lock_date required (YYYY-MM-DD)")
+        try:
+            datetime.strptime(lock, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="lock_date must be YYYY-MM-DD")
+        cur = await _get_settings()
+        cur_lock = cur.get("fy_lock_date") or ""
+        if cur_lock and lock < cur_lock:
+            raise HTTPException(status_code=400, detail=f"lock_date can only move forward (current: {cur_lock})")
+        await db.dms_settings.update_one({"id": "global"}, {"$set": {"fy_lock_date": lock, "fy_locked_at": _now(), "fy_locked_by": user["id"], "updated_at": _now()}}, upsert=True)
+        return {"ok": True, "fy_lock_date": lock}
+
+    # =========================================================================
+    # EXPENSES  (Phase 2A) — CRUD for all roles except retailer
+    # =========================================================================
+    def _exp_can_view(role: str) -> bool:
+        return role in ("owner", "owner_accountant", "super_admin", "distributor", "distributor_accountant", "salesperson", "team_leader", "regional_manager")
+
+    def _exp_all_visible_roles() -> tuple:
+        return ("owner", "owner_accountant", "super_admin")
+
+    @router.get("/expenses")
+    async def list_expenses(user: dict = Depends(get_current_user), start: Optional[str] = None, end: Optional[str] = None, category: Optional[str] = None):
+        role = user.get("role")
+        if role == "retailer":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        q: Dict[str, Any] = {}
+        if role not in _exp_all_visible_roles():
+            q["created_by"] = user["id"]
+        if start:
+            q["date"] = q.get("date", {}); q["date"]["$gte"] = start
+        if end:
+            q["date"] = q.get("date", {}); q["date"]["$lte"] = end
+        if category:
+            q["category"] = category
+        docs = await db.dms_expenses.find(q, {"_id": 0}).sort("date", -1).to_list(1000)
+        # summary
+        total = sum(float(d.get("amount", 0)) for d in docs)
+        # enrich creator names
+        ids = list({d.get("created_by") for d in docs if d.get("created_by")})
+        name_map = {}
+        if ids:
+            async for u in db.users.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1, "role": 1}):
+                name_map[u["id"]] = {"name": u.get("name"), "role": u.get("role")}
+        for d in docs:
+            u = name_map.get(d.get("created_by") or "")
+            if u:
+                d["created_by_name"] = u.get("name")
+                d["created_by_role"] = d.get("created_by_role") or u.get("role")
+        return {"data": docs, "count": len(docs), "total": _round(total)}
+
+    @router.post("/expenses")
+    async def create_expense(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role == "retailer":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        category = str(body.get("category") or "").strip()
+        try:
+            amount = float(body.get("amount") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="amount must be a number")
+        if not category or amount <= 0:
+            raise HTTPException(status_code=400, detail="category and amount>0 required")
+        date = str(body.get("date") or datetime.now(timezone.utc).strftime("%Y-%m-%d"))[:10]
+        # Enforce FY lock on backdated new entries
+        await _check_fy_lock(date, "expense")
+        seq = await db.dms_expenses.count_documents({}) + 1
+        doc = {
+            "id": _nid("exp"),
+            "expense_no": body.get("expense_no") or f"EXP-{80000 + seq}",
+            "category": category,
+            "amount": _round(amount),
+            "date": date,
+            "description": str(body.get("description") or "").strip(),
+            "vendor": str(body.get("vendor") or "").strip(),
+            "receipt_url": str(body.get("receipt_url") or "").strip() or None,
+            "status": body.get("status") or "Approved",
+            "created_by": user["id"],
+            "created_by_role": role,
+            "created_at": _now(),
+        }
+        await db.dms_expenses.insert_one(doc)
+        return _clean(doc)
+
+    @router.put("/expenses/{eid}")
+    async def update_expense(eid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role == "retailer":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        doc = await db.dms_expenses.find_one({"id": eid}, {"_id": 0})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Expense not found")
+        # only creator OR owner/accountant can edit
+        if role not in _exp_all_visible_roles() and doc.get("created_by") != user["id"]:
+            raise HTTPException(status_code=403, detail="You can only edit your own expenses")
+        # FY lock on existing date AND on new date
+        await _check_fy_lock(doc.get("date"), "expense")
+        upd: Dict[str, Any] = {}
+        for f in ("category", "description", "vendor", "receipt_url", "status", "expense_no"):
+            if f in body:
+                upd[f] = str(body[f] or "").strip() or None
+        if "amount" in body:
+            try:
+                amt = float(body["amount"])
+                if amt <= 0:
+                    raise ValueError()
+                upd["amount"] = _round(amt)
+            except Exception:
+                raise HTTPException(status_code=400, detail="amount must be a positive number")
+        if "date" in body:
+            new_date = str(body["date"] or "")[:10]
+            await _check_fy_lock(new_date, "expense")
+            upd["date"] = new_date
+        upd["updated_at"] = _now()
+        upd["updated_by"] = user["id"]
+        await db.dms_expenses.update_one({"id": eid}, {"$set": upd})
+        doc.update(upd)
+        return _clean(doc)
+
+    @router.delete("/expenses/{eid}")
+    async def delete_expense(eid: str, user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role not in _exp_all_visible_roles():
+            raise HTTPException(status_code=403, detail="Only Owner/Accountant can delete expenses")
+        doc = await db.dms_expenses.find_one({"id": eid}, {"_id": 0})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Expense not found")
+        await _check_fy_lock(doc.get("date"), "expense")
+        await db.dms_expenses.delete_one({"id": eid})
+        return {"ok": True, "id": eid}
+
+    @router.get("/expenses/categories")
+    async def expense_categories(user: dict = Depends(get_current_user)):
+        if user.get("role") == "retailer":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        # distinct categories used
+        seen = set()
+        async for d in db.dms_expenses.find({}, {"_id": 0, "category": 1}):
+            c = (d.get("category") or "").strip()
+            if c:
+                seen.add(c)
+        # baseline defaults
+        for c in ("Transport", "Fuel", "Warehouse Rent", "Salaries", "Marketing", "Utilities", "Repairs", "Travel", "Office Supplies", "Miscellaneous"):
+            seen.add(c)
+        return {"data": sorted(seen)}
+
+    # =========================================================================
+    # INVOICE/BILL NUMBER OVERRIDE (Phase 2A) — Owner/Accountant/Distributor
+    # =========================================================================
+    @router.put("/ebills/{ebid}/number")
+    async def update_ebill_number(ebid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role not in ("owner", "owner_accountant", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        new_no = str(body.get("ebill_no") or "").strip()
+        if not new_no:
+            raise HTTPException(status_code=400, detail="ebill_no required")
+        eb = await db.dms_ebills.find_one({"id": ebid}, {"_id": 0})
+        if not eb:
+            raise HTTPException(status_code=404, detail="e-Bill not found")
+        await _check_fy_lock(eb.get("created_at"), "e-Bill")
+        dup = await db.dms_ebills.find_one({"ebill_no": new_no, "id": {"$ne": ebid}}, {"_id": 0, "id": 1})
+        if dup:
+            raise HTTPException(status_code=400, detail="ebill_no already used")
+        await db.dms_ebills.update_one({"id": ebid}, {"$set": {"ebill_no": new_no, "ebill_no_edited_at": _now(), "ebill_no_edited_by": user["id"]}})
+        return {"ok": True, "id": ebid, "ebill_no": new_no}
+
+    @router.put("/retailer-bills/{bid}/number")
+    async def update_retailer_bill_number(bid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        b = await db.dms_retailer_bills.find_one({"id": bid}, {"_id": 0})
+        if not b:
+            raise HTTPException(status_code=404, detail="Bill not found")
+        if role not in ("owner", "owner_accountant", "super_admin") and not (role in ("distributor", "distributor_accountant") and user.get("distributor_id") == b.get("distributor_id")):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        await _check_fy_lock(b.get("created_at"), "Bill")
+        new_no = str(body.get("bill_no") or "").strip()
+        if not new_no:
+            raise HTTPException(status_code=400, detail="bill_no required")
+        dup = await db.dms_retailer_bills.find_one({"bill_no": new_no, "id": {"$ne": bid}}, {"_id": 0, "id": 1})
+        if dup:
+            raise HTTPException(status_code=400, detail="bill_no already used")
+        await db.dms_retailer_bills.update_one({"id": bid}, {"$set": {"bill_no": new_no, "bill_no_edited_at": _now(), "bill_no_edited_by": user["id"]}})
+        return {"ok": True, "id": bid, "bill_no": new_no}
 
     # =========================================================================
     # PRICE CIRCULAR  (source-of-truth for pricing history; separate from Product Master)

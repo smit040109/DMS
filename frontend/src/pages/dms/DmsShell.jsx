@@ -8,6 +8,9 @@ import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutD
 
 const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, Ticket, ShieldAlert, ScanLine, Settings, FileText };
 
+// Phase 2A: Expenses nav item (all roles except retailer)
+const EXPENSES_NAV = { label: "Expenses", to: "/dms/expenses", icon: "Receipt" };
+
 const NAV_BY_ROLE = {
   owner: [
     { label: "Dashboard",       to: "/dms",                       icon: "LayoutDashboard" },
@@ -16,6 +19,7 @@ const NAV_BY_ROLE = {
     { label: "Primary Orders",  to: "/dms/owner/primary-orders",  icon: "ShoppingCart" },
     { label: "Owner Inventory", to: "/dms/owner/inventory",       icon: "Warehouse" },
     { label: "Primary Ledger",  to: "/dms/owner/ledger",          icon: "ScrollText" },
+    { label: "Expenses",        to: "/dms/expenses",              icon: "Receipt" },
     { label: "Retailer Prices", to: "/dms/owner/retailer-prices", icon: "TrendingUp" },
     { label: "User Management", to: "/dms/owner/users",           icon: "Users" },
     { label: "Live Tracking",   to: "/dms/owner/live-tracking",   icon: "MapPin" },
@@ -30,6 +34,7 @@ const NAV_BY_ROLE = {
     { label: "Primary Ledger",  to: "/dms/owner/ledger",          icon: "ScrollText" },
     { label: "Primary Orders",  to: "/dms/owner/primary-orders",  icon: "Receipt" },
     { label: "Owner Inventory", to: "/dms/owner/inventory",       icon: "Warehouse" },
+    { label: "Expenses",        to: "/dms/expenses",              icon: "Receipt" },
   ],
   distributor: [
     { label: "Dashboard",         to: "/dms",                            icon: "LayoutDashboard" },
@@ -41,6 +46,7 @@ const NAV_BY_ROLE = {
     { label: "Scan Coupon",       to: "/dms/distributor/scan",           icon: "ScanLine" },
     { label: "Secondary Ledger",  to: "/dms/distributor/sec-ledger",     icon: "ScrollText" },
     { label: "Primary Ledger",    to: "/dms/distributor/ledger",         icon: "ScrollText" },
+    { label: "Expenses",          to: "/dms/expenses",                   icon: "Receipt" },
   ],
   distributor_accountant: [
     { label: "Dashboard",         to: "/dms",                            icon: "LayoutDashboard" },
@@ -48,6 +54,7 @@ const NAV_BY_ROLE = {
     { label: "Primary Ledger",    to: "/dms/distributor/ledger",         icon: "ScrollText" },
     { label: "Retailer Orders",   to: "/dms/distributor/retail-orders",  icon: "ClipboardList" },
     { label: "Primary Orders",    to: "/dms/distributor/my-orders",      icon: "ClipboardList" },
+    { label: "Expenses",          to: "/dms/expenses",                   icon: "Receipt" },
   ],
   retailer: [
     { label: "Dashboard",       to: "/dms",                    icon: "LayoutDashboard" },
@@ -62,6 +69,7 @@ const NAV_BY_ROLE = {
     { label: "My Orders",       to: "/dms/salesperson/orders",         icon: "ClipboardList" },
     { label: "Collect Payment", to: "/dms/salesperson/collect",        icon: "Receipt" },
     { label: "New Retailer",    to: "/dms/salesperson/new-retailer",   icon: "MapPin" },
+    { label: "Expenses",        to: "/dms/expenses",                   icon: "Receipt" },
   ],
   team_leader: [
     { label: "Dashboard",       to: "/dms",                             icon: "LayoutDashboard" },
@@ -72,6 +80,7 @@ const NAV_BY_ROLE = {
     { label: "Live Tracking",   to: "/dms/team-leader/live-tracking",   icon: "MapPin" },
     { label: "Attendance",      to: "/dms/team-leader/attendance",      icon: "ClipboardList" },
     { label: "Assignments",     to: "/dms/team-leader/assignments",     icon: "Users" },
+    { label: "Expenses",        to: "/dms/expenses",                    icon: "Receipt" },
   ],
   regional_manager: [
     { label: "Dashboard",         to: "/dms",                                    icon: "LayoutDashboard" },
@@ -80,6 +89,7 @@ const NAV_BY_ROLE = {
     { label: "Distributors",      to: "/dms/regional-manager/distributors",      icon: "Handshake" },
     { label: "Salespersons",      to: "/dms/regional-manager/salespersons",      icon: "Users" },
     { label: "Live Tracking",     to: "/dms/regional-manager/live-tracking",     icon: "MapPin" },
+    { label: "Expenses",          to: "/dms/expenses",                           icon: "Receipt" },
   ],
   super_admin: [
     { label: "Dashboard",       to: "/dms",                       icon: "LayoutDashboard" },
@@ -91,6 +101,7 @@ const NAV_BY_ROLE = {
     { label: "Primary Orders",  to: "/dms/owner/primary-orders",  icon: "ShoppingCart" },
     { label: "Owner Inventory", to: "/dms/owner/inventory",       icon: "Warehouse" },
     { label: "Primary Ledger",  to: "/dms/owner/ledger",          icon: "ScrollText" },
+    { label: "Expenses",        to: "/dms/expenses",              icon: "Receipt" },
     { label: "Settings",        to: "/dms/owner/settings",        icon: "Settings" },
   ],
 };

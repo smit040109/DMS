@@ -32,6 +32,7 @@ import { RmDashboardPage, RmTeamLeadersPage, RmRegionPerformancePage, RmDistribu
 import { OwnerCouponsPage, OwnerCouponReportsPage, RetailerScanCouponPage, DistributorScanCouponPage } from "@/pages/dms/CouponPages";
 import { PrintEbillPage, PrintRetailerBillPage } from "@/pages/dms/PrintPages";
 import { PriceCircularsPage, PriceCircularDetailPage, NewPriceCircularPage, SettingsPage } from "@/pages/dms/PriceCircularPages";
+import { ExpensesPage } from "@/pages/dms/ExpensesPage";
 
 function Protected({ children }) {
   const { user } = useAuth();
@@ -92,6 +93,7 @@ function AppRoutes() {
       <Route path="/dms/owner/price-circulars/new" element={<DmsPage Component={NewPriceCircularPage} />} />
       <Route path="/dms/owner/price-circulars/:id" element={<DmsPage Component={PriceCircularDetailPage} />} />
       <Route path="/dms/owner/settings"            element={<DmsPage Component={SettingsPage} />} />
+      <Route path="/dms/expenses"                  element={<DmsPage Component={ExpensesPage} />} />
       <Route path="/dms/retailer/scan"             element={<DmsPage Component={RetailerScanCouponPage} />} />
       <Route path="/dms/distributor/scan"           element={<DmsPage Component={DistributorScanCouponPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />

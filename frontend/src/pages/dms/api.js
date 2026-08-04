@@ -175,6 +175,20 @@ export const dms = {
   getSettings: () => api.get("/dms/settings").then(r => r.data),
   updateSettings: (body) => api.put("/dms/settings", body).then(r => r.data),
 
+  // Phase 2A: Financial Year close
+  fyClose: (lock_date) => api.post("/dms/finance/fy-close", { lock_date }).then(r => r.data),
+
+  // Phase 2A: Expenses
+  listExpenses: (params = {}) => api.get("/dms/expenses", { params }).then(r => r.data),
+  createExpense: (body) => api.post("/dms/expenses", body).then(r => r.data),
+  updateExpense: (id, body) => api.put(`/dms/expenses/${id}`, body).then(r => r.data),
+  deleteExpense: (id) => api.delete(`/dms/expenses/${id}`).then(r => r.data),
+  expenseCategories: () => api.get("/dms/expenses/categories").then(r => r.data),
+
+  // Phase 2A: Editable invoice/bill numbers
+  updateEbillNumber: (id, ebill_no) => api.put(`/dms/ebills/${id}/number`, { ebill_no }).then(r => r.data),
+  updateRetailerBillNumber: (id, bill_no) => api.put(`/dms/retailer-bills/${id}/number`, { bill_no }).then(r => r.data),
+
   // price circulars
   listPriceCirculars: () => api.get("/dms/price-circulars").then(r => r.data),
   getPriceCircular: (cid) => api.get(`/dms/price-circulars/${cid}`).then(r => r.data),

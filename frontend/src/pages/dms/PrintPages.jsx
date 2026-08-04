@@ -80,6 +80,17 @@ export function PrintEbillPage() {
           <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className="text-lg font-bold text-[#a67c00]">{inr(eb.total)}</span>} /></div>
         </div>
       </div>
+      {eb.invoice_message && (
+        <div className="mt-6 p-3 rounded-lg bg-[#faf6e6] border border-[#c9a227]/30 text-sm text-slate-700">
+          {eb.invoice_message}
+        </div>
+      )}
+      {eb.invoice_terms && (
+        <div className="mt-4 border-t border-slate-200 pt-3">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 font-semibold">Terms &amp; Conditions</div>
+          <div className="text-xs text-slate-600 whitespace-pre-wrap">{eb.invoice_terms}</div>
+        </div>
+      )}
       <div className="mt-8 text-center text-xs text-slate-500">Thank you for your business!</div>
     </PrintFrame>
   );
@@ -132,6 +143,17 @@ export function PrintRetailerBillPage() {
           <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className="text-lg font-bold text-[#a67c00]">{inr(b.total)}</span>} /></div>
         </div>
       </div>
+      {b.invoice_message && (
+        <div className="mt-6 p-3 rounded-lg bg-[#faf6e6] border border-[#c9a227]/30 text-sm text-slate-700">
+          {b.invoice_message}
+        </div>
+      )}
+      {b.invoice_terms && (
+        <div className="mt-4 border-t border-slate-200 pt-3">
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 font-semibold">Terms &amp; Conditions</div>
+          <div className="text-xs text-slate-600 whitespace-pre-wrap">{b.invoice_terms}</div>
+        </div>
+      )}
     </PrintFrame>
   );
 }

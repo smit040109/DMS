@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, FileText, Calendar, Package, ArrowRight, TrendingUp, Layers } from "lucide-react";
+import { Plus, FileText, Calendar, Package, ArrowRight, TrendingUp, Layers, Lock } from "lucide-react";
 
 // ============================================================================
 // Price Circular — list all batches
@@ -376,25 +376,51 @@ export function NewPriceCircularPage() {
 export function SettingsPage() {
   const [settings, setSettings] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ gst_pct: 0, company_name: "" });
+  const [form, setForm] = useState({ gst_pct: 0, company_name: "", invoice_terms: "", invoice_message: "" });
+  const [fyLockDate, setFyLockDate] = useState("");
+  const [fyBusy, setFyBusy] = useState(false);
 
   useEffect(() => {
     (async () => {
       const s = await dms.getSettings();
       setSettings(s);
-      setForm({ gst_pct: s.gst_pct || 0, company_name: s.company_name || "GO OIL Lubricants" });
+      setForm({
+        gst_pct: s.gst_pct || 0,
+        company_name: s.company_name || "GO OIL Lubricants",
+        invoice_terms: s.invoice_terms || "",
+        invoice_message: s.invoice_message || "",
+      });
     })();
   }, []);
 
   const save = async () => {
     setSaving(true);
     try {
-      const s = await dms.updateSettings({ gst_pct: Number(form.gst_pct), company_name: form.company_name });
+      const s = await dms.updateSettings({
+        gst_pct: Number(form.gst_pct),
+        company_name: form.company_name,
+        invoice_terms: form.invoice_terms,
+        invoice_message: form.invoice_message,
+      });
       setSettings(s);
       toast.success("Settings updated");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Failed");
     } finally { setSaving(false); }
+  };
+
+  const doFyClose = async () => {
+    if (!fyLockDate) return toast.error("Pick a lock date");
+    if (!window.confirm(`Close (lock) the financial year up to ${fyLockDate}? Transactions on or before this date will be immutable.`)) return;
+    setFyBusy(true);
+    try {
+      const r = await dms.fyClose(fyLockDate);
+      toast.success(`Financial year locked up to ${r.fy_lock_date}`);
+      const s = await dms.getSettings();
+      setSettings(s);
+      setFyLockDate("");
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+    setFyBusy(false);
   };
 
   if (!settings) return <div className="p-8 text-center text-sm text-slate-500">Loading…</div>;
@@ -431,6 +457,55 @@ export function SettingsPage() {
           <div>
             <Label>Company Name</Label>
             <Input value={form.company_name} onChange={e => setForm({ ...form, company_name: e.target.value })} data-testid="setting-company-input" />
+          </div>
+        </Card>
+
+        {/* Phase 2A: Invoice Customization */}
+        <Card className="p-6 border-[#c9a227]/20 shadow-sm md:col-span-2">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#faf0cf] to-[#c9a227]/25 flex items-center justify-center"><FileText size={20} className="text-[#a67c00]" /></div>
+            <div>
+              <div className="font-display font-bold text-slate-900">Invoice Customization</div>
+              <div className="text-xs text-slate-500">Custom message and terms shown on every invoice / bill PDF</div>
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <Label>Invoice Message</Label>
+              <textarea rows={3} value={form.invoice_message} onChange={e => setForm({ ...form, invoice_message: e.target.value })} className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="e.g. Thank you for your business!" data-testid="setting-invoice-message" />
+            </div>
+            <div>
+              <Label>Terms &amp; Conditions</Label>
+              <textarea rows={3} value={form.invoice_terms} onChange={e => setForm({ ...form, invoice_terms: e.target.value })} className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="e.g. Goods once sold will not be taken back. Payment due within 30 days." data-testid="setting-invoice-terms" />
+            </div>
+          </div>
+        </Card>
+
+        {/* Phase 2A: Financial Year Close */}
+        <Card className="p-6 border-rose-200 shadow-sm md:col-span-2">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="h-10 w-10 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center"><Lock size={20} /></div>
+            <div>
+              <div className="font-display font-bold text-slate-900">Financial Year Close</div>
+              <div className="text-xs text-slate-500">Lock all transactions on or before the chosen date. This is irreversible via UI (contact support to unlock).</div>
+            </div>
+          </div>
+          <div className="grid md:grid-cols-3 gap-3">
+            <div>
+              <Label>Current FY Lock</Label>
+              <div className="mt-1 h-10 px-3 rounded-lg border border-slate-200 bg-slate-50 text-sm flex items-center">
+                {settings.fy_lock_date || <span className="text-slate-400">Not locked</span>}
+              </div>
+            </div>
+            <div>
+              <Label>New Lock Date</Label>
+              <Input type="date" value={fyLockDate} onChange={e => setFyLockDate(e.target.value)} data-testid="fy-lock-date" />
+            </div>
+            <div className="flex items-end">
+              <Button disabled={fyBusy || !fyLockDate} className="w-full bg-rose-700 hover:bg-rose-800 text-white" onClick={doFyClose} data-testid="fy-lock-btn">
+                <Lock size={14} className="mr-2" /> Close Financial Year
+              </Button>
+            </div>
           </div>
         </Card>
       </div>
