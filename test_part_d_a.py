@@ -4,7 +4,7 @@ import requests
 import time
 import json
 
-BASE_URL = "https://phase2c-qa.preview.emergentagent.com/api"
+BASE_URL = "https://oil-promo-system.preview.emergentagent.com/api"
 
 def login():
     resp = requests.post(f"{BASE_URL}/auth/login", 

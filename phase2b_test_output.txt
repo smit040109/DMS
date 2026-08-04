@@ -1,5 +1,5 @@
 🚀 GO OIL DMS — Phase 2B Backend Testing
-Base URL: https://phase2c-qa.preview.emergentagent.com/api
+Base URL: https://oil-promo-system.preview.emergentagent.com/api
 
 ================================================================================
   LOGIN ALL ROLES

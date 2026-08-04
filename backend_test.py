@@ -8,7 +8,7 @@ import sys
 from typing import Dict, Any
 
 # Base URL from frontend/.env
-BASE_URL = "https://98ab0a70-ac1e-4fab-a2e4-d42918cb55a1.preview.emergentagent.com"
+BASE_URL = "https://oil-promo-system.preview.emergentagent.com"
 API_URL = f"{BASE_URL}/api"
 
 # Test credentials (all use password: GoOil@2026)
@@ -21,7 +21,7 @@ TEST_ACCOUNTS = {
 }
 
 # Cross-origin deployed frontend URL (from review request)
-DEPLOYED_FRONTEND_ORIGIN = "https://phase2c-qa.preview.emergentagent.com"
+DEPLOYED_FRONTEND_ORIGIN = "https://oil-promo-system.preview.emergentagent.com"
 
 class Colors:
     GREEN = '\033[92m'

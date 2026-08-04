@@ -876,7 +876,7 @@ backend:
           🐛 BUG FIX — Login failing on deployed URL with "Network error"
           
           User reported: "log in nai ho raha" (login not working) on deployed URL
-          https://phase2c-qa.preview.emergentagent.com/login
+          https://oil-promo-system.preview.emergentagent.com/login
           
           ROOT CAUSE IDENTIFIED (via browser network capture):
           - Deployed frontend had old sandbox URL baked into REACT_APP_BACKEND_URL at build time
@@ -902,7 +902,7 @@ backend:
           ✅ CORS BUG FIX VERIFIED — ALL 13 TESTS PASSED (100%)
           
           Comprehensive backend API testing completed for CORS fix verification.
-          Tested on sandbox URL: https://98ab0a70-ac1e-4fab-a2e4-d42918cb55a1.preview.emergentagent.com
+          Tested on sandbox URL: https://oil-promo-system.preview.emergentagent.com
           
           **TEST 1 — Sandbox login end-to-end: 6/6 PASSED ✅**
           - Test 1a: POST /api/auth/login with owner@gooil.com → 200 with JWT token ✅
@@ -911,12 +911,12 @@ backend:
           - Test 1d: Wrong password → 401 (security intact) ✅
           
           **TEST 2 — CORS behaviour compatible with cross-origin: 3/3 PASSED ✅**
-          - Test 2a: OPTIONS preflight with Origin: https://phase2c-qa.preview.emergentagent.com
+          - Test 2a: OPTIONS preflight with Origin: https://oil-promo-system.preview.emergentagent.com
             * Status: 204 ✅
             * Access-Control-Allow-Origin: * ✅
             * Access-Control-Allow-Methods: includes POST ✅
             * Access-Control-Allow-Headers: * (wildcard includes content-type + authorization) ✅
-          - Test 2b: POST /api/auth/login with Origin: https://phase2c-qa.preview.emergentagent.com
+          - Test 2b: POST /api/auth/login with Origin: https://oil-promo-system.preview.emergentagent.com
             * Status: 200 (not blocked by CORS) ✅
           - Test 2c: POST with random origin (https://random-other-domain.example.com)
             * Status: 200 (handled cleanly, no 500 error) ✅
@@ -1689,7 +1689,7 @@ agent_communication:
       User-reported login issue "Something went wrong. Please try again." is RESOLVED.
       
       ✅ CORS CONFIGURATION FIX CONFIRMED:
-      - Backend /app/backend/.env: CORS_ORIGINS set to specific origin (https://phase2c-qa.preview.emergentagent.com)
+      - Backend /app/backend/.env: CORS_ORIGINS set to specific origin (https://oil-promo-system.preview.emergentagent.com)
       - Frontend axios withCredentials: true working correctly
       - Preflight requests returning access-control-allow-credentials: true
       - access_token cookie being set and sent correctly
@@ -4014,7 +4014,7 @@ agent_communication:
       🐛 CORS BUG FIX REQUEST — Login Cross-Origin Issue
       
       User reported: "log in nai ho raha" (login not working) on deployed URL
-      https://phase2c-qa.preview.emergentagent.com/login → showing "Network error — is the server reachable?"
+      https://oil-promo-system.preview.emergentagent.com/login → showing "Network error — is the server reachable?"
       
       ROOT CAUSE IDENTIFIED:
       - Frontend axios client had `withCredentials: true` (unnecessary for JWT Bearer auth)
