@@ -30,7 +30,8 @@ import { TlDashboardPage, TlDistributorsMonitoringPage, TlSalespersonsPage, TlOr
 import { OwnerTlPerformancePage, OwnerDistributorSalesListPage, OwnerDistributorSalesDetailPage } from "@/pages/dms/OwnerInsightsPages";
 import { RmDashboardPage, RmTeamLeadersPage, RmRegionPerformancePage, RmDistributorsPage, RmSalespersonsPage } from "@/pages/dms/RegionalManagerPages";
 import { OwnerCouponsPage, OwnerCouponReportsPage, RetailerScanCouponPage, DistributorScanCouponPage } from "@/pages/dms/CouponPages";
-import { PrintEbillPage, PrintRetailerBillPage } from "@/pages/dms/PrintPages";
+import { PrintEbillPage, PrintRetailerBillPage, PrintPurchaseOrderPage, PrintDocumentPage } from "@/pages/dms/PrintPages";
+import { ImportExportPage, DirectSalesPage, DocumentsPage } from "@/pages/dms/Phase2CPages";
 import { PriceCircularsPage, PriceCircularDetailPage, NewPriceCircularPage, SettingsPage } from "@/pages/dms/PriceCircularPages";
 import { ExpensesPage } from "@/pages/dms/ExpensesPage";
 import { BankAccountsPage, BankTransactionsPage, CashRegisterPage, ChequesPage, LoanAccountsPage } from "@/pages/dms/CashBankPages";
@@ -105,6 +106,10 @@ function AppRoutes() {
       {/* Phase 2B — Warehouse */}
       <Route path="/dms/warehouse/godowns"         element={<DmsPage Component={GodownsPage} />} />
       <Route path="/dms/warehouse/transfers"       element={<DmsPage Component={StockTransfersPage} />} />
+      {/* Phase 2C */}
+      <Route path="/dms/import-export"             element={<DmsPage Component={ImportExportPage} />} />
+      <Route path="/dms/direct-sales"              element={<DmsPage Component={DirectSalesPage} />} />
+      <Route path="/dms/documents"                 element={<DmsPage Component={DocumentsPage} />} />
       <Route path="/dms/retailer/scan"             element={<DmsPage Component={RetailerScanCouponPage} />} />
       <Route path="/dms/distributor/scan"           element={<DmsPage Component={DistributorScanCouponPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
@@ -154,6 +159,8 @@ function AppRoutes() {
       {/* Print pages (no shell) */}
       <Route path="/dms/print/ebill/:id"          element={<PrintPage Component={PrintEbillPage} />} />
       <Route path="/dms/print/retailer-bill/:id"  element={<PrintPage Component={PrintRetailerBillPage} />} />
+      <Route path="/dms/print/purchase-order/:id" element={<PrintPage Component={PrintPurchaseOrderPage} />} />
+      <Route path="/dms/print/document/:id"       element={<PrintPage Component={PrintDocumentPage} />} />
 
       <Route path="/" element={<Navigate to="/dms" replace />} />
       <Route path="/app/*" element={<Navigate to="/dms" replace />} />

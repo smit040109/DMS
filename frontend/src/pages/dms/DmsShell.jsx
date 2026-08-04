@@ -36,6 +36,10 @@ const NAV_BY_ROLE = {
     { label: "Sales Visibility",to: "/dms/owner/distributor-sales", icon: "Store" },
     { label: "Coupons",         to: "/dms/owner/coupons",         icon: "Ticket" },
     { label: "Coupon Reports",  to: "/dms/owner/coupon-reports",  icon: "ShieldAlert" },
+    // Phase 2C
+    { label: "+Add Sales",      to: "/dms/direct-sales",          icon: "Receipt" },
+    { label: "Documents",       to: "/dms/documents",             icon: "FileText" },
+    { label: "Import / Export", to: "/dms/import-export",         icon: "FileText" },
     { label: "Settings",        to: "/dms/owner/settings",        icon: "Settings" },
   ],
   owner_accountant: [
@@ -53,6 +57,9 @@ const NAV_BY_ROLE = {
     // Phase 2B — Warehouse
     { label: "Godowns",         to: "/dms/warehouse/godowns",     icon: "Building2" },
     { label: "Stock Transfers", to: "/dms/warehouse/transfers",   icon: "ArrowLeftRight" },
+    // Phase 2C — Owner Accountant
+    { label: "Import / Export", to: "/dms/import-export",         icon: "FileText" },
+    { label: "Documents",       to: "/dms/documents",             icon: "FileText" },
   ],
   distributor: [
     { label: "Dashboard",         to: "/dms",                            icon: "LayoutDashboard" },
@@ -61,6 +68,9 @@ const NAV_BY_ROLE = {
     { label: "My Stock",          to: "/dms/distributor/stock",          icon: "Warehouse" },
     { label: "My Retailers",      to: "/dms/distributor/retailers",      icon: "Store" },
     { label: "Retailer Orders",   to: "/dms/distributor/retail-orders",  icon: "ShoppingCart" },
+    // Phase 2C — direct sales + documents
+    { label: "+Add Sales",        to: "/dms/direct-sales",               icon: "Receipt" },
+    { label: "Documents",         to: "/dms/documents",                  icon: "FileText" },
     { label: "Scan Coupon",       to: "/dms/distributor/scan",           icon: "ScanLine" },
     { label: "Secondary Ledger",  to: "/dms/distributor/sec-ledger",     icon: "ScrollText" },
     { label: "Primary Ledger",    to: "/dms/distributor/ledger",         icon: "ScrollText" },
@@ -72,6 +82,8 @@ const NAV_BY_ROLE = {
     { label: "Primary Ledger",    to: "/dms/distributor/ledger",         icon: "ScrollText" },
     { label: "Retailer Orders",   to: "/dms/distributor/retail-orders",  icon: "ClipboardList" },
     { label: "Primary Orders",    to: "/dms/distributor/my-orders",      icon: "ClipboardList" },
+    { label: "+Add Sales",        to: "/dms/direct-sales",               icon: "Receipt" },
+    { label: "Documents",         to: "/dms/documents",                  icon: "FileText" },
     { label: "Expenses",          to: "/dms/expenses",                   icon: "Receipt" },
   ],
   retailer: [

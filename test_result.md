@@ -3240,4 +3240,52 @@ agent_communication:
       The other two "bugs" were testing errors due to incorrect seed data assumptions.
       
       **NEXT STEPS:**
+
+# ============================================================================
+# PHASE 2C — Frontend
+# ============================================================================
+
+frontend:
+  - task: "Phase 2C Frontend: Import/Export page, +Add Sales direct invoice, Documents page (5 doc types + view + print), PO Print button on Primary Orders, Finance Snapshot card on Owner Dashboard, Godown Low-Stock badge + inline reorder-level editor"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/dms/Phase2CPages.jsx (Import/Export, DirectSales, Documents), PrintPages.jsx (PurchaseOrder + Document print views), WarehousePages.jsx (Godown low-stock UI), OwnerPages.jsx (Finance snapshot + PO Print button), DmsShell.jsx (nav), App.js (routes), api.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+
+metadata:
+  current_phase: "Phase 2C"
+  test_phase_focus: "Phase 2C Frontend"
+
+test_plan:
+  current_focus:
+    - "Sidebar visibility: '+Add Sales' + 'Documents' shown for owner, owner_accountant, distributor, distributor_accountant. 'Import / Export' shown for owner + owner_accountant only. HIDDEN for salesperson, TL, RSM, retailer."
+    - "Import/Export page: click Export Parties → downloads .xlsx; click Export Sale Bills → downloads; click Export Payments → downloads; click Import Parties without file → error toast; upload valid file → summary shown."
+    - "Direct Sales page (as owner): choose distributor + retailer + product + qty + price → Subtotal updates → Create Bill → success toast with bill number DS-*; last bill card shown."
+    - "Direct Sales as distributor1: distributor field hidden/preselected; picking retailer1 works; picking retailer of another distributor is impossible (dropdown only shows own retailers)."
+    - "Documents page: filter by type; New Document dialog → pick type=Estimate, party=retailer, add line with description+qty+rate, GST %, Total updates live; submit creates doc with EST- prefix."
+    - "Documents view: View button opens dialog with items + totals; Printer icon opens /dms/print/document/{id} showing formatted PDF-ready page with company name + T&C."
+    - "Primary Orders detail (as owner): 'Print PO' button visible on any order; opens /dms/print/purchase-order/{oid} with 'PURCHASE ORDER' header + T&C."
+    - "Owner Dashboard: 'Cash & Bank Snapshot' card visible with 5 metrics (Cash in Bank, Cash in Hand, Outstanding Loans, Net Liquid, Net Position). Net Position red if negative."
+    - "Godowns page: any godown with low-stock items shows a red 'N low' badge next to Stock Boxes column."
+    - "Godown Inventory dialog: 'Reorder Level' column with editable input per product row; set a value and blur → toast 'Reorder level updated'; row highlighted red when qty ≤ level with 'Low' badge on product name."
+    - "Regression sanity: Phase 2A Expenses + Settings T&C still visible; Phase 2B pages still work."
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Phase 2C frontend built and manually verified via screenshots (Import/Export, Direct Sales, Documents pages, Owner Dashboard finance snapshot). New routes:
+      /dms/import-export (owner + owner_accountant)
+      /dms/direct-sales (owner + distributor + dist_accountant + owner_accountant)
+      /dms/documents (owner + distributor + dist_accountant + owner_accountant)
+      /dms/print/purchase-order/:id
+      /dms/print/document/:id
+      Owner Dashboard now shows Cash & Bank Snapshot card. Godowns page now shows low-stock badges. Godown Inventory dialog has inline reorder-level editor per product.
+      Please run frontend UI tests. Focus on the plan above. All demo users in /app/memory/test_credentials.md, password GoOil@2026.
+      Do NOT re-test Phase 1/2A/2B beyond quick regression sanity.
+
       Main agent should summarize and finish. All Phase 2C backend features verified and working correctly.

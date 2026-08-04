@@ -56,10 +56,12 @@ export function EmptyState({ icon: Icon = Package, title, description, action })
 export function OwnerDashboardPage() {
   const [kpis, setKpis] = useState(null);
   const [recent, setRecent] = useState([]);
+  const [finance, setFinance] = useState(null);
   const nav = useNavigate();
   useEffect(() => {
     dms.ownerDashboard().then(d => setKpis(d.kpis)).catch(() => {});
     dms.listOrders().then(d => setRecent((d.data || []).slice(0, 5))).catch(() => {});
+    dms.financeSnapshot().then(setFinance).catch(() => {});
   }, []);
   const cards = [
     { label: "Distributors",         value: kpis?.distributors ?? "—",           icon: Handshake,    color: "teal",    to: "/dms/owner/distributors" },
@@ -88,6 +90,37 @@ export function OwnerDashboardPage() {
             <div className="mt-1 text-xl font-bold text-slate-900">{c.value}</div>
           </Card>
         ))}
+      </div>
+
+      <div className="mt-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-slate-900">Cash &amp; Bank Snapshot</h3>
+          <button onClick={() => nav("/dms/finance/bank-accounts")} className="text-sm text-[#a67c00] hover:underline">Manage →</button>
+        </div>
+        <Card className="p-5 border-amber-200" data-testid="finance-snapshot-card">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div>
+              <div className="text-xs uppercase text-slate-500">Cash in Bank</div>
+              <div className="text-xl font-bold text-emerald-700">{finance ? inr(finance.cash_in_bank) : "—"}</div>
+            </div>
+            <div>
+              <div className="text-xs uppercase text-slate-500">Cash in Hand</div>
+              <div className="text-xl font-bold text-amber-700">{finance ? inr(finance.cash_in_hand) : "—"}</div>
+            </div>
+            <div>
+              <div className="text-xs uppercase text-slate-500">Outstanding Loans</div>
+              <div className="text-xl font-bold text-rose-700">{finance ? inr(finance.outstanding_loans) : "—"}</div>
+            </div>
+            <div className="border-l pl-4">
+              <div className="text-xs uppercase text-slate-500">Net Liquid</div>
+              <div className="text-xl font-bold">{finance ? inr(finance.net_liquid) : "—"}</div>
+            </div>
+            <div>
+              <div className="text-xs uppercase text-slate-500">Net Position</div>
+              <div className={"text-xl font-bold " + (finance && finance.net_position < 0 ? "text-rose-700" : "text-emerald-700")}>{finance ? inr(finance.net_position) : "—"}</div>
+            </div>
+          </div>
+        </Card>
       </div>
 
       <div className="mt-6">
@@ -824,6 +857,7 @@ export function OwnerOrderDetailPage() {
         subtitle={`${order.distributor_name} • Placed ${niceDate(order.created_at)}`}
         back="/dms/owner/primary-orders"
         action={<div className="flex gap-2">
+          <Button variant="outline" onClick={() => window.open(`/dms/print/purchase-order/${order.id}`, "_blank")} data-testid="print-po-btn"><span className="mr-1">🖨</span> Print PO</Button>
           {order.ebill_id && <Button variant="outline" onClick={() => window.open(`/dms/print/ebill/${order.ebill_id}`, "_blank")} data-testid="print-ebill-btn"><span className="mr-1">🖨</span> Print e-Bill</Button>}
           {canReady && <Button onClick={ready} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="mark-ready-btn"><Truck size={16} className="mr-1" /> Mark Ready to Go</Button>}
         </div>}

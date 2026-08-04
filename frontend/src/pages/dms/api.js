@@ -222,6 +222,39 @@ export const dms = {
   createStockTransfer: (b) => api.post("/dms/stock-transfers", b).then(r => r.data),
   toggleStopSale: (enabled) => api.put("/dms/settings/stop-sale", { enabled }).then(r => r.data),
 
+  // Phase 2C: Import/Export
+  exportParties: () => api.get("/dms/parties/export", { responseType: "blob" }).then(r => r.data),
+  importParties: (file) => {
+    const fd = new FormData(); fd.append("file", file);
+    return api.post("/dms/parties/import", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
+  },
+  exportSaleBills: (params = {}) => api.get("/dms/sale-bills/export", { params, responseType: "blob" }).then(r => r.data),
+  exportPayments: (params = {}) => api.get("/dms/payments/export", { params, responseType: "blob" }).then(r => r.data),
+  exportProducts: () => api.get("/dms/owner/products/export", { responseType: "blob" }).then(r => r.data),
+  importProducts: (file) => {
+    const fd = new FormData(); fd.append("file", file);
+    return api.post("/dms/owner/products/import", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
+  },
+
+  // Phase 2C: Direct Sales
+  createDirectSale: (b) => api.post("/dms/direct-sales", b).then(r => r.data),
+
+  // Phase 2C: Documents (stubs)
+  listDocuments: (params = {}) => api.get("/dms/documents", { params }).then(r => r.data),
+  getDocument: (id) => api.get(`/dms/documents/${id}`).then(r => r.data),
+  createDocument: (b) => api.post("/dms/documents", b).then(r => r.data),
+  printDocument: (id) => api.get(`/dms/documents/${id}/print`).then(r => r.data),
+
+  // Phase 2C: PO PDF
+  printPurchaseOrder: (oid) => api.get(`/dms/print/purchase-order/${oid}`).then(r => r.data),
+
+  // Phase 2C: Finance snapshot
+  financeSnapshot: () => api.get("/dms/dashboard/finance-snapshot").then(r => r.data),
+
+  // Phase 2C: Low-stock + reorder level
+  setReorderLevel: (gid, body) => api.put(`/dms/godowns/${gid}/reorder-level`, body).then(r => r.data),
+  listLowStock: () => api.get("/dms/godowns/low-stock").then(r => r.data),
+
   // price circulars
   listPriceCirculars: () => api.get("/dms/price-circulars").then(r => r.data),
   getPriceCircular: (cid) => api.get(`/dms/price-circulars/${cid}`).then(r => r.data),

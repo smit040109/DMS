@@ -157,3 +157,110 @@ export function PrintRetailerBillPage() {
     </PrintFrame>
   );
 }
+
+
+export function PrintPurchaseOrderPage() {
+  const { id } = useParams();
+  const [o, setO] = useState(null);
+  useEffect(() => { dms.printPurchaseOrder(id).then(setO); }, [id]);
+  if (!o) return <div className="p-8 text-center text-slate-500">Loading…</div>;
+  return (
+    <PrintFrame title={`Purchase Order ${o.order_no}`}>
+      <div className="border-b-2 border-[#a67c00] pb-4 mb-6 flex items-start justify-between">
+        <div>
+          <div className="text-2xl font-bold text-slate-900">PURCHASE ORDER</div>
+          <div className="text-sm text-slate-500">For Supplier</div>
+        </div>
+        <div className="text-right">
+          <div className="text-lg font-bold text-[#a67c00]">{o.company_name}</div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-8 mb-6">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Buyer (Distributor)</div>
+          <div className="font-semibold text-slate-900">{o.distributor?.name}</div>
+          <div className="text-xs text-slate-600">{o.distributor?.address}</div>
+          <div className="text-xs text-slate-600">Ph: {o.distributor?.phone}</div>
+        </div>
+        <div>
+          <Row label="PO #" value={o.order_no} />
+          <Row label="Date" value={niceDate(o.created_at)} />
+          <Row label="Status" value={o.status?.replace(/_/g, " ")} />
+        </div>
+      </div>
+      <table className="w-full text-sm border border-slate-200 mb-6">
+        <thead><tr className="bg-slate-50 text-left"><th className="p-2">#</th><th className="p-2">Product</th><th className="p-2 text-right">Qty (Boxes)</th><th className="p-2 text-right">Rate</th><th className="p-2 text-right">Amount</th></tr></thead>
+        <tbody>{(o.items || []).map((it, i) => (
+          <tr key={i} className="border-t border-slate-100">
+            <td className="p-2">{i + 1}</td>
+            <td className="p-2"><div className="font-medium">{it.product_name}</div><div className="text-xs font-mono text-slate-500">{it.sku_code}</div></td>
+            <td className="p-2 text-right">{it.qty_boxes_ordered}</td>
+            <td className="p-2 text-right">{inr(it.unit_price)}</td>
+            <td className="p-2 text-right font-semibold">{inr(it.line_total)}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+      <div className="flex justify-end">
+        <div className="w-64">
+          <Row label="Subtotal" value={inr(o.subtotal)} />
+          <Row label="GST" value={inr(o.gst_total)} />
+          <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className="text-lg font-bold text-[#a67c00]">{inr(o.total)}</span>} /></div>
+        </div>
+      </div>
+      {o.invoice_message && <div className="mt-6 p-3 rounded-lg bg-[#faf6e6] border border-[#c9a227]/30 text-sm text-slate-700">{o.invoice_message}</div>}
+      {o.invoice_terms && <div className="mt-4 border-t border-slate-200 pt-3"><div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 font-semibold">Terms &amp; Conditions</div><div className="text-xs text-slate-600 whitespace-pre-wrap">{o.invoice_terms}</div></div>}
+    </PrintFrame>
+  );
+}
+
+export function PrintDocumentPage() {
+  const { id } = useParams();
+  const [d, setD] = useState(null);
+  useEffect(() => { dms.printDocument(id).then(setD); }, [id]);
+  if (!d) return <div className="p-8 text-center text-slate-500">Loading…</div>;
+  return (
+    <PrintFrame title={`${d.doc_type_label} ${d.doc_no}`}>
+      <div className="border-b-2 border-[#a67c00] pb-4 mb-6 flex items-start justify-between">
+        <div>
+          <div className="text-2xl font-bold text-slate-900 uppercase">{d.doc_type_label}</div>
+          <div className="text-sm text-slate-500">Not a Tax Invoice</div>
+        </div>
+        <div className="text-right"><div className="text-lg font-bold text-[#a67c00]">{d.company_name}</div></div>
+      </div>
+      <div className="grid grid-cols-2 gap-8 mb-6">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Party</div>
+          <div className="font-semibold text-slate-900">{d.party_name}</div>
+          {d.party?.address && <div className="text-xs text-slate-600">{d.party.address}</div>}
+          {d.party?.phone && <div className="text-xs text-slate-600">Ph: {d.party.phone}</div>}
+          {d.party?.gstin && <div className="text-xs text-slate-600">GSTIN: {d.party.gstin}</div>}
+        </div>
+        <div>
+          <Row label="Doc No" value={d.doc_no} />
+          <Row label="Date" value={d.date} />
+        </div>
+      </div>
+      <table className="w-full text-sm border border-slate-200 mb-6">
+        <thead><tr className="bg-slate-50 text-left"><th className="p-2">#</th><th className="p-2">Description</th><th className="p-2 text-right">Qty</th><th className="p-2 text-right">Rate</th><th className="p-2 text-right">Amount</th></tr></thead>
+        <tbody>{(d.items || []).map((it, i) => (
+          <tr key={i} className="border-t border-slate-100">
+            <td className="p-2">{i + 1}</td><td className="p-2">{it.description}</td>
+            <td className="p-2 text-right">{it.qty}</td>
+            <td className="p-2 text-right">{inr(it.rate)}</td>
+            <td className="p-2 text-right font-semibold">{inr(it.amount)}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+      <div className="flex justify-end">
+        <div className="w-64">
+          <Row label="Subtotal" value={inr(d.subtotal)} />
+          <Row label={`GST (${d.gst_pct}%)`} value={inr(d.gst_total)} />
+          <div className="border-t border-slate-200 mt-2 pt-2"><Row label="Grand Total" value={<span className="text-lg font-bold text-[#a67c00]">{inr(d.total)}</span>} /></div>
+        </div>
+      </div>
+      {d.notes && <div className="mt-6 p-3 rounded-lg bg-slate-50 text-sm text-slate-700"><strong>Notes:</strong> {d.notes}</div>}
+      {d.invoice_message && <div className="mt-4 p-3 rounded-lg bg-[#faf6e6] border border-[#c9a227]/30 text-sm text-slate-700">{d.invoice_message}</div>}
+      {d.invoice_terms && <div className="mt-4 border-t border-slate-200 pt-3"><div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1 font-semibold">Terms &amp; Conditions</div><div className="text-xs text-slate-600 whitespace-pre-wrap">{d.invoice_terms}</div></div>}
+    </PrintFrame>
+  );
+}

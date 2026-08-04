@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
-import { Plus, Trash2, Edit, Building2, ArrowLeftRight, Package, Boxes } from "lucide-react";
+import { Plus, Trash2, Edit, Building2, ArrowLeftRight, Package, Boxes, AlertTriangle } from "lucide-react";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const canWrite = (role) => ["owner", "owner_accountant", "super_admin"].includes(role);
@@ -31,12 +31,17 @@ export function GodownsPage() {
   const [invGodown, setInvGodown] = useState(null);
   const [invRows, setInvRows] = useState([]);
   const [invTotals, setInvTotals] = useState({ total_boxes: 0, total_value: 0 });
+  const [lowStock, setLowStock] = useState([]);
 
   const load = async () => {
-    try { const d = await dms.listGodowns(); setRows(d.data || []); }
-    catch (e) { toast.error(e?.response?.data?.detail || "Failed to load"); }
+    try {
+      const d = await dms.listGodowns(); setRows(d.data || []);
+      const ls = await dms.listLowStock(); setLowStock(ls.data || []);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed to load"); }
   };
   useEffect(() => { load(); }, []);
+
+  const godownLowCount = (gid) => lowStock.filter(r => r.godown_id === gid).length;
 
   const openNew = () => { setEditing(null); setForm({ name: "", address: "", manager_name: "", phone: "", capacity_boxes: 0, notes: "" }); setOpen(true); };
   const openEdit = (r) => { setEditing(r); setForm({ ...r }); setOpen(true); };
@@ -79,7 +84,12 @@ export function GodownsPage() {
                   <TableCell className="font-mono text-xs">{r.phone || "—"}</TableCell>
                   <TableCell className="text-xs">{r.address || "—"}</TableCell>
                   <TableCell className="text-right">{r.capacity_boxes || 0}</TableCell>
-                  <TableCell className="text-right font-semibold">{r.total_boxes || 0}</TableCell>
+                  <TableCell className="text-right font-semibold">
+                    {r.total_boxes || 0}
+                    {godownLowCount(r.id) > 0 && (
+                      <Badge className="ml-2 bg-rose-600" data-testid={`low-stock-badge-${r.id}`}><AlertTriangle className="w-3 h-3 mr-1 inline" />{godownLowCount(r.id)} low</Badge>
+                    )}
+                  </TableCell>
                   <TableCell><Badge className={r.active ? "bg-emerald-600" : "bg-slate-500"}>{r.active ? "Active" : "Inactive"}</Badge></TableCell>
                   <TableCell className="text-right">
                     <Button size="sm" variant="outline" onClick={() => openInv(r)}><Boxes className="w-3 h-3 mr-1" />Inventory</Button>
@@ -115,15 +125,36 @@ export function GodownsPage() {
           </div>
           <div className="max-h-[60vh] overflow-y-auto">
             <Table>
-              <TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU</TableHead><TableHead>Pack</TableHead><TableHead className="text-right">Boxes</TableHead><TableHead className="text-right">Unit Price</TableHead><TableHead className="text-right">Value</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Product</TableHead><TableHead>SKU</TableHead><TableHead>Pack</TableHead><TableHead className="text-right">Boxes</TableHead><TableHead className="text-right">Reorder Level</TableHead><TableHead className="text-right">Unit Price</TableHead><TableHead className="text-right">Value</TableHead></TableRow></TableHeader>
               <TableBody>
-                {invRows.length === 0 ? <TableRow><TableCell colSpan={6} className="text-center text-slate-500 py-6">No stock in this godown.</TableCell></TableRow>
+                {invRows.length === 0 ? <TableRow><TableCell colSpan={7} className="text-center text-slate-500 py-6">No stock in this godown.</TableCell></TableRow>
                   : invRows.map(r => (
-                    <TableRow key={r.id}>
-                      <TableCell className="font-medium">{r.product_name}</TableCell>
+                    <TableRow key={r.id} className={r.low_stock ? "bg-rose-50" : ""}>
+                      <TableCell className="font-medium">
+                        {r.product_name}
+                        {r.low_stock && <Badge className="ml-2 bg-rose-600 text-xs"><AlertTriangle className="w-3 h-3 mr-1 inline" />Low</Badge>}
+                      </TableCell>
                       <TableCell className="font-mono text-xs">{r.sku_code}</TableCell>
                       <TableCell className="text-xs">{r.pack_size || "—"}</TableCell>
                       <TableCell className="text-right">{r.qty_boxes}</TableCell>
+                      <TableCell className="text-right">
+                        <Input type="number" min={0} defaultValue={r.reorder_level_boxes || 0}
+                          className="w-20 h-8 text-right ml-auto"
+                          onBlur={async (e) => {
+                            const val = Number(e.target.value || 0);
+                            if (val === (r.reorder_level_boxes || 0)) return;
+                            try {
+                              await dms.setReorderLevel(invGodown.id, { product_id: r.product_id, reorder_level_boxes: val });
+                              toast.success("Reorder level updated");
+                              // reload inventory
+                              const d = await dms.godownInventory(invGodown.id);
+                              setInvRows(d.data || []);
+                              const ls = await dms.listLowStock(); setLowStock(ls.data || []);
+                            } catch (err) { toast.error(err?.response?.data?.detail || "Failed"); }
+                          }}
+                          data-testid={`reorder-${r.product_id}`}
+                        />
+                      </TableCell>
                       <TableCell className="text-right">{inr(r.unit_price)}</TableCell>
                       <TableCell className="text-right font-medium">{inr(r.value)}</TableCell>
                     </TableRow>
