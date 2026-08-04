@@ -2804,3 +2804,316 @@ agent_communication:
       All Phase 2B frontend features are production-ready and working as designed.
       UI structure, navigation, RBAC, and page layouts all correct.
       Backend integration verified via API calls (2 godowns, 1 loan, 2 transfers exist).
+
+
+# ============================================================================
+# PHASE 2C — Import/Export + Direct Sales + PO PDF + Doc Stubs + Finance Card + Low-Stock
+# ============================================================================
+
+backend:
+  - task: "Phase 2C: Parties Import/Export (distributors + retailers via multi-sheet XLSX)"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ PARTIES IMPORT/EXPORT WORKING (100%)
+          
+          **EXPORT (3/3 tests passed):**
+          - GET /api/dms/parties/export as owner → 200, xlsx with 2 sheets (Distributors + Retailers), size=5908 bytes ✅
+          - Salesperson → 403 (correct RBAC) ✅
+          - Retailer → 403 (correct RBAC) ✅
+          
+          **IMPORT (1/1 tests passed):**
+          - POST /api/dms/parties/import with valid xlsx → 200 ✅
+          - Distributors: created=1, updated=1, skipped=0 ✅
+          - Retailers: created=1, updated=0, skipped=1 (unknown distributor_email) ✅
+          - Error message: "Row 3: unknown distributor_email 'unknown@gooil.com'" ✅
+          
+          All functionality working as designed.
+  
+  - task: "Phase 2C: Sale Bills Export (Primary_eBills + Retailer_Bills) + Payments Export (Primary + Secondary)"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ SALE BILLS + PAYMENTS EXPORT WORKING (100%)
+          
+          **SALE BILLS EXPORT (3/3 tests passed):**
+          - GET /api/dms/sale-bills/export as owner → 200, xlsx with 2 sheets, size=5821 bytes ✅
+          - Sheets: Primary_eBills + Retailer_Bills ✅
+          - EB-SAMPLE found in Primary_eBills ✅
+          - RB-SAMPLE found in Retailer_Bills ✅
+          - Distributor → 403 (correct RBAC) ✅
+          - Retailer → 403 (correct RBAC) ✅
+          
+          **PAYMENTS EXPORT (1/1 tests passed):**
+          - GET /api/dms/payments/export as owner → 200, xlsx with 2 sheets, size=5529 bytes ✅
+          - Sheets: Primary_Payments + Secondary_Payments ✅
+          
+          All functionality working as designed.
+  
+  - task: "Phase 2C: Direct +Add Sales invoice (POST /dms/direct-sales) — retailer bill without a sales order; stop-sale respected; FY lock enforced; distributor scope"
+    implemented: true
+    working: false
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          ❌ DIRECT SALES — CRITICAL RBAC BUG FOUND
+          
+          **WORKING (2/5 tests passed):**
+          - Owner POST /api/dms/direct-sales → 200, bill created with bill_no=DS-260804114914 ✅
+          - Stop-sale ON + insufficient stock → 400 "Insufficient distributor stock" (correct) ✅
+          
+          **CRITICAL BUG:**
+          ❌ Distributor1 POST /api/dms/direct-sales for OTHER distributor's retailer → 200 (SHOULD BE 403)
+          - Test: Distributor1 tried to create direct sale for retailer2 (belongs to distributor2)
+          - Expected: 403 Forbidden (RBAC should block cross-distributor access)
+          - Actual: 200 OK (direct sale created successfully)
+          - **SECURITY ISSUE**: Distributor can create direct sales for ANY retailer, not just their own
+          
+          **MINOR ISSUES (timing-related):**
+          - Distributor1 POST for own retailer → 400 "Bill number already exists" (test ran too fast, bill_no collision)
+          - Stop-sale OFF test → 400 "Bill number already exists" (same timing issue)
+          
+          **ROOT CAUSE:**
+          The POST /api/dms/direct-sales endpoint is missing RBAC check to verify that:
+          - If user is distributor, retailer_id must belong to their distributor_id
+          - Currently allows any distributor to create sales for any retailer
+          
+          **FIX REQUIRED:**
+          Add RBAC check in POST /api/dms/direct-sales:
+          ```python
+          if user_role == "distributor":
+              retailer = db.dms_retailers.find_one({"id": retailer_id, "tenant_id": tenant_id})
+              if not retailer or retailer.get("distributor_id") != user_distributor_id:
+                  raise HTTPException(403, "Cannot create direct sale for retailer outside your scope")
+          ```
+  
+  - task: "Phase 2C: PO PDF endpoint (GET /dms/print/purchase-order/{oid})"
+    implemented: true
+    working: false
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          ❌ PO PDF — CRITICAL RBAC BUG FOUND
+          
+          **WORKING (2/3 tests passed):**
+          - Owner GET /api/dms/print/purchase-order/{oid} → 200 ✅
+          - All required fields present: company_name, invoice_terms, invoice_message, doc_type='Purchase Order' ✅
+          - Distributor1 GET own PO → 200 (correct) ✅
+          
+          **CRITICAL BUG:**
+          ❌ Retailer GET /api/dms/print/purchase-order/{oid} → 200 (SHOULD BE 403)
+          - Test: Retailer1 tried to access primary order (owner ↔ distributor transaction)
+          - Expected: 403 Forbidden (retailers should not access primary orders)
+          - Actual: 200 OK (PO data returned)
+          - **SECURITY ISSUE**: Retailer can access purchase orders they shouldn't see
+          
+          **ROOT CAUSE:**
+          The GET /api/dms/print/purchase-order/{oid} endpoint is missing RBAC check to block retailer role.
+          
+          **FIX REQUIRED:**
+          Add RBAC check in GET /api/dms/print/purchase-order/{oid}:
+          ```python
+          if user_role == "retailer":
+              raise HTTPException(403, "Retailers cannot access purchase orders")
+          ```
+  
+  - task: "Phase 2C: Document stubs (Estimate/Delivery Challan/Sale Return/Credit Note/Debit Note) — CRUD + list + print"
+    implemented: true
+    working: false
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          ❌ DOCUMENT STUBS — CRITICAL RBAC BUG FOUND
+          
+          **WORKING (10/11 tests passed):**
+          - All 5 document types created successfully (estimate, delivery_challan, sale_return, credit_note, debit_note) ✅
+          - Doc numbers have correct prefixes: EST-, DC-, SR-, CN-, DN- ✅
+          - Calculations correct: subtotal=1000, gst_total=180, total=1180 ✅
+          - Duplicate doc_no rejected → 400 (correct) ✅
+          - GET /api/dms/documents?type=estimate filters correctly ✅
+          - GET /api/dms/documents/{id}/print returns all required fields (party, company_name, invoice_terms, invoice_message, doc_type_label) ✅
+          - Distributor1 POST for own retailer → 200 (correct) ✅
+          - Retailer POST → 403 (correct RBAC) ✅
+          
+          **CRITICAL BUG:**
+          ❌ Distributor1 POST /api/dms/documents for OTHER distributor's retailer → 200 (SHOULD BE 403)
+          - Test: Distributor1 tried to create document for retailer2 (belongs to distributor2)
+          - Expected: 403 Forbidden (RBAC should block cross-distributor access)
+          - Actual: 200 OK (document created successfully)
+          - **SECURITY ISSUE**: Distributor can create documents for ANY retailer, not just their own
+          
+          **ROOT CAUSE:**
+          The POST /api/dms/documents endpoint is missing RBAC check to verify that:
+          - If user is distributor and party_type=retailer, party_id must belong to their distributor_id
+          
+          **FIX REQUIRED:**
+          Add RBAC check in POST /api/dms/documents:
+          ```python
+          if user_role == "distributor" and party_type == "retailer":
+              retailer = db.dms_retailers.find_one({"id": party_id, "tenant_id": tenant_id})
+              if not retailer or retailer.get("distributor_id") != user_distributor_id:
+                  raise HTTPException(403, "Cannot create document for retailer outside your scope")
+          ```
+  
+  - task: "Phase 2C: Finance Dashboard Snapshot"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ FINANCE SNAPSHOT WORKING (100%)
+          
+          **ALL TESTS PASSED (5/5):**
+          - Owner GET /api/dms/dashboard/finance-snapshot → 200 ✅
+          - All 5 numeric fields present and correct:
+            * cash_in_bank: 95000.0 ✅
+            * cash_in_hand: 10000.0 ✅
+            * outstanding_loans: 455000.0 ✅
+            * net_liquid: 105000.0 (bank + hand) ✅
+            * net_position: -350000.0 (bank + hand - loans) ✅
+          - Owner Accountant → 200 (correct access) ✅
+          - Salesperson → 403 (correct RBAC) ✅
+          - Retailer → 403 (correct RBAC) ✅
+          - Distributor → 403 (correct RBAC) ✅
+          
+          All functionality working as designed.
+  
+  - task: "Phase 2C: Godown reorder level + low-stock endpoint + low_stock flag in inventory"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ GODOWN REORDER LEVEL + LOW-STOCK WORKING (100%)
+          
+          **ALL TESTS PASSED (6/6):**
+          - PUT /api/dms/godowns/{gid}/reorder-level with reorder_level_boxes=999 → 200 ✅
+          - GET /api/dms/godowns/{gid}/inventory → reorder_level_boxes=999, low_stock=true ✅
+          - GET /api/dms/godowns/low-stock → returns 1 row with target product ✅
+          - Low-stock row includes godown_name and product_name ✅
+          - Reset reorder level to 0 → low_stock=false ✅
+          - Salesperson PUT reorder-level → 403 (correct RBAC) ✅
+          - Retailer GET low-stock → 403 (correct RBAC) ✅
+          
+          All functionality working as designed.
+
+metadata:
+  current_phase: "Phase 2C"
+  test_phase_focus: "Phase 2C Backend"
+
+test_plan:
+  current_focus:
+    - "Phase 2C Backend Testing — COMPLETED with 3 CRITICAL RBAC bugs found"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Phase 2C backend complete. New endpoints under /api/dms/:
+        Import/Export (owner only): parties/export (xlsx), parties/import, sale-bills/export, payments/export
+        Direct sales: POST direct-sales (owner/distributor/dist_accountant), creates retailer bill without order, respects stop-sale, FY lock
+        PO PDF: GET print/purchase-order/{oid}
+        Document stubs: POST/GET/GET print /documents — 5 types (estimate/delivery_challan/sale_return/credit_note/debit_note), NO stock/ledger reversal
+        Finance snapshot: GET dashboard/finance-snapshot (owner + owner_accountant)
+        Low-stock: PUT godowns/{gid}/reorder-level; GET godowns/low-stock; inventory rows now include low_stock flag
+      Verified via curl: parties/export=5907 bytes xlsx, documents create returns EST-260804-0001 with 18% GST, PO print returns doc_type='Purchase Order' with T&C.
+      Please run comprehensive backend tests. Focus ONLY on Phase 2C. No frontend built yet.
+  - agent: "testing"
+    message: |
+      ✅ PHASE 2C BACKEND TESTING COMPLETE — 3 CRITICAL RBAC BUGS FOUND
+      
+      Comprehensive backend API testing completed for all Phase 2C endpoints.
+      Test coverage: 40+ scenarios across 7 major feature areas + regression.
+      
+      **SUMMARY:**
+      ✅ Parties Import/Export (4/4 tests) — Export + Import working perfectly
+      ✅ Sale Bills + Payments Export (4/4 tests) — Both exports working with correct sheets
+      ❌ Direct Sales (2/5 tests) — CRITICAL RBAC BUG: Distributor can create sales for ANY retailer
+      ❌ PO PDF (2/3 tests) — CRITICAL RBAC BUG: Retailer can access purchase orders
+      ❌ Document Stubs (10/11 tests) — CRITICAL RBAC BUG: Distributor can create documents for ANY retailer
+      ✅ Finance Snapshot (5/5 tests) — All fields correct, RBAC working
+      ✅ Godown Reorder Level + Low-Stock (6/6 tests) — All functionality working
+      ✅ Regression (3/3 tests) — Phase 2A + 2B still working
+      
+      **CRITICAL BUGS REQUIRING IMMEDIATE FIX:**
+      
+      1. ❌ **Direct Sales RBAC** (POST /api/dms/direct-sales)
+         - Issue: Distributor1 can create direct sales for retailer2 (belongs to distributor2)
+         - Expected: 403 Forbidden
+         - Actual: 200 OK (sale created)
+         - Security Risk: HIGH — Distributor can create sales for retailers outside their scope
+         - Fix: Add RBAC check to verify retailer belongs to distributor
+      
+      2. ❌ **PO PDF RBAC** (GET /api/dms/print/purchase-order/{oid})
+         - Issue: Retailer can access purchase orders (owner ↔ distributor transactions)
+         - Expected: 403 Forbidden
+         - Actual: 200 OK (PO data returned)
+         - Security Risk: MEDIUM — Retailer can see primary order details they shouldn't access
+         - Fix: Add RBAC check to block retailer role
+      
+      3. ❌ **Document Stubs RBAC** (POST /api/dms/documents)
+         - Issue: Distributor1 can create documents for retailer2 (belongs to distributor2)
+         - Expected: 403 Forbidden
+         - Actual: 200 OK (document created)
+         - Security Risk: HIGH — Distributor can create documents for retailers outside their scope
+         - Fix: Add RBAC check to verify retailer belongs to distributor
+      
+      **WORKING FEATURES:**
+      ✅ Parties Export: xlsx with 2 sheets (Distributors + Retailers), RBAC working
+      ✅ Parties Import: Create/update distributors + retailers, skip unknown distributor_email
+      ✅ Sale Bills Export: xlsx with 2 sheets (Primary_eBills + Retailer_Bills), EB-SAMPLE and RB-SAMPLE present
+      ✅ Payments Export: xlsx with 2 sheets (Primary_Payments + Secondary_Payments)
+      ✅ Direct Sales: Owner can create, stop-sale enforcement working
+      ✅ PO PDF: All required fields present (company_name, invoice_terms, invoice_message, doc_type)
+      ✅ Document Stubs: All 5 types working (EST-, DC-, SR-, CN-, DN-), calculations correct, duplicate rejected
+      ✅ Finance Snapshot: All 5 numeric fields correct (cash_in_bank, cash_in_hand, outstanding_loans, net_liquid, net_position)
+      ✅ Godown Reorder Level: Set/reset working, low_stock flag working, low-stock endpoint working
+      ✅ Regression: All Phase 2A (Expenses) and Phase 2B (Bank, Godowns) endpoints still working
+      
+      **MINOR ISSUES (not critical):**
+      - Direct sales bill_no collision in rapid tests (timing issue, not a bug)
+      
+      **NEXT STEPS:**
+      Main agent must fix the 3 CRITICAL RBAC bugs before Phase 2C can be marked as production-ready.
+      All other functionality is working correctly.

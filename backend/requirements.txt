@@ -33,3 +33,4 @@ limits
 openpyxl
 deprecated
 wrapt>=1.16.0
+et_xmlfile>=1.1.0

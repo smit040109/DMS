@@ -4375,6 +4375,10 @@ def build_dms_router(db, get_current_user):
             r["pack_size"] = p.get("pack_size", "")
             r["unit_price"] = p.get("unit_price", 0)
             r["value"] = _round((r.get("qty_boxes", 0) or 0) * (p.get("unit_price", 0) or 0))
+            # Phase 2C: low-stock flag
+            rl = int(r.get("reorder_level_boxes") or 0)
+            r["reorder_level_boxes"] = rl
+            r["low_stock"] = bool(rl > 0 and int(r.get("qty_boxes", 0) or 0) <= rl)
         rows.sort(key=lambda x: x.get("product_name", ""))
         return {
             "godown": godown,
@@ -4509,5 +4513,537 @@ def build_dms_router(db, get_current_user):
         v = bool(body.get("enabled", True))
         await db.dms_settings.update_one({"id": "global"}, {"$set": {"stop_sale_on_negative": v, "updated_at": _now()}}, upsert=True)
         return {"ok": True, "stop_sale_on_negative": v}
+
+    # =========================================================================
+    # PHASE 2C — Import / Export (Parties + Items importable; Sales + Payments export-only)
+    # =========================================================================
+    def _xlsx_response(wb, filename: str):
+        from io import BytesIO
+        from fastapi.responses import Response
+        buf = BytesIO()
+        wb.save(buf); buf.seek(0)
+        return Response(
+            content=buf.read(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{filename}_{datetime.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'},
+        )
+
+    # -- Parties Export --
+    @router.get("/parties/export")
+    async def export_parties(user: dict = Depends(owner_only)):
+        from openpyxl import Workbook
+        wb = Workbook()
+        # Distributors sheet
+        ws1 = wb.active; ws1.title = "Distributors"
+        ws1.append(["name", "code", "email", "phone", "address", "gstin", "credit_limit", "active"])
+        async for d in db.dms_distributors.find({}, {"_id": 0}):
+            ws1.append([d.get("name"), d.get("code", ""), d.get("email", ""), d.get("phone", ""),
+                        d.get("address", ""), d.get("gstin", ""), d.get("credit_limit", 0), bool(d.get("active", True))])
+        # Retailers sheet
+        ws2 = wb.create_sheet("Retailers")
+        ws2.append(["name", "code", "email", "phone", "address", "gstin", "distributor_email", "active"])
+        d_by_id = {d["id"]: d async for d in db.dms_distributors.find({}, {"_id": 0, "id": 1, "email": 1})}
+        async for r in db.dms_retailers.find({}, {"_id": 0}):
+            d = d_by_id.get(r.get("distributor_id"), {})
+            ws2.append([r.get("name"), r.get("code", ""), r.get("email", ""), r.get("phone", ""),
+                        r.get("address", ""), r.get("gstin", ""), d.get("email", ""), bool(r.get("active", True))])
+        for w in [ws1, ws2]:
+            for col_letter in ["A", "B", "C", "D", "E", "F", "G", "H"]:
+                w.column_dimensions[col_letter].width = 22
+        return _xlsx_response(wb, "parties")
+
+    # -- Parties Import --
+    @router.post("/parties/import")
+    async def import_parties(file: UploadFile = File(...), user: dict = Depends(owner_only)):
+        """Two sheets: 'Distributors' and 'Retailers'. See export for column layout."""
+        from openpyxl import load_workbook
+        from io import BytesIO
+        raw = await file.read()
+        try:
+            wb = load_workbook(BytesIO(raw), data_only=True)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Cannot read xlsx: {e}")
+        summary = {"distributors": {"created": 0, "updated": 0, "skipped": 0, "errors": []},
+                   "retailers": {"created": 0, "updated": 0, "skipped": 0, "errors": []}}
+
+        # Distributors
+        if "Distributors" in wb.sheetnames:
+            ws = wb["Distributors"]
+            header = [str(h or "").strip().lower() for h in next(ws.iter_rows(min_row=1, max_row=1, values_only=True), [])]
+            col = {h: i for i, h in enumerate(header)}
+            for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                if not row or all(v is None or v == "" for v in row):
+                    continue
+                try:
+                    name = str(row[col.get("name", -1)] or "").strip()
+                    email = str(row[col.get("email", -1)] or "").strip().lower()
+                    if not name:
+                        summary["distributors"]["skipped"] += 1
+                        summary["distributors"]["errors"].append(f"Row {i}: missing name")
+                        continue
+                    doc = {
+                        "name": name,
+                        "code": str(row[col.get("code", -1)] or "").strip(),
+                        "email": email,
+                        "phone": str(row[col.get("phone", -1)] or "").strip(),
+                        "address": str(row[col.get("address", -1)] or "").strip(),
+                        "gstin": str(row[col.get("gstin", -1)] or "").strip(),
+                        "credit_limit": float(row[col.get("credit_limit", -1)] or 0) if col.get("credit_limit", -1) >= 0 else 0,
+                        "active": bool(row[col.get("active", -1)]) if col.get("active", -1) >= 0 and row[col.get("active", -1)] is not None else True,
+                    }
+                    existing = None
+                    if email:
+                        existing = await db.dms_distributors.find_one({"email": email}, {"_id": 0, "id": 1})
+                    if existing:
+                        await db.dms_distributors.update_one({"id": existing["id"]}, {"$set": {**doc, "updated_at": _now()}})
+                        summary["distributors"]["updated"] += 1
+                    else:
+                        doc["id"] = _nid("dist"); doc["created_at"] = _now()
+                        await db.dms_distributors.insert_one(doc)
+                        summary["distributors"]["created"] += 1
+                except Exception as e:
+                    summary["distributors"]["skipped"] += 1
+                    summary["distributors"]["errors"].append(f"Row {i}: {e}")
+
+        # Retailers
+        if "Retailers" in wb.sheetnames:
+            ws = wb["Retailers"]
+            header = [str(h or "").strip().lower() for h in next(ws.iter_rows(min_row=1, max_row=1, values_only=True), [])]
+            col = {h: i for i, h in enumerate(header)}
+            # cache distributor lookup by email
+            d_by_email = {d["email"].lower(): d["id"] async for d in db.dms_distributors.find({"email": {"$ne": None}}, {"_id": 0, "id": 1, "email": 1})}
+            for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+                if not row or all(v is None or v == "" for v in row):
+                    continue
+                try:
+                    name = str(row[col.get("name", -1)] or "").strip()
+                    email = str(row[col.get("email", -1)] or "").strip().lower()
+                    d_email = str(row[col.get("distributor_email", -1)] or "").strip().lower()
+                    if not name or not d_email:
+                        summary["retailers"]["skipped"] += 1
+                        summary["retailers"]["errors"].append(f"Row {i}: missing name or distributor_email")
+                        continue
+                    d_id = d_by_email.get(d_email)
+                    if not d_id:
+                        summary["retailers"]["skipped"] += 1
+                        summary["retailers"]["errors"].append(f"Row {i}: unknown distributor_email '{d_email}'")
+                        continue
+                    doc = {
+                        "name": name,
+                        "code": str(row[col.get("code", -1)] or "").strip(),
+                        "email": email,
+                        "phone": str(row[col.get("phone", -1)] or "").strip(),
+                        "address": str(row[col.get("address", -1)] or "").strip(),
+                        "gstin": str(row[col.get("gstin", -1)] or "").strip(),
+                        "distributor_id": d_id,
+                        "active": bool(row[col.get("active", -1)]) if col.get("active", -1) >= 0 and row[col.get("active", -1)] is not None else True,
+                    }
+                    existing = None
+                    if email:
+                        existing = await db.dms_retailers.find_one({"email": email}, {"_id": 0, "id": 1})
+                    if existing:
+                        await db.dms_retailers.update_one({"id": existing["id"]}, {"$set": {**doc, "updated_at": _now()}})
+                        summary["retailers"]["updated"] += 1
+                    else:
+                        doc["id"] = _nid("ret"); doc["created_at"] = _now()
+                        await db.dms_retailers.insert_one(doc)
+                        summary["retailers"]["created"] += 1
+                except Exception as e:
+                    summary["retailers"]["skipped"] += 1
+                    summary["retailers"]["errors"].append(f"Row {i}: {e}")
+
+        return summary
+
+    # -- Sale Bills Export (both primary e-bills and secondary retailer bills) --
+    @router.get("/sale-bills/export")
+    async def export_sale_bills(user: dict = Depends(owner_only), start: Optional[str] = None, end: Optional[str] = None):
+        from openpyxl import Workbook
+        wb = Workbook()
+        # Primary e-bills sheet
+        ws1 = wb.active; ws1.title = "Primary_eBills"
+        ws1.append(["ebill_no", "date", "distributor", "order_no", "subtotal", "gst_total", "total", "status"])
+        q = {}
+        if start: q.setdefault("created_at", {})["$gte"] = start
+        if end: q.setdefault("created_at", {})["$lte"] = end + "T23:59:59"
+        async for eb in db.dms_ebills.find(q, {"_id": 0}):
+            ws1.append([eb.get("ebill_no"), (eb.get("created_at") or "")[:10], eb.get("distributor_name"),
+                        eb.get("order_no"), eb.get("subtotal"), eb.get("gst_total"), eb.get("total"), eb.get("status")])
+        # Retailer bills sheet
+        ws2 = wb.create_sheet("Retailer_Bills")
+        ws2.append(["bill_no", "date", "distributor", "retailer", "order_no", "subtotal", "gst_total", "total", "status"])
+        d_by_id = {d["id"]: d["name"] async for d in db.dms_distributors.find({}, {"_id": 0, "id": 1, "name": 1})}
+        r_by_id = {r["id"]: r["name"] async for r in db.dms_retailers.find({}, {"_id": 0, "id": 1, "name": 1})}
+        async for b in db.dms_retailer_bills.find(q, {"_id": 0}):
+            ws2.append([b.get("bill_no"), (b.get("created_at") or "")[:10],
+                        d_by_id.get(b.get("distributor_id"), ""),
+                        r_by_id.get(b.get("retailer_id"), ""),
+                        b.get("order_no", ""), b.get("subtotal"), b.get("gst_total"), b.get("total"), b.get("status")])
+        for w in [ws1, ws2]:
+            for col_letter in ["A", "B", "C", "D", "E", "F", "G", "H", "I"]:
+                w.column_dimensions[col_letter].width = 20
+        return _xlsx_response(wb, "sale_bills")
+
+    # -- Payments Export --
+    @router.get("/payments/export")
+    async def export_payments(user: dict = Depends(owner_only), start: Optional[str] = None, end: Optional[str] = None):
+        from openpyxl import Workbook
+        wb = Workbook()
+        # Primary Payments (kind=payment in dms_primary_ledger)
+        ws1 = wb.active; ws1.title = "Primary_Payments"
+        ws1.append(["date", "distributor", "amount", "reference", "description"])
+        q = {"kind": "payment"}
+        if start: q.setdefault("at", {})["$gte"] = start
+        if end: q.setdefault("at", {})["$lte"] = end + "T23:59:59"
+        d_by_id = {d["id"]: d["name"] async for d in db.dms_distributors.find({}, {"_id": 0, "id": 1, "name": 1})}
+        async for e in db.dms_primary_ledger.find(q, {"_id": 0}):
+            ws1.append([(e.get("at") or "")[:10], d_by_id.get(e.get("distributor_id"), ""),
+                        e.get("amount"), e.get("reference_no", ""), e.get("description", "")])
+        # Secondary Payments (kind=payment in dms_retailer_ledger)
+        ws2 = wb.create_sheet("Secondary_Payments")
+        ws2.append(["date", "distributor", "retailer", "amount", "reference", "description"])
+        r_by_id = {r["id"]: r["name"] async for r in db.dms_retailers.find({}, {"_id": 0, "id": 1, "name": 1})}
+        async for e in db.dms_retailer_ledger.find(q, {"_id": 0}):
+            ws2.append([(e.get("at") or "")[:10],
+                        d_by_id.get(e.get("distributor_id"), ""),
+                        r_by_id.get(e.get("retailer_id"), ""),
+                        e.get("amount"), e.get("reference_no", ""), e.get("description", "")])
+        for w in [ws1, ws2]:
+            for col_letter in ["A", "B", "C", "D", "E", "F"]:
+                w.column_dimensions[col_letter].width = 20
+        return _xlsx_response(wb, "payments")
+
+    # =========================================================================
+    # PHASE 2C — Direct +Add Sales invoice (no sales order required)
+    # =========================================================================
+    @router.post("/direct-sales")
+    async def create_direct_sale(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        """Directly create a retailer sale bill without a preceding secondary order.
+        RBAC: owner, distributor, distributor_accountant. Distributor can only bill own retailers."""
+        role = user.get("role")
+        if role not in ("owner", "super_admin", "distributor", "distributor_accountant"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        did = str(body.get("distributor_id") or user.get("distributor_id") or "").strip()
+        rid = str(body.get("retailer_id") or "").strip()
+        if not did or not rid:
+            raise HTTPException(status_code=400, detail="distributor_id and retailer_id required")
+        if role in ("distributor", "distributor_accountant") and did != user.get("distributor_id"):
+            raise HTTPException(status_code=403, detail="Cannot create bill for another distributor")
+        dist = await db.dms_distributors.find_one({"id": did}, {"_id": 0})
+        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not dist or not retailer:
+            raise HTTPException(status_code=400, detail="Invalid distributor_id or retailer_id")
+        if retailer.get("distributor_id") != did:
+            raise HTTPException(status_code=400, detail="Retailer does not belong to this distributor")
+        date = str(body.get("date") or _now()[:10]).strip()
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        await _check_fy_lock(date, "direct sale")
+        items = body.get("items") or []
+        if not items:
+            raise HTTPException(status_code=400, detail="items required")
+        # Load products
+        pids = [str(i.get("product_id") or "").strip() for i in items if i.get("product_id")]
+        prods = {p["id"]: p async for p in db.dms_products.find({"id": {"$in": pids}}, {"_id": 0})}
+        settings = await _get_settings()
+        gst_default = float(settings.get("gst_pct") or 0)
+        norm_items: List[Dict[str, Any]] = []
+        subtotal = 0.0; gst_total = 0.0
+        stop_sale = await _stop_sale_enabled()
+        for it in items:
+            pid = str(it.get("product_id") or "").strip()
+            p = prods.get(pid)
+            if not p:
+                raise HTTPException(status_code=400, detail=f"Invalid product_id: {pid}")
+            try:
+                qb = int(it.get("qty_boxes") or 0); qp = int(it.get("qty_pcs") or 0)
+            except Exception:
+                raise HTTPException(status_code=400, detail="qty must be integer")
+            if qb <= 0 and qp <= 0:
+                raise HTTPException(status_code=400, detail=f"quantities must be > 0 for {p['name']}")
+            # price: prefer body, else retailer_prices, else product unit_price
+            box_price = float(it.get("box_price") or 0)
+            if box_price <= 0:
+                rp = await db.dms_retailer_prices.find_one({"distributor_id": did, "product_id": pid}, {"_id": 0})
+                box_price = float(rp["selling_price"]) if rp else float(p.get("unit_price", 0))
+            box_qty = int(p.get("box_qty", 1) or 1)
+            pcs_price = _round(box_price / max(box_qty, 1))
+            line_sub = _round(qb * box_price + qp * pcs_price)
+            line_gst = _round(line_sub * gst_default / 100)
+            line_total = _round(line_sub + line_gst)
+            # stock check
+            if stop_sale:
+                need_boxes = qb + (qp // max(box_qty, 1)) + (1 if qp % max(box_qty, 1) > 0 else 0)
+                inv = await db.dms_distributor_inventory.find_one({"distributor_id": did, "product_id": pid}, {"_id": 0, "qty_boxes": 1})
+                avail = int((inv or {}).get("qty_boxes", 0) or 0)
+                if need_boxes > avail:
+                    raise HTTPException(status_code=400, detail=f"Insufficient distributor stock for {p['name']}: available {avail} boxes, need {need_boxes}")
+            norm_items.append({
+                "product_id": pid, "product_name": p.get("name", ""), "sku_code": p.get("sku_code", ""),
+                "box_qty": box_qty, "box_price": _round(box_price), "pcs_price": pcs_price,
+                "gst_pct": gst_default, "qty_boxes_dispatched": qb, "qty_pcs_dispatched": qp,
+                "dispatched_qty_boxes": qb, "dispatched_qty_pcs": qp,
+                "line_subtotal": line_sub, "line_gst": line_gst, "line_total": line_total,
+            })
+            subtotal += line_sub; gst_total += line_gst
+            # decrement inventory
+            need_boxes = qb + (qp // max(box_qty, 1)) + (1 if qp % max(box_qty, 1) > 0 else 0)
+            if need_boxes > 0:
+                await db.dms_distributor_inventory.update_one(
+                    {"distributor_id": did, "product_id": pid},
+                    {"$inc": {"qty_boxes": -need_boxes}, "$set": {"updated_at": _now()}},
+                    upsert=True,
+                )
+                await db.dms_stock_ledger.insert_one({
+                    "id": _nid("sl"), "scope": "distributor", "distributor_id": did,
+                    "product_id": pid, "delta_boxes": -need_boxes,
+                    "reason": "direct_sale", "reference": "", "at": _now(),
+                })
+        total = _round(subtotal + gst_total)
+        # create bill (no order)
+        bill_no = str(body.get("bill_no") or f"DS-{datetime.now().strftime('%y%m%d%H%M%S')}").strip()
+        # duplicate check
+        dup = await db.dms_retailer_bills.find_one({"bill_no": bill_no}, {"_id": 0})
+        if dup:
+            raise HTTPException(status_code=400, detail=f"Bill number '{bill_no}' already exists")
+        bill = {
+            "id": _nid("rb"), "bill_no": bill_no, "date": date,
+            "order_id": None, "order_no": None,
+            "retailer_id": rid, "distributor_id": did,
+            "items": norm_items, "subtotal": _round(subtotal), "gst_total": _round(gst_total), "total": total,
+            "status": "issued", "source": "direct_sale",
+            "notes": str(body.get("notes") or "").strip(),
+            "created_by": user["id"], "created_by_name": user.get("name"),
+            "created_at": _now(),
+        }
+        await db.dms_retailer_bills.insert_one(bill)
+        await db.dms_retailer_ledger.insert_one({
+            "id": _nid("rle"), "distributor_id": did, "retailer_id": rid,
+            "kind": "invoice", "reference_id": bill["id"], "reference_no": bill["bill_no"],
+            "amount": total, "description": f"Direct sale bill {bill_no}", "at": _now(),
+        })
+        bill.pop("_id", None)
+        return _clean(bill)
+
+    # =========================================================================
+    # PHASE 2C — PO PDF (Purchase Order = primary order print view)
+    # =========================================================================
+    @router.get("/print/purchase-order/{oid}")
+    async def print_purchase_order(oid: str, user: dict = Depends(get_current_user)):
+        order = await db.dms_primary_orders.find_one({"id": oid}, {"_id": 0})
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        role = user.get("role")
+        if role in ("distributor", "distributor_accountant") and order["distributor_id"] != user.get("distributor_id"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        dist = await db.dms_distributors.find_one({"id": order["distributor_id"]}, {"_id": 0})
+        order["distributor"] = dist
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0, "invoice_terms": 1, "invoice_message": 1, "company_name": 1}) or {}
+        order["invoice_terms"] = s.get("invoice_terms") or ""
+        order["invoice_message"] = s.get("invoice_message") or ""
+        order["company_name"] = s.get("company_name") or "GO OIL Lubricants"
+        order["doc_type"] = "Purchase Order"
+        return order
+
+    # =========================================================================
+    # PHASE 2C — Document stubs (Estimate / Delivery Challan / Sale Return / Credit / Debit Note)
+    # =========================================================================
+    DOC_TYPES = {"estimate", "delivery_challan", "sale_return", "credit_note", "debit_note"}
+    DOC_LABELS = {
+        "estimate": "Estimate/Quotation", "delivery_challan": "Delivery Challan",
+        "sale_return": "Sale Return", "credit_note": "Credit Note", "debit_note": "Debit Note",
+    }
+    DOC_PREFIX = {"estimate": "EST", "delivery_challan": "DC", "sale_return": "SR", "credit_note": "CN", "debit_note": "DN"}
+
+    async def _party_lookup(party_type: str, party_id: str) -> Dict[str, Any]:
+        col = db.dms_retailers if party_type == "retailer" else db.dms_distributors
+        return await col.find_one({"id": party_id}, {"_id": 0}) or {}
+
+    @router.get("/documents")
+    async def list_documents(user: dict = Depends(get_current_user), type: Optional[str] = None,
+                             start: Optional[str] = None, end: Optional[str] = None):
+        role = user.get("role")
+        if role == "retailer":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        q: Dict[str, Any] = {}
+        if type:
+            if type not in DOC_TYPES:
+                raise HTTPException(status_code=400, detail=f"type must be one of {sorted(DOC_TYPES)}")
+            q["type"] = type
+        if start: q.setdefault("date", {})["$gte"] = start
+        if end: q.setdefault("date", {})["$lte"] = end
+        # Distributor scope
+        if role in ("distributor", "distributor_accountant"):
+            q["distributor_id"] = user.get("distributor_id")
+        rows = await db.dms_documents.find(q, {"_id": 0}).sort("created_at", -1).to_list(1000)
+        return {"data": rows, "count": len(rows)}
+
+    @router.post("/documents")
+    async def create_document(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role not in ("owner", "super_admin", "distributor", "distributor_accountant"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        doc_type = str(body.get("type") or "").strip().lower()
+        if doc_type not in DOC_TYPES:
+            raise HTTPException(status_code=400, detail=f"type must be one of {sorted(DOC_TYPES)}")
+        date = str(body.get("date") or _now()[:10]).strip()
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except Exception:
+            raise HTTPException(status_code=400, detail="date must be YYYY-MM-DD")
+        await _check_fy_lock(date, f"{DOC_LABELS[doc_type]}")
+        party_type = str(body.get("party_type") or "").strip().lower()
+        if party_type not in ("retailer", "distributor"):
+            raise HTTPException(status_code=400, detail="party_type must be retailer or distributor")
+        party_id = str(body.get("party_id") or "").strip()
+        party = await _party_lookup(party_type, party_id)
+        if not party:
+            raise HTTPException(status_code=400, detail=f"Invalid {party_type} party_id")
+        if role in ("distributor", "distributor_accountant"):
+            # distributor scope: only own retailers OR self
+            if party_type == "retailer" and party.get("distributor_id") != user.get("distributor_id"):
+                raise HTTPException(status_code=403, detail="Retailer not under your distributor")
+            if party_type == "distributor" and party.get("id") != user.get("distributor_id"):
+                raise HTTPException(status_code=403, detail="Cannot create doc for another distributor")
+        # Items (product-agnostic — free text allowed)
+        items = body.get("items") or []
+        norm_items: List[Dict[str, Any]] = []
+        subtotal = 0.0
+        for it in items:
+            desc = str(it.get("description") or it.get("product_name") or "").strip()
+            try:
+                qty = float(it.get("qty") or 0); rate = float(it.get("rate") or 0)
+            except Exception:
+                raise HTTPException(status_code=400, detail="qty and rate must be numbers")
+            amt = _round(qty * rate)
+            norm_items.append({
+                "description": desc, "product_id": str(it.get("product_id") or "") or None,
+                "qty": qty, "rate": _round(rate), "amount": amt,
+            })
+            subtotal += amt
+        gst_pct = float(body.get("gst_pct") or 0)
+        gst_total = _round(subtotal * gst_pct / 100)
+        total = _round(subtotal + gst_total)
+        # doc_no
+        cnt = await db.dms_documents.count_documents({"type": doc_type})
+        doc_no = str(body.get("doc_no") or f"{DOC_PREFIX[doc_type]}-{datetime.now().strftime('%y%m%d')}-{cnt + 1:04d}").strip()
+        # duplicate check within type
+        dup = await db.dms_documents.find_one({"type": doc_type, "doc_no": doc_no}, {"_id": 0, "id": 1})
+        if dup:
+            raise HTTPException(status_code=400, detail=f"Document number '{doc_no}' already exists for {DOC_LABELS[doc_type]}")
+        doc = {
+            "id": _nid("doc"), "type": doc_type, "doc_no": doc_no, "date": date,
+            "party_type": party_type, "party_id": party_id, "party_name": party.get("name", ""),
+            "distributor_id": user.get("distributor_id") if role in ("distributor", "distributor_accountant") else (party.get("distributor_id") if party_type == "retailer" else party.get("id")),
+            "items": norm_items, "subtotal": _round(subtotal), "gst_pct": gst_pct,
+            "gst_total": gst_total, "total": total,
+            "notes": str(body.get("notes") or "").strip(),
+            "created_by": user["id"], "created_by_name": user.get("name"),
+            "created_at": _now(),
+        }
+        await db.dms_documents.insert_one(doc)
+        doc.pop("_id", None)
+        return _clean(doc)
+
+    @router.get("/documents/{did}")
+    async def get_document(did: str, user: dict = Depends(get_current_user)):
+        d = await db.dms_documents.find_one({"id": did}, {"_id": 0})
+        if not d:
+            raise HTTPException(status_code=404, detail="Document not found")
+        role = user.get("role")
+        if role == "retailer":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if role in ("distributor", "distributor_accountant") and d.get("distributor_id") != user.get("distributor_id"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return d
+
+    @router.get("/documents/{did}/print")
+    async def print_document(did: str, user: dict = Depends(get_current_user)):
+        d = await db.dms_documents.find_one({"id": did}, {"_id": 0})
+        if not d:
+            raise HTTPException(status_code=404, detail="Document not found")
+        role = user.get("role")
+        if role == "retailer":
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if role in ("distributor", "distributor_accountant") and d.get("distributor_id") != user.get("distributor_id"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        party = await _party_lookup(d.get("party_type", "retailer"), d.get("party_id", ""))
+        d["party"] = party
+        d["doc_type_label"] = DOC_LABELS.get(d["type"], d["type"])
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0, "invoice_terms": 1, "invoice_message": 1, "company_name": 1}) or {}
+        d["invoice_terms"] = s.get("invoice_terms") or ""
+        d["invoice_message"] = s.get("invoice_message") or ""
+        d["company_name"] = s.get("company_name") or "GO OIL Lubricants"
+        return d
+
+    # =========================================================================
+    # PHASE 2C — Finance Dashboard Snapshot
+    # =========================================================================
+    @router.get("/dashboard/finance-snapshot")
+    async def finance_snapshot(user: dict = Depends(_guard("owner", "owner_accountant", "super_admin"))):
+        agg_bank = await db.dms_bank_accounts.aggregate([{"$group": {"_id": None, "t": {"$sum": "$current_balance"}}}]).to_list(2)
+        cash_in_bank = _round((agg_bank[0]["t"] if agg_bank else 0) or 0)
+        agg_cash = await db.dms_cash_register.aggregate([{"$group": {"_id": "$type", "t": {"$sum": "$amount"}}}]).to_list(10)
+        totals = {r["_id"]: r["t"] for r in agg_cash}
+        cash_in_hand = _round((totals.get("in") or 0) - (totals.get("out") or 0))
+        agg_loans = await db.dms_loan_accounts.aggregate([{"$group": {"_id": None, "t": {"$sum": "$outstanding"}}}]).to_list(2)
+        outstanding_loans = _round((agg_loans[0]["t"] if agg_loans else 0) or 0)
+        return {
+            "cash_in_bank": cash_in_bank,
+            "cash_in_hand": cash_in_hand,
+            "outstanding_loans": outstanding_loans,
+            "net_liquid": _round(cash_in_bank + cash_in_hand),
+            "net_position": _round(cash_in_bank + cash_in_hand - outstanding_loans),
+        }
+
+    # =========================================================================
+    # PHASE 2C — Godown Reorder Level + Low-Stock alerts
+    # =========================================================================
+    @router.put("/godowns/{gid}/reorder-level")
+    async def set_reorder_level(gid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_or_owner_acct)):
+        product_id = str(body.get("product_id") or "").strip()
+        if not product_id:
+            raise HTTPException(status_code=400, detail="product_id required")
+        try:
+            level = int(body.get("reorder_level_boxes") or 0)
+        except Exception:
+            raise HTTPException(status_code=400, detail="reorder_level_boxes must be integer")
+        if level < 0:
+            raise HTTPException(status_code=400, detail="reorder_level_boxes must be ≥ 0")
+        # verify godown exists
+        g = await db.dms_godowns.find_one({"id": gid}, {"_id": 0, "id": 1})
+        if not g:
+            raise HTTPException(status_code=404, detail="Godown not found")
+        # upsert inventory row with reorder_level
+        cur = await db.dms_godown_inventory.find_one({"godown_id": gid, "product_id": product_id})
+        if cur:
+            await db.dms_godown_inventory.update_one(
+                {"godown_id": gid, "product_id": product_id},
+                {"$set": {"reorder_level_boxes": level, "updated_at": _now()}},
+            )
+        else:
+            await db.dms_godown_inventory.insert_one({
+                "id": _nid("ginv"), "godown_id": gid, "product_id": product_id,
+                "qty_boxes": 0, "reorder_level_boxes": level, "updated_at": _now(),
+            })
+        return {"ok": True, "reorder_level_boxes": level}
+
+    @router.get("/godowns/low-stock")
+    async def list_low_stock(user: dict = Depends(owner_or_owner_acct)):
+        """List all godown-inventory rows where qty_boxes ≤ reorder_level_boxes AND reorder_level_boxes > 0."""
+        rows = await db.dms_godown_inventory.find(
+            {"reorder_level_boxes": {"$gt": 0}, "$expr": {"$lte": ["$qty_boxes", "$reorder_level_boxes"]}},
+            {"_id": 0}
+        ).to_list(2000)
+        # enrich
+        gods = {g["id"]: g["name"] async for g in db.dms_godowns.find({}, {"_id": 0, "id": 1, "name": 1})}
+        pids = [r["product_id"] for r in rows]
+        prods = {p["id"]: p async for p in db.dms_products.find({"id": {"$in": pids}}, {"_id": 0})}
+        for r in rows:
+            r["godown_name"] = gods.get(r["godown_id"], "")
+            p = prods.get(r["product_id"], {})
+            r["product_name"] = p.get("name", ""); r["sku_code"] = p.get("sku_code", "")
+        return {"data": rows, "count": len(rows)}
 
     return router

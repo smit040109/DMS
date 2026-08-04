@@ -84,6 +84,8 @@ async def _reset_dms_business_data(raw_db):
         "dms_loan_accounts", "dms_loan_transactions",
         "dms_godowns", "dms_godown_inventory", "dms_stock_transfers",
         "dms_retailer_pending",
+        # Phase 2C
+        "dms_documents",
     ]
     for coll in collections_full_drop:
         try:
