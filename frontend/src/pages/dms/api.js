@@ -274,6 +274,15 @@ export const dms = {
     const base = (process.env.REACT_APP_BACKEND_URL || "") + "/api/dms/reports/sale/export";
     return qs ? `${base}?${qs}` : base;
   },
+  runReport: (reportId, params) => api.get(`/dms/reports/${reportId}/run`, { params }).then(r => r.data),
+  reportExportUrl: (reportId, params) => {
+    const qs = new URLSearchParams(params || {}).toString();
+    const base = (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/reports/${reportId}/export`;
+    return qs ? `${base}?${qs}` : base;
+  },
+  listSavedFilters: (reportId) => api.get(`/dms/reports/saved-filters/${reportId}`).then(r => r.data),
+  saveFilter: (reportId, payload) => api.post(`/dms/reports/saved-filters/${reportId}`, payload).then(r => r.data),
+  deleteSavedFilter: (id) => api.delete(`/dms/reports/saved-filters/${id}`).then(r => r.data),
 };
 
 export function inr(n) {

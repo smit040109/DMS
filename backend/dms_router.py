@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Body, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Body, Query, UploadFile, File, Request
 from pydantic import BaseModel
 
 
@@ -5053,45 +5053,30 @@ def build_dms_router(db, get_current_user):
     # =========================================================================
     from dms_reports import (
         REPORT_CATALOG, CATEGORY_ORDER, role_can_see_report,
-        get_report_by_id, run_sale_report,
+        get_report_by_id, run_report, run_sale_report,
     )
 
     @router.get("/reports/catalog")
     async def reports_catalog(user: dict = Depends(get_current_user)):
-        """Return the full reports catalogue grouped by category, filtered by role,
-        with an is_favorite flag per report for the current user."""
         role = user.get("role", "")
         if role == "retailer":
             raise HTTPException(status_code=403, detail="Retailers cannot access reports")
-
         favs = await db.dms_report_favorites.find(
             {"user_id": user["id"]}, {"_id": 0, "report_id": 1}
         ).to_list(200)
         fav_ids = {f["report_id"] for f in favs}
-
         visible = [r for r in REPORT_CATALOG if role_can_see_report(r, role)]
-
         groups = []
         for cat_id, cat_label in CATEGORY_ORDER:
-            items = [
-                {
-                    "id": r["id"],
-                    "name": r["name"],
-                    "description": r["description"],
-                    "status": r["status"],
-                    "filters": r.get("filters", []),
-                    "is_favorite": r["id"] in fav_ids,
-                }
-                for r in visible if r["category"] == cat_id
-            ]
+            items = [{
+                "id": r["id"], "name": r["name"], "description": r["description"],
+                "status": r["status"], "filters": r.get("filters", []),
+                "is_favorite": r["id"] in fav_ids,
+            } for r in visible if r["category"] == cat_id]
             if items:
                 groups.append({"category": cat_id, "label": cat_label, "items": items})
-
-        favorites = [
-            {"id": r["id"], "name": r["name"], "category": r["category"], "status": r["status"]}
-            for r in visible if r["id"] in fav_ids
-        ]
-
+        favorites = [{"id": r["id"], "name": r["name"], "category": r["category"],
+                      "status": r["status"]} for r in visible if r["id"] in fav_ids]
         return {"groups": groups, "favorites": favorites}
 
     @router.post("/reports/favorites/toggle/{report_id}")
@@ -5112,14 +5097,45 @@ def build_dms_router(db, get_current_user):
             )
             return {"ok": True, "is_favorite": False}
         await db.dms_report_favorites.insert_one({
-            "id": _nid("rfav"),
-            "user_id": user["id"],
-            "report_id": report_id,
-            "at": _now(),
+            "id": _nid("rfav"), "user_id": user["id"],
+            "report_id": report_id, "at": _now(),
         })
         return {"ok": True, "is_favorite": True}
 
-    def _sale_report_guard(report_id: str, user: dict):
+    # Per-user saved filters (Polish item)
+    @router.get("/reports/saved-filters/{report_id}")
+    async def list_saved_filters(report_id: str, user: dict = Depends(get_current_user)):
+        rows = await db.dms_report_saved_filters.find(
+            {"user_id": user["id"], "report_id": report_id}, {"_id": 0}
+        ).to_list(50)
+        return {"data": rows, "count": len(rows)}
+
+    @router.post("/reports/saved-filters/{report_id}")
+    async def save_filter(report_id: str, payload: Dict[str, Any] = Body(...),
+                          user: dict = Depends(get_current_user)):
+        name = (payload.get("name") or "").strip()
+        filters = payload.get("filters") or {}
+        if not name:
+            raise HTTPException(status_code=400, detail="Name required")
+        doc = {
+            "id": _nid("sf"),
+            "user_id": user["id"],
+            "report_id": report_id,
+            "name": name,
+            "filters": filters,
+            "at": _now(),
+        }
+        await db.dms_report_saved_filters.insert_one(doc)
+        return {"ok": True, "id": doc["id"]}
+
+    @router.delete("/reports/saved-filters/{filter_id}")
+    async def delete_saved_filter(filter_id: str, user: dict = Depends(get_current_user)):
+        r = await db.dms_report_saved_filters.delete_one(
+            {"id": filter_id, "user_id": user["id"]}
+        )
+        return {"deleted": r.deleted_count}
+
+    def _report_guard(report_id: str, user: dict):
         report = get_report_by_id(report_id)
         if not report:
             raise HTTPException(status_code=404, detail="Unknown report_id")
@@ -5127,76 +5143,105 @@ def build_dms_router(db, get_current_user):
             raise HTTPException(status_code=400, detail="Report is not yet available")
         if not role_can_see_report(report, user.get("role", "")):
             raise HTTPException(status_code=403, detail="Report not accessible for your role")
+        return report
 
-    @router.get("/reports/sale/run")
-    async def report_sale_run(
-        date_from: Optional[str] = None,
-        date_to: Optional[str] = None,
-        sale_type: str = "both",
-        party_id: Optional[str] = None,
-        user: dict = Depends(get_current_user),
-    ):
-        _sale_report_guard("sale", user)
-        if sale_type not in ("primary", "secondary", "both"):
-            raise HTTPException(status_code=400, detail="sale_type must be primary|secondary|both")
-        data = await run_sale_report(
-            db, user,
-            date_from=date_from, date_to=date_to,
-            sale_type=sale_type, party_id=party_id,
-        )
+    def _extract_filters(request: Request) -> Dict[str, Any]:
+        # Pull all query params — the report engine ignores unknown keys.
+        out = {}
+        for k, v in request.query_params.items():
+            if v is None or v == "":
+                continue
+            out[k] = v
+        return out
+
+    @router.get("/reports/{report_id}/run")
+    async def report_run(report_id: str, request: Request,
+                         user: dict = Depends(get_current_user)):
+        report = _report_guard(report_id, user)
+        filters = _extract_filters(request)
+        data = await run_report(db, user, report_id, filters)
+        data["report"] = {"id": report["id"], "name": report["name"],
+                          "category": report["category"]}
         return data
 
-    @router.get("/reports/sale/export")
-    async def report_sale_export(
+    @router.get("/reports/{report_id}/export")
+    async def report_export(report_id: str, request: Request,
+                            user: dict = Depends(get_current_user)):
+        report = _report_guard(report_id, user)
+        from openpyxl import Workbook
+        filters = _extract_filters(request)
+        data = await run_report(db, user, report_id, filters)
+        wb = Workbook(); ws = wb.active
+        ws.title = report["name"][:31]
+        ws.append([report["name"]])
+        param_summary = " | ".join(f"{k}={v}" for k, v in filters.items()) or "(no filters)"
+        ws.append([f"Filters: {param_summary}", f"Generated: {_now()}"])
+        ws.append([])
+        cols = data.get("columns", [])
+        ws.append([c["label"] for c in cols])
+        for r in data.get("rows", []):
+            ws.append([r.get(c["key"], "") for c in cols])
+        # Totals row
+        tot = data.get("totals", {})
+        totals_row = []
+        for c in cols:
+            k = c["key"]
+            if c.get("totals") and k in tot:
+                totals_row.append(tot[k])
+            else:
+                totals_row.append("")
+        if any(v != "" for v in totals_row):
+            ws.append([])
+            # Label the totals row on the first non-currency column
+            totals_row[0] = "TOTAL"
+            ws.append(totals_row)
+        # Column widths — heuristic
+        for i, c in enumerate(cols, start=1):
+            w = 14 if c.get("type") in ("currency", "number", "int", "pct") else 22
+            ws.column_dimensions[chr(64 + i) if i < 27 else "A" + chr(64 + (i - 26))].width = w
+        return _xlsx_response(wb, report["id"])
+
+    # Legacy Sale Report endpoints (kept for backward compatibility)
+    @router.get("/reports/sale/run")
+    async def report_sale_run_legacy(
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
         sale_type: str = "both",
         party_id: Optional[str] = None,
         user: dict = Depends(get_current_user),
     ):
-        _sale_report_guard("sale", user)
+        _report_guard("sale", user)
+        if sale_type not in ("primary", "secondary", "both"):
+            raise HTTPException(status_code=400, detail="sale_type must be primary|secondary|both")
+        return await run_sale_report(db, user, date_from=date_from, date_to=date_to,
+                                     sale_type=sale_type, party_id=party_id)
+
+    @router.get("/reports/sale/export")
+    async def report_sale_export_legacy(
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        sale_type: str = "both",
+        party_id: Optional[str] = None,
+        user: dict = Depends(get_current_user),
+    ):
+        _report_guard("sale", user)
         from openpyxl import Workbook
-        data = await run_sale_report(
-            db, user,
-            date_from=date_from, date_to=date_to,
-            sale_type=sale_type, party_id=party_id,
-        )
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Sale Report"
-        # Header block
+        data = await run_sale_report(db, user, date_from=date_from, date_to=date_to,
+                                     sale_type=sale_type, party_id=party_id)
+        wb = Workbook(); ws = wb.active; ws.title = "Sale Report"
         ws.append(["Sale Report"])
         ws.append([f"Range: {date_from or '(all time)'} to {date_to or '(today)'}",
-                   f"Sale Type: {sale_type}",
-                   f"Generated: {_now()}"])
+                   f"Sale Type: {sale_type}", f"Generated: {_now()}"])
         ws.append([])
-        # Column headers
-        headers = ["Sale Type", "Bill No", "Date", "Order No",
-                   "Party Type", "Party Name", "Items", "Subtotal (INR)",
-                   "GST (INR)", "Total (INR)"]
+        headers = ["Type", "Bill No", "Date", "Order No", "Party Type", "Party Name",
+                   "Items", "Subtotal", "GST", "Total"]
         ws.append(headers)
         for r in data["rows"]:
-            ws.append([
-                r.get("sale_type", ""),
-                r.get("bill_no", ""),
-                r.get("date", "")[:10] if r.get("date") else "",
-                r.get("order_no", ""),
-                r.get("party_type", ""),
-                r.get("party_name", ""),
-                r.get("items_count", 0),
-                r.get("subtotal", 0),
-                r.get("gst_total", 0),
-                r.get("total", 0),
-            ])
-        # Totals row
-        ws.append([])
-        t = data["totals"]
-        ws.append(["", "", "", "", "", "TOTAL",
-                   t["count"], t["subtotal"], t["gst_total"], t["total"]])
-        # Widths
-        widths = [12, 22, 12, 22, 12, 30, 8, 14, 12, 14]
-        for i, w in enumerate(widths, start=1):
-            ws.column_dimensions[chr(64 + i)].width = w
+            ws.append([r.get("sale_type", ""), r.get("bill_no", ""),
+                       (r.get("date") or "")[:10], r.get("order_no", ""),
+                       r.get("party_type", ""), r.get("party_name", ""),
+                       r.get("items_count", 0), r.get("subtotal", 0),
+                       r.get("gst_total", 0), r.get("total", 0)])
         return _xlsx_response(wb, "sale_report")
 
     return router
