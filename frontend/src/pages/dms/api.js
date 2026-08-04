@@ -264,6 +264,16 @@ export const dms = {
   // coupons — retailer + distributor scan
   scanCouponRetailer: (code) => api.post("/dms/retailer/coupons/scan", { coupon_code: code }).then(r => r.data),
   scanCouponDistributor: (code) => api.post("/dms/distributor/coupons/scan", { coupon_code: code }).then(r => r.data),
+
+  // Phase 3: Reports
+  reportsCatalog: () => api.get("/dms/reports/catalog").then(r => r.data),
+  toggleReportFavorite: (rid) => api.post(`/dms/reports/favorites/toggle/${rid}`).then(r => r.data),
+  runSaleReport: (params) => api.get("/dms/reports/sale/run", { params }).then(r => r.data),
+  saleReportExportUrl: (params) => {
+    const qs = new URLSearchParams(params || {}).toString();
+    const base = (process.env.REACT_APP_BACKEND_URL || "") + "/api/dms/reports/sale/export";
+    return qs ? `${base}?${qs}` : base;
+  },
 };
 
 export function inr(n) {

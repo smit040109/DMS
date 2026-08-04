@@ -32,6 +32,7 @@ import { RmDashboardPage, RmTeamLeadersPage, RmRegionPerformancePage, RmDistribu
 import { OwnerCouponsPage, OwnerCouponReportsPage, RetailerScanCouponPage, DistributorScanCouponPage } from "@/pages/dms/CouponPages";
 import { PrintEbillPage, PrintRetailerBillPage, PrintPurchaseOrderPage, PrintDocumentPage } from "@/pages/dms/PrintPages";
 import { ImportExportPage, DirectSalesPage, DocumentsPage } from "@/pages/dms/Phase2CPages";
+import { ReportsHubPage, SaleReportPage, ComingSoonReportPage } from "@/pages/dms/ReportsPages";
 import { PriceCircularsPage, PriceCircularDetailPage, NewPriceCircularPage, SettingsPage } from "@/pages/dms/PriceCircularPages";
 import { ExpensesPage } from "@/pages/dms/ExpensesPage";
 import { BankAccountsPage, BankTransactionsPage, CashRegisterPage, ChequesPage, LoanAccountsPage } from "@/pages/dms/CashBankPages";
@@ -110,6 +111,10 @@ function AppRoutes() {
       <Route path="/dms/import-export"             element={<DmsPage Component={ImportExportPage} />} />
       <Route path="/dms/direct-sales"              element={<DmsPage Component={DirectSalesPage} />} />
       <Route path="/dms/documents"                 element={<DmsPage Component={DocumentsPage} />} />
+      {/* Phase 3 — Reports */}
+      <Route path="/dms/reports"                   element={<DmsPage Component={ReportsHubPage} />} />
+      <Route path="/dms/reports/sale"              element={<DmsPage Component={SaleReportPage} />} />
+      <Route path="/dms/reports/:reportId"         element={<DmsPage Component={ComingSoonReportPage} />} />
       <Route path="/dms/retailer/scan"             element={<DmsPage Component={RetailerScanCouponPage} />} />
       <Route path="/dms/distributor/scan"           element={<DmsPage Component={DistributorScanCouponPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />

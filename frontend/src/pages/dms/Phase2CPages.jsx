@@ -486,8 +486,53 @@ export function DocumentsPage() {
 }
 
 // =====================================================================
-// Document Print View — standalone printable page
+// Document Print View — standalone printable page (with distinct per-type styling)
 // =====================================================================
+const DOC_STYLES = {
+  estimate: {
+    accent: "#3b82f6",           // blue-500
+    bg: "bg-blue-50",
+    border: "border-blue-500",
+    text: "text-blue-700",
+    tag: "PROPOSAL",
+  },
+  delivery_challan: {
+    accent: "#059669",           // emerald-600
+    bg: "bg-emerald-50",
+    border: "border-emerald-600",
+    text: "text-emerald-700",
+    tag: "DISPATCH",
+  },
+  sale_return: {
+    accent: "#e11d48",           // rose-600
+    bg: "bg-rose-50",
+    border: "border-rose-600",
+    text: "text-rose-700",
+    tag: "RETURN",
+  },
+  credit_note: {
+    accent: "#7c3aed",           // violet-600
+    bg: "bg-violet-50",
+    border: "border-violet-600",
+    text: "text-violet-700",
+    tag: "CR NOTE",
+  },
+  debit_note: {
+    accent: "#ea580c",           // orange-600
+    bg: "bg-orange-50",
+    border: "border-orange-600",
+    text: "text-orange-700",
+    tag: "DR NOTE",
+  },
+};
+const DEFAULT_DOC_STYLE = {
+  accent: "#a67c00",
+  bg: "bg-amber-50",
+  border: "border-amber-600",
+  text: "text-amber-700",
+  tag: "DOCUMENT",
+};
+
 export function DocumentPrintPage() {
   const [doc, setDoc] = useState(null);
   useEffect(() => {
@@ -495,34 +540,75 @@ export function DocumentPrintPage() {
     dms.printDocument(id).then(d => setDoc(d)).catch(() => toast.error("Failed"));
   }, []);
   if (!doc) return <div className="p-6 text-slate-500">Loading…</div>;
+
+  const style = DOC_STYLES[doc.type] || DEFAULT_DOC_STYLE;
+
   return (
     <div className="p-8 max-w-3xl mx-auto bg-white">
-      <div className="text-center mb-6 pb-4 border-b-2 border-amber-600">
-        <h1 className="text-3xl font-bold text-amber-700">{doc.company_name}</h1>
-        <div className="mt-2 text-lg font-semibold text-slate-700">{doc.doc_type_label}</div>
+      {/* Header — distinct per doc type */}
+      <div className={`mb-6 pb-4 border-b-2 ${style.border}`}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className={`text-3xl font-bold ${style.text}`}>{doc.company_name}</h1>
+            <div className={`mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold tracking-widest ${style.bg} ${style.text} border ${style.border}`}>
+              <span>{style.tag}</span>
+              <span className="opacity-40">•</span>
+              <span>{doc.doc_type_label}</span>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs uppercase text-slate-500 tracking-wide">{doc.doc_type_label} No</div>
+            <div className={`text-lg font-mono font-semibold ${style.text}`}>{doc.doc_no}</div>
+            <div className="text-xs text-slate-500 mt-1">Date: {doc.date}</div>
+          </div>
+        </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
-        <div><strong>Document No:</strong> {doc.doc_no}</div>
-        <div><strong>Date:</strong> {doc.date}</div>
-        <div><strong>Party:</strong> {doc.party_name}</div>
-        {doc.party?.gstin && <div><strong>GSTIN:</strong> {doc.party.gstin}</div>}
-        {doc.party?.phone && <div><strong>Phone:</strong> {doc.party.phone}</div>}
-        {doc.party?.address && <div className="col-span-2"><strong>Address:</strong> {doc.party.address}</div>}
+
+      {/* Party block */}
+      <div className={`p-4 rounded-lg ${style.bg} border ${style.border} mb-5`}>
+        <div className="text-xs uppercase font-semibold text-slate-500 mb-1">Party</div>
+        <div className="font-semibold text-slate-800">{doc.party_name}</div>
+        <div className="grid grid-cols-2 gap-2 mt-2 text-xs text-slate-600">
+          {doc.party?.gstin && <div><strong>GSTIN:</strong> {doc.party.gstin}</div>}
+          {doc.party?.phone && <div><strong>Phone:</strong> {doc.party.phone}</div>}
+          {doc.party?.address && <div className="col-span-2"><strong>Address:</strong> {doc.party.address}</div>}
+        </div>
       </div>
+
+      {/* Items */}
       <table className="w-full border-collapse mb-4 text-sm">
-        <thead className="bg-amber-50"><tr><th className="border p-2 text-left">Description</th><th className="border p-2 text-right">Qty</th><th className="border p-2 text-right">Rate</th><th className="border p-2 text-right">Amount</th></tr></thead>
+        <thead className={style.bg}><tr>
+          <th className="border p-2 text-left">Description</th>
+          <th className="border p-2 text-right">Qty</th>
+          <th className="border p-2 text-right">Rate</th>
+          <th className="border p-2 text-right">Amount</th>
+        </tr></thead>
         <tbody>{(doc.items || []).map((it, i) => (
-          <tr key={i}><td className="border p-2">{it.description}</td><td className="border p-2 text-right">{it.qty}</td><td className="border p-2 text-right">{inr(it.rate)}</td><td className="border p-2 text-right">{inr(it.amount)}</td></tr>
+          <tr key={i}>
+            <td className="border p-2">{it.description}</td>
+            <td className="border p-2 text-right">{it.qty}</td>
+            <td className="border p-2 text-right">{inr(it.rate)}</td>
+            <td className="border p-2 text-right">{inr(it.amount)}</td>
+          </tr>
         ))}</tbody>
       </table>
+
+      {/* Totals */}
       <div className="flex justify-end mb-6"><div className="w-64 text-sm space-y-1">
         <div className="flex justify-between"><span>Subtotal</span><span>{inr(doc.subtotal)}</span></div>
         <div className="flex justify-between"><span>GST ({doc.gst_pct}%)</span><span>{inr(doc.gst_total)}</span></div>
-        <div className="flex justify-between font-bold text-lg border-t pt-1"><span>Total</span><span className="text-amber-700">{inr(doc.total)}</span></div>
+        <div className={`flex justify-between font-bold text-lg border-t pt-1`}>
+          <span>Total</span><span className={style.text}>{inr(doc.total)}</span>
+        </div>
       </div></div>
+
       {doc.invoice_message && <div className="text-center italic text-slate-600 mb-4">{doc.invoice_message}</div>}
       {doc.invoice_terms && <div className="text-xs text-slate-500 border-t pt-3 whitespace-pre-wrap">{doc.invoice_terms}</div>}
-      <div className="mt-6 text-center print:hidden"><Button onClick={() => window.print()} className="bg-amber-600"><Printer className="w-4 h-4 mr-2" />Print</Button></div>
+      <div className="mt-6 text-center print:hidden">
+        <Button onClick={() => window.print()} style={{ backgroundColor: style.accent }}>
+          <Printer className="w-4 h-4 mr-2" />Print
+        </Button>
+      </div>
     </div>
   );
 }

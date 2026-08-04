@@ -40,6 +40,8 @@ const NAV_BY_ROLE = {
     { label: "+Add Sales",      to: "/dms/direct-sales",          icon: "Receipt" },
     { label: "Documents",       to: "/dms/documents",             icon: "FileText" },
     { label: "Import / Export", to: "/dms/import-export",         icon: "FileText" },
+    // Phase 3 — Reports
+    { label: "Reports",         to: "/dms/reports",               icon: "TrendingUp" },
     { label: "Settings",        to: "/dms/owner/settings",        icon: "Settings" },
   ],
   owner_accountant: [
@@ -60,6 +62,8 @@ const NAV_BY_ROLE = {
     // Phase 2C — Owner Accountant
     { label: "Import / Export", to: "/dms/import-export",         icon: "FileText" },
     { label: "Documents",       to: "/dms/documents",             icon: "FileText" },
+    // Phase 3 — Reports
+    { label: "Reports",         to: "/dms/reports",               icon: "TrendingUp" },
   ],
   distributor: [
     { label: "Dashboard",         to: "/dms",                            icon: "LayoutDashboard" },
@@ -75,6 +79,7 @@ const NAV_BY_ROLE = {
     { label: "Secondary Ledger",  to: "/dms/distributor/sec-ledger",     icon: "ScrollText" },
     { label: "Primary Ledger",    to: "/dms/distributor/ledger",         icon: "ScrollText" },
     { label: "Expenses",          to: "/dms/expenses",                   icon: "Receipt" },
+    { label: "Reports",           to: "/dms/reports",                    icon: "TrendingUp" },
   ],
   distributor_accountant: [
     { label: "Dashboard",         to: "/dms",                            icon: "LayoutDashboard" },
@@ -85,6 +90,7 @@ const NAV_BY_ROLE = {
     { label: "+Add Sales",        to: "/dms/direct-sales",               icon: "Receipt" },
     { label: "Documents",         to: "/dms/documents",                  icon: "FileText" },
     { label: "Expenses",          to: "/dms/expenses",                   icon: "Receipt" },
+    { label: "Reports",           to: "/dms/reports",                    icon: "TrendingUp" },
   ],
   retailer: [
     { label: "Dashboard",       to: "/dms",                    icon: "LayoutDashboard" },
@@ -100,6 +106,7 @@ const NAV_BY_ROLE = {
     { label: "Collect Payment", to: "/dms/salesperson/collect",        icon: "Receipt" },
     { label: "New Retailer",    to: "/dms/salesperson/new-retailer",   icon: "MapPin" },
     { label: "Expenses",        to: "/dms/expenses",                   icon: "Receipt" },
+    { label: "Reports",         to: "/dms/reports",                    icon: "TrendingUp" },
   ],
   team_leader: [
     { label: "Dashboard",       to: "/dms",                             icon: "LayoutDashboard" },
@@ -111,6 +118,7 @@ const NAV_BY_ROLE = {
     { label: "Attendance",      to: "/dms/team-leader/attendance",      icon: "ClipboardList" },
     { label: "Assignments",     to: "/dms/team-leader/assignments",     icon: "Users" },
     { label: "Expenses",        to: "/dms/expenses",                    icon: "Receipt" },
+    { label: "Reports",         to: "/dms/reports",                     icon: "TrendingUp" },
   ],
   regional_manager: [
     { label: "Dashboard",         to: "/dms",                                    icon: "LayoutDashboard" },
@@ -120,6 +128,7 @@ const NAV_BY_ROLE = {
     { label: "Salespersons",      to: "/dms/regional-manager/salespersons",      icon: "Users" },
     { label: "Live Tracking",     to: "/dms/regional-manager/live-tracking",     icon: "MapPin" },
     { label: "Expenses",          to: "/dms/expenses",                           icon: "Receipt" },
+    { label: "Reports",           to: "/dms/reports",                            icon: "TrendingUp" },
   ],
   super_admin: [
     { label: "Dashboard",       to: "/dms",                       icon: "LayoutDashboard" },
@@ -132,6 +141,7 @@ const NAV_BY_ROLE = {
     { label: "Owner Inventory", to: "/dms/owner/inventory",       icon: "Warehouse" },
     { label: "Primary Ledger",  to: "/dms/owner/ledger",          icon: "ScrollText" },
     { label: "Expenses",        to: "/dms/expenses",              icon: "Receipt" },
+    { label: "Reports",         to: "/dms/reports",               icon: "TrendingUp" },
     { label: "Settings",        to: "/dms/owner/settings",        icon: "Settings" },
   ],
 };
