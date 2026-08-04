@@ -4831,10 +4831,12 @@ def build_dms_router(db, get_current_user):
     # =========================================================================
     @router.get("/print/purchase-order/{oid}")
     async def print_purchase_order(oid: str, user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        if role == "retailer":
+            raise HTTPException(status_code=403, detail="Forbidden")
         order = await db.dms_primary_orders.find_one({"id": oid}, {"_id": 0})
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
-        role = user.get("role")
         if role in ("distributor", "distributor_accountant") and order["distributor_id"] != user.get("distributor_id"):
             raise HTTPException(status_code=403, detail="Forbidden")
         dist = await db.dms_distributors.find_one({"id": order["distributor_id"]}, {"_id": 0})
