@@ -20,6 +20,7 @@ import {
 } from "@/pages/dms/RetailerPages";
 import {
   SpDistributorsPage, SpRetailersPage, SpNewRetailerPage, SpNewOrderPage,
+  SpOrdersPage, SpCollectPaymentPage,
   TlDistributorsPage, TlAssignmentsPage,
 } from "@/pages/dms/SalesTeamPages";
 import { SuperAdminUsersPage } from "@/pages/dms/SuperAdminPages";
@@ -122,10 +123,13 @@ function AppRoutes() {
       <Route path="/dms/retailer/my-orders/:id" element={<DmsPage Component={RetailerOrderDetailPage} />} />
 
       {/* Salesperson */}
+      <Route path="/dms/salesperson"                element={<DmsPage Component={DmsDashboardRouter} />} />
       <Route path="/dms/salesperson/distributors"  element={<DmsPage Component={SpDistributorsPage} />} />
       <Route path="/dms/salesperson/retailers"     element={<DmsPage Component={SpRetailersPage} />} />
       <Route path="/dms/salesperson/new-retailer"  element={<DmsPage Component={SpNewRetailerPage} />} />
       <Route path="/dms/salesperson/new-order"     element={<DmsPage Component={SpNewOrderPage} />} />
+      <Route path="/dms/salesperson/orders"        element={<DmsPage Component={SpOrdersPage} />} />
+      <Route path="/dms/salesperson/collect"       element={<DmsPage Component={SpCollectPaymentPage} />} />
 
       {/* Team Leader */}
       <Route path="/dms/team-leader/distributors" element={<DmsPage Component={TlDistributorsMonitoringPage} />} />

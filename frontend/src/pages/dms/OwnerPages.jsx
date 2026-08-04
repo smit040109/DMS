@@ -56,18 +56,19 @@ export function EmptyState({ icon: Icon = Package, title, description, action })
 export function OwnerDashboardPage() {
   const [kpis, setKpis] = useState(null);
   const [recent, setRecent] = useState([]);
+  const nav = useNavigate();
   useEffect(() => {
     dms.ownerDashboard().then(d => setKpis(d.kpis)).catch(() => {});
     dms.listOrders().then(d => setRecent((d.data || []).slice(0, 5))).catch(() => {});
   }, []);
   const cards = [
-    { label: "Distributors",         value: kpis?.distributors ?? "—",           icon: Handshake,    color: "teal" },
-    { label: "Products",             value: kpis?.products ?? "—",               icon: Package,      color: "indigo" },
-    { label: "Pending Orders",       value: kpis?.pending_orders ?? "—",         icon: ShoppingCart, color: "amber" },
-    { label: "Ready to Dispatch",    value: kpis?.ready_to_go ?? "—",            icon: Truck,        color: "blue" },
-    { label: "Revenue (MTD)",        value: kpis ? inr(kpis.revenue_mtd) : "—",  icon: TrendingUp,   color: "emerald" },
-    { label: "Outstanding",          value: kpis ? inr(kpis.outstanding_receivable) : "—", icon: ScrollText, color: "rose" },
-    { label: "Inventory Value",      value: kpis ? inr(kpis.inventory_value) : "—", icon: Warehouse, color: "slate" },
+    { label: "Distributors",         value: kpis?.distributors ?? "—",           icon: Handshake,    color: "teal",    to: "/dms/owner/distributors" },
+    { label: "Products",             value: kpis?.products ?? "—",               icon: Package,      color: "indigo",  to: "/dms/owner/products" },
+    { label: "Pending Orders",       value: kpis?.pending_orders ?? "—",         icon: ShoppingCart, color: "amber",   to: "/dms/owner/primary-orders?status=pending" },
+    { label: "Ready to Dispatch",    value: kpis?.ready_to_go ?? "—",            icon: Truck,        color: "blue",    to: "/dms/owner/primary-orders?status=ready_to_go" },
+    { label: "Revenue (MTD)",        value: kpis ? inr(kpis.revenue_mtd) : "—",  icon: TrendingUp,   color: "emerald", to: "/dms/owner/primary-orders" },
+    { label: "Outstanding",          value: kpis ? inr(kpis.outstanding_receivable) : "—", icon: ScrollText, color: "rose",   to: "/dms/owner/ledger" },
+    { label: "Inventory Value",      value: kpis ? inr(kpis.inventory_value) : "—", icon: Warehouse, color: "slate",   to: "/dms/owner/inventory" },
   ];
   const colorMap = {
     teal: "bg-[#faf6e6] text-[#a67c00]", indigo: "bg-indigo-50 text-indigo-700",
@@ -75,13 +76,13 @@ export function OwnerDashboardPage() {
     emerald: "bg-emerald-50 text-emerald-700", rose: "bg-rose-50 text-rose-700",
     slate: "bg-slate-100 text-slate-700",
   };
-  const nav = useNavigate();
   return (
     <div>
       <PageHeader title="Owner Dashboard" subtitle="Overview of your distribution business" />
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {cards.map(c => (
-          <Card key={c.label} className="p-4">
+          <Card key={c.label} className="p-4 cursor-pointer hover:shadow-md transition"
+                onClick={() => nav(c.to)} data-testid={`owner-kpi-${c.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>
             <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${colorMap[c.color]}`}><c.icon size={18} /></div>
             <div className="mt-3 text-xs text-slate-500 uppercase tracking-wider">{c.label}</div>
             <div className="mt-1 text-xl font-bold text-slate-900">{c.value}</div>

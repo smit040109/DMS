@@ -1372,10 +1372,29 @@ def build_dms_router(db, get_current_user):
         elif role in ("distributor", "distributor_accountant"):
             q["distributor_id"] = user.get("distributor_id")
         elif role == "salesperson":
+            # BUG FIX (Phase 1): SP should see orders they placed AND orders under their assigned distributors
             assigns = await db.dms_sp_assignments.find({"salesperson_id": user["id"]}, {"_id": 0}).to_list(500)
             dids = [a["distributor_id"] for a in assigns]
-            q["distributor_id"] = {"$in": dids} if dids else "__none__"
+            or_clauses = [{"placed_by": user["id"]}]
+            if dids:
+                or_clauses.append({"distributor_id": {"$in": dids}})
+            q["$or"] = or_clauses
         docs = await db.dms_secondary_orders.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+        # Enrich with placed_by user name and distributor name for UI convenience
+        placed_ids = list({d.get("placed_by") for d in docs if d.get("placed_by")})
+        placed_map = {}
+        if placed_ids:
+            async for u in db.users.find({"id": {"$in": placed_ids}}, {"_id": 0, "id": 1, "name": 1, "role": 1}):
+                placed_map[u["id"]] = {"name": u.get("name"), "role": u.get("role")}
+        dist_ids = list({d.get("distributor_id") for d in docs if d.get("distributor_id")})
+        dist_map = {}
+        if dist_ids:
+            async for dd in db.dms_distributors.find({"id": {"$in": dist_ids}}, {"_id": 0, "id": 1, "name": 1}):
+                dist_map[dd["id"]] = dd.get("name")
+        for d in docs:
+            pb = placed_map.get(d.get("placed_by"))
+            d["placed_by_name"] = pb.get("name") if pb else None
+            d["distributor_name"] = d.get("distributor_name") or dist_map.get(d.get("distributor_id"))
         return {"data": docs, "count": len(docs)}
 
     @router.get("/secondary-orders/{oid}")
@@ -1395,6 +1414,12 @@ def build_dms_router(db, get_current_user):
         doc["retailer"] = r
         d = await db.dms_distributors.find_one({"id": doc["distributor_id"]}, {"_id": 0, "name": 1, "phone": 1, "address": 1, "kyc": 1})
         doc["distributor"] = d
+        # Phase 1: enrich placed_by user info for TL Order Monitoring detail
+        if doc.get("placed_by"):
+            pu = await db.users.find_one({"id": doc["placed_by"]}, {"_id": 0, "id": 1, "name": 1, "role": 1, "phone": 1})
+            if pu:
+                doc["placed_by_user"] = pu
+                doc["placed_by_name"] = pu.get("name")
         return doc
 
     @router.post("/secondary-orders/{oid}/dispatch")
@@ -1497,6 +1522,129 @@ def build_dms_router(db, get_current_user):
                          f"/dms/retailer/my-orders/{oid}")
         return {"ok": True, "bill_id": bill["id"], "fulfillment_pct": pct, "status": new_status}
 
+    # ── Cancel / Edit secondary order (Phase 1 additions) ──
+    @router.post("/secondary-orders/{oid}/cancel")
+    async def cancel_secondary_order(oid: str, body: Dict[str, Any] = Body(default={}), user: dict = Depends(get_current_user)):
+        """Cancel a pending secondary (retailer) order. Allowed: TL (assigned distributor), SP (own placed_by), Owner, Super Admin, Distributor (own)."""
+        role = user.get("role")
+        order = await db.dms_secondary_orders.find_one({"id": oid}, {"_id": 0})
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        if order.get("status") in ("dispatched", "delivered", "completed", "cancelled"):
+            raise HTTPException(status_code=400, detail=f"Cannot cancel — order is {order.get('status')}")
+
+        # RBAC
+        allowed = False
+        if role in ("owner", "super_admin"):
+            allowed = True
+        elif role in ("distributor", "distributor_accountant") and user.get("distributor_id") == order.get("distributor_id"):
+            allowed = True
+        elif role == "team_leader":
+            tl_dists = [a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0, "distributor_id": 1})]
+            if order.get("distributor_id") in tl_dists:
+                allowed = True
+        elif role == "salesperson":
+            if order.get("placed_by") == user["id"]:
+                allowed = True
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        reason = str(body.get("reason") or "").strip() or "Cancelled"
+        await db.dms_secondary_orders.update_one(
+            {"id": oid},
+            {"$set": {
+                "status": "cancelled",
+                "cancelled_at": _now(),
+                "cancelled_by": user["id"],
+                "cancelled_by_role": role,
+                "cancel_reason": reason,
+                "updated_at": _now(),
+            }},
+        )
+        # notify distributor
+        async for u in db.users.find({"distributor_id": order["distributor_id"], "role": {"$in": ["distributor", "distributor_accountant"]}}, {"_id": 0, "id": 1}):
+            await notify(u["id"], "order_cancelled", f"Order {order['order_no']} cancelled",
+                         f"Reason: {reason}", f"/dms/distributor/retail-orders/{oid}")
+        return {"ok": True, "status": "cancelled"}
+
+    @router.put("/secondary-orders/{oid}")
+    async def edit_secondary_order(oid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        """Edit a pending secondary order's items. Allowed: SP who placed, TL (assigned dist), Owner/SuperAdmin, Distributor."""
+        role = user.get("role")
+        order = await db.dms_secondary_orders.find_one({"id": oid}, {"_id": 0})
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        if order.get("status") != "pending":
+            raise HTTPException(status_code=400, detail=f"Can only edit pending orders (current: {order.get('status')})")
+
+        # RBAC (same as cancel)
+        allowed = False
+        if role in ("owner", "super_admin"):
+            allowed = True
+        elif role in ("distributor", "distributor_accountant") and user.get("distributor_id") == order.get("distributor_id"):
+            allowed = True
+        elif role == "team_leader":
+            tl_dists = [a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0, "distributor_id": 1})]
+            if order.get("distributor_id") in tl_dists:
+                allowed = True
+        elif role == "salesperson" and order.get("placed_by") == user["id"]:
+            allowed = True
+        if not allowed:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+        did = order["distributor_id"]
+        rid = order["retailer_id"]
+        mode = order.get("mode", "box")
+        items = body.get("items") or []
+        if not items:
+            raise HTTPException(status_code=400, detail="items[] required")
+        _s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+        global_gst = float(_s.get("gst_pct") or 0)
+        new_items = []
+        subtotal = 0.0
+        gst_total = 0.0
+        for it in items:
+            pid = it.get("product_id")
+            qty_boxes = int(it.get("qty_boxes", 0))
+            qty_pcs = int(it.get("qty_pcs", 0)) if mode == "box_pcs" else 0
+            # Phase 1: also honor qty_pcs even in box mode if explicitly sent (user asked Box + Nos always available)
+            if mode != "box_pcs" and it.get("qty_pcs"):
+                qty_pcs = int(it.get("qty_pcs", 0))
+            if not pid or (qty_boxes == 0 and qty_pcs == 0):
+                continue
+            p = await db.dms_products.find_one({"id": pid}, {"_id": 0})
+            if not p:
+                continue
+            sp_map = await db.dms_retailer_prices.find_one({"distributor_id": did, "product_id": pid}, {"_id": 0})
+            box_price = _round(sp_map["selling_price"]) if sp_map else _round(p["unit_price"] * 1.15)
+            pcs_price = _round(box_price / max(p["box_qty"], 1))
+            line_sub = _round(box_price * qty_boxes + pcs_price * qty_pcs)
+            line_gst = _round(line_sub * (global_gst / 100.0))
+            subtotal += line_sub; gst_total += line_gst
+            new_items.append({
+                "product_id": pid, "product_name": p["name"], "sku_code": p["sku_code"],
+                "box_qty": p["box_qty"], "box_price": box_price, "pcs_price": pcs_price,
+                "gst_pct": global_gst, "qty_boxes_ordered": qty_boxes, "qty_pcs_ordered": qty_pcs,
+                "qty_boxes_dispatched": 0, "qty_pcs_dispatched": 0,
+                "line_subtotal": line_sub, "line_gst": line_gst, "line_total": _round(line_sub + line_gst),
+                "carried_pending": False,
+            })
+        if not new_items:
+            raise HTTPException(status_code=400, detail="No valid items")
+        total = _round(subtotal + gst_total)
+        await db.dms_secondary_orders.update_one(
+            {"id": oid},
+            {"$set": {
+                "items": new_items,
+                "subtotal": _round(subtotal), "gst_total": _round(gst_total), "total": total,
+                "notes": body.get("notes", order.get("notes", "")),
+                "edited_at": _now(),
+                "edited_by": user["id"],
+                "updated_at": _now(),
+            }},
+        )
+        return {"ok": True, "id": oid, "total": total, "item_count": len(new_items)}
+
     # ── secondary ledger ──
     @router.get("/ledger/secondary")
     async def secondary_ledger(retailer_id: Optional[str] = None, user: dict = Depends(get_current_user)):
@@ -1529,7 +1677,8 @@ def build_dms_router(db, get_current_user):
     @router.post("/ledger/secondary/payment")
     async def record_secondary_payment(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
         role = user.get("role")
-        if role not in ("distributor", "distributor_accountant", "owner", "super_admin"):
+        # Phase 1: allow salesperson to record cash payment collected from retailer
+        if role not in ("distributor", "distributor_accountant", "owner", "super_admin", "salesperson"):
             raise HTTPException(status_code=403, detail="Forbidden")
         rid = body.get("retailer_id")
         amt = _round(body.get("amount", 0))
@@ -1538,14 +1687,20 @@ def build_dms_router(db, get_current_user):
         retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
         if not retailer:
             raise HTTPException(status_code=404, detail="Retailer not found")
+        # If SP: retailer must be under one of SP's assigned distributors
+        if role == "salesperson":
+            assigns = await db.dms_sp_assignments.find({"salesperson_id": user["id"]}, {"_id": 0, "distributor_id": 1}).to_list(500)
+            dids = [a["distributor_id"] for a in assigns]
+            if retailer.get("distributor_id") not in dids:
+                raise HTTPException(status_code=403, detail="Retailer not in your assigned distributors")
         entry = {
             "id": _nid("rle"),
             "distributor_id": retailer["distributor_id"], "retailer_id": rid,
             "kind": "payment",
             "reference_no": body.get("reference_no", f"PMT-{datetime.now().strftime('%y%m%d%H%M%S')}"),
-            "amount": amt, "method": body.get("method", "bank_transfer"),
+            "amount": amt, "method": body.get("method", "cash" if role == "salesperson" else "bank_transfer"),
             "description": body.get("description", "Payment received"),
-            "at": _now(), "recorded_by": user["id"],
+            "at": _now(), "recorded_by": user["id"], "recorded_by_role": role,
         }
         await db.dms_retailer_ledger.insert_one(entry)
         return _clean(entry)
@@ -2434,7 +2589,31 @@ def build_dms_router(db, get_current_user):
                 "distributor_id": r.get("distributor_id"),
             })
 
-        return {"salespersons": sps, "distributors": dists, "retailers": rets}
+        # Phase 1: Team Leaders live positions (for RSM / Owner view — "ASM"=TL in this DMS)
+        tls: List[Dict[str, Any]] = []
+        tl_query_ids: List[str] = []
+        if role == "regional_manager":
+            tl_query_ids = [a["team_leader_id"] async for a in db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0, "team_leader_id": 1})]
+        elif role in ("owner", "super_admin"):
+            tl_query_ids = [u["id"] async for u in db.users.find({"role": "team_leader"}, {"_id": 0, "id": 1})]
+        if tl_query_ids:
+            async for u in db.users.find({"id": {"$in": tl_query_ids}, "role": "team_leader"}, {"_id": 0, "password_hash": 0}):
+                gps = u.get("last_gps") or {}
+                last_at = gps.get("at") or u.get("last_active_at")
+                online = False
+                try:
+                    if last_at:
+                        dt = datetime.fromisoformat(last_at.replace("Z", "+00:00"))
+                        online = (datetime.now(timezone.utc) - dt).total_seconds() < 300
+                except Exception:
+                    pass
+                tls.append({
+                    "id": u["id"], "name": u.get("name"), "phone": u.get("phone"),
+                    "lat": gps.get("lat"), "lng": gps.get("lng"),
+                    "last_ping_at": last_at, "online": online,
+                })
+
+        return {"salespersons": sps, "distributors": dists, "retailers": rets, "team_leaders": tls}
 
     @router.get("/tracking/salesperson/{sid}")
     async def tracking_salesperson_detail(

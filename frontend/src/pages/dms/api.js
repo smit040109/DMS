@@ -71,6 +71,9 @@ export const dms = {
   listSecondaryOrders: (status) => api.get("/dms/secondary-orders", { params: status ? { status } : {} }).then(r => r.data),
   getSecondaryOrder: (id) => api.get(`/dms/secondary-orders/${id}`).then(r => r.data),
   dispatchSecondary: (oid, body) => api.post(`/dms/secondary-orders/${oid}/dispatch`, body).then(r => r.data),
+  // Phase 1 additions:
+  cancelSecondaryOrder: (oid, reason) => api.post(`/dms/secondary-orders/${oid}/cancel`, { reason }).then(r => r.data),
+  updateSecondaryOrder: (oid, body) => api.put(`/dms/secondary-orders/${oid}`, body).then(r => r.data),
 
   // secondary ledger
   secondaryLedger: (retailer_id) => api.get(`/dms/ledger/secondary`, { params: retailer_id ? { retailer_id } : {} }).then(r => r.data),
@@ -206,6 +209,8 @@ export function statusPill(status) {
     received: "bg-green-100 text-green-800 border-green-200",
     dispatched: "bg-indigo-100 text-indigo-800 border-indigo-200",
     completed: "bg-green-100 text-green-800 border-green-200",
+    cancelled: "bg-rose-100 text-rose-800 border-rose-200",
+    delivered: "bg-emerald-100 text-emerald-800 border-emerald-200",
   };
   return map[status] || "bg-slate-100 text-slate-700 border-slate-200";
 }

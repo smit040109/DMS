@@ -59,6 +59,8 @@ const NAV_BY_ROLE = {
     { label: "Dashboard",       to: "/dms",                            icon: "LayoutDashboard" },
     { label: "My Distributors", to: "/dms/salesperson/distributors",   icon: "Handshake" },
     { label: "My Retailers",    to: "/dms/salesperson/retailers",      icon: "Store" },
+    { label: "My Orders",       to: "/dms/salesperson/orders",         icon: "ClipboardList" },
+    { label: "Collect Payment", to: "/dms/salesperson/collect",        icon: "Receipt" },
     { label: "New Retailer",    to: "/dms/salesperson/new-retailer",   icon: "MapPin" },
   ],
   team_leader: [

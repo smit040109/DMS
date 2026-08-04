@@ -35,6 +35,8 @@ const ICON_DIST = makeIcon("#0f766e", "D");     // teal
 const ICON_RET  = makeIcon("#f59e0b", "R");     // amber
 const ICON_SP   = makeIcon("#e11d48", "S");     // rose
 const ICON_SP_OFF = makeIcon("#64748b", "S");   // slate for offline
+const ICON_TL   = makeIcon("#6366f1", "T");     // indigo — Team Leader (ASM)
+const ICON_TL_OFF = makeIcon("#94a3b8", "T");   // slate for offline TL
 
 // India centre default
 const INDIA_CENTER = [22.5, 79.5];
@@ -55,7 +57,7 @@ function FlyTo({ target }) {
 // ============================================================================
 export function LiveTrackingPage() {
   const { user } = useAuth();
-  const [live, setLive] = useState({ salespersons: [], distributors: [], retailers: [] });
+  const [live, setLive] = useState({ salespersons: [], distributors: [], retailers: [], team_leaders: [] });
   const [selectedSp, setSelectedSp] = useState(null);
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [detail, setDetail] = useState(null); // { punch, route, distance_km, visited, working_hours }
@@ -231,8 +233,9 @@ export function LiveTrackingPage() {
           {/* Legend */}
           <Card className="p-3">
             <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Legend</div>
-            <div className="grid grid-cols-3 gap-2 text-xs">
+            <div className="grid grid-cols-2 gap-2 text-xs">
               <LegendBadge color="#e11d48" glyph="S" label={`Salespersons (${live.salespersons.length})`} />
+              <LegendBadge color="#6366f1" glyph="T" label={`Team Leaders (${(live.team_leaders || []).length})`} />
               <LegendBadge color="#0f766e" glyph="D" label={`Distributors (${live.distributors.length})`} />
               <LegendBadge color="#f59e0b" glyph="R" label={`Retailers (${live.retailers.length})`} />
             </div>
@@ -285,6 +288,20 @@ export function LiveTrackingPage() {
                       {s.online ? "● Online" : "○ Offline"}
                     </span>
                     {s.last_ping_at && <><br/><span className="text-[11px] text-slate-500">Last: {niceDate(s.last_ping_at)}</span></>}
+                  </Popup>
+                </Marker>
+              ))}
+
+              {/* Team Leaders — live positions (Phase 1: for RSM view + Owner view) */}
+              {(live.team_leaders || []).filter(t => t.lat && t.lng).map(t => (
+                <Marker key={`t-${t.id}`} position={[t.lat, t.lng]} icon={t.online ? ICON_TL : ICON_TL_OFF}>
+                  <Popup>
+                    <b>{t.name}</b><br/>
+                    <span className="text-xs">Team Leader</span><br/>
+                    <span className={`text-xs ${t.online ? "text-emerald-700" : "text-slate-500"}`}>
+                      {t.online ? "● Online" : "○ Offline"}
+                    </span>
+                    {t.last_ping_at && <><br/><span className="text-[11px] text-slate-500">Last: {niceDate(t.last_ping_at)}</span></>}
                   </Popup>
                 </Marker>
               ))}

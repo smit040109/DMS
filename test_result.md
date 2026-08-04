@@ -782,6 +782,87 @@ backend:
           
           NO CRITICAL ISSUES FOUND. All Phase 7 backend APIs working as designed.
 
+  - task: "PHASE 1 (GO OIL) — Salesperson Order Visibility + Cancel/Edit + Payment + Tracking"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL PHASE 1 BACKEND TESTS PASSED (6/6 — 100%)
+          
+          Comprehensive backend API testing completed for Phase 1 changes.
+          All endpoints working correctly with proper RBAC, data validation, and business logic.
+          
+          **TEST 1: BUG FIX — Salesperson Order Visibility (CRITICAL) ✅**
+          - Salesperson placed order for retailer under assigned distributor
+          - GET /api/dms/secondary-orders → Order APPEARS in SP's list (BUG FIXED!)
+          - placed_by_name field populated: "Karan Salesperson" ✅
+          - distributor_name field populated: "Anil Distributor — Delhi" ✅
+          - Previously, SPs without distributor assignments couldn't see their orders
+          - Now SP sees orders they placed AND orders under their assigned distributors
+          
+          **TEST 2: NEW — POST /api/dms/secondary-orders/{oid}/cancel ✅**
+          - SP cancelled their own order → 200, status="cancelled" ✅
+          - Try cancel again (already cancelled) → 400 (correct validation) ✅
+          - Retailer tried to cancel SP's order → 403 (correct RBAC) ✅
+          - Team leader cancelled order under assigned distributor → 200 ✅
+          - Cannot cancel dispatched order → 400 (correct validation) ✅
+          - Cancel reason, cancelled_by, cancelled_by_role recorded correctly
+          
+          **TEST 3: NEW — PUT /api/dms/secondary-orders/{oid} ✅**
+          - SP edited pending order (qty 2→5 boxes, 0→10 pcs) → 200 ✅
+          - Total recalculated correctly: ₹1,943.50 → ₹14,576.25 ✅
+          - Cannot edit dispatched order → 400 (correct validation) ✅
+          - Retailer cannot edit SP's order → 403 (correct RBAC) ✅
+          - Only pending orders can be edited
+          
+          **TEST 4: UPDATED — POST /api/dms/ledger/secondary/payment ✅**
+          - SP recorded cash payment (₹1,000) for retailer under assigned distributor → 200 ✅
+          - Payment method="cash", recorded_by_role="salesperson" ✅
+          - SP cannot record payment for retailer outside assigned distributors → 403 ✅
+          - Distributor recorded payment (₹2,000) → 200 (regression OK) ✅
+          - Retailer cannot record payment → 403 (correct RBAC) ✅
+          - SP can now collect cash payments in the field
+          
+          **TEST 5: UPDATED — GET /api/dms/tracking/live ✅**
+          - Regional manager: team_leaders array present (1 TL) ✅
+          - Owner: team_leaders array present (1 TL) ✅
+          - Team leader: existing keys intact (salespersons, distributors, retailers) ✅
+          - No regressions, all existing functionality working
+          
+          **TEST 6: Regression — All Existing Endpoints Working ✅**
+          - GET /api/dms/dashboard/salesperson → 200 ✅
+          - GET /api/dms/dashboard/team-leader → 200 ✅
+          - GET /api/dms/dashboard/owner → 200 ✅
+          - GET /api/dms/tl/orders → 200 ✅
+          - GET /api/dms/secondary-orders/{oid} → enrich fields present (retailer, distributor, placed_by_name) ✅
+          
+          🎯 CRITICAL FLOWS VERIFIED:
+          - Salesperson order visibility: SP can see orders they placed + orders under assigned distributors
+          - Order cancellation: SP, TL, Distributor, Owner can cancel pending orders (RBAC enforced)
+          - Order editing: SP, TL, Distributor, Owner can edit pending orders (totals recomputed)
+          - Payment recording: SP can record cash payments for retailers under assigned distributors
+          - Live tracking: team_leaders array added for RM/Owner views
+          - All RBAC rules enforced correctly (403 for unauthorized access)
+          - All validation rules working (400 for invalid operations)
+          
+          📊 TEST COVERAGE:
+          - Total Phase 1 tests: 6/6 scenarios passed (100%)
+          - BUG FIX: Salesperson order visibility ✅
+          - NEW: Cancel order endpoint ✅
+          - NEW: Edit order endpoint ✅
+          - UPDATED: Secondary payment (SP can record) ✅
+          - UPDATED: Tracking live (team_leaders array) ✅
+          - Regression: All existing endpoints ✅
+          
+          NO CRITICAL ISSUES FOUND. All Phase 1 backend APIs production-ready.
+
+
 frontend:
   - task: "New DMS shell + login + dashboard router"
     implemented: true
@@ -1799,3 +1880,118 @@ agent_communication:
       RECOMMENDATION: Main agent should summarize and finish. Bug fix is verified and complete.
 
 
+
+# ============================================================================
+# PHASE 1 — Bug Fixes + Salesperson App + Dashboard Clickables (Current Sprint)
+# ============================================================================
+
+backend:
+  - task: "Phase 1: SP Sales Order visibility bug fix + Cancel/Edit endpoints + SP cash payment + RSM live tracking TLs"
+    implemented: true
+    working: "NA"
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Phase 1 backend changes:
+          1) BUG FIX: /api/dms/secondary-orders GET for salesperson role now returns orders where placed_by == user_id OR distributor_id in assigned distributors (previously: only distributor_id in assigned dids, so SPs with no assignments or where retailer belonged to different dist saw nothing).
+             Response now enriched with placed_by_name and distributor_name.
+          2) NEW: POST /api/dms/secondary-orders/{oid}/cancel — TL (assigned dist), SP (own placed_by), Owner, Super Admin, Distributor. Only if status is 'pending'. Sets status='cancelled' with reason.
+          3) NEW: PUT /api/dms/secondary-orders/{oid} — edit items on a pending order. Same RBAC. Recomputes totals & GST.
+          4) UPDATED: POST /api/dms/ledger/secondary/payment — now allows 'salesperson' role, restricted to retailers under SP's assigned distributors. Default method='cash' for SP.
+          5) ENRICHED: GET /api/dms/secondary-orders/{oid} — now includes placed_by_name + placed_by_user for TL Order Detail dialog.
+          6) UPDATED: GET /api/dms/tracking/live — response now includes team_leaders[] array populated for regional_manager and owner/super_admin views (interprets "ASM"=Team Leader in this DMS).
+
+frontend:
+  - task: "Phase 1: SP My Orders/Edit/Cancel, My Retailers search+grid/list, billing category filter + Nos, SP Collect Payment, dashboard clickables, TL Order Detail dialog with SP+items+Cancel, Live Tracking TL markers"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/dms/SalesTeamPages.jsx, TeamLeaderPages.jsx, OwnerPages.jsx, LiveTrackingPage.jsx, DmsShell.jsx, App.js, api.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Backend testing first — frontend will be tested by user manually or on request.
+
+metadata:
+  current_phase: "Phase 1"
+  test_phase_focus: "SP order visibility bug fix + new endpoints + RBAC"
+
+test_plan:
+  current_focus:
+    - "GET /api/dms/secondary-orders (salesperson) — bug fix returns own orders"
+    - "POST /api/dms/secondary-orders/{oid}/cancel — RBAC: SP, TL, Owner allowed; Retailer, other dist SP forbidden"
+    - "PUT /api/dms/secondary-orders/{oid} — edit items on pending, blocked once dispatched"
+    - "POST /api/dms/ledger/secondary/payment — SP can record cash payment for own-dist retailer only"
+    - "GET /api/dms/tracking/live — RSM/owner response includes team_leaders[]"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Phase 1 backend implementation complete. Please run comprehensive backend tests focused on:
+      (A) Bug fix — as a salesperson (e.g. salesperson@gooil.com / Demo@2026 or seed a fresh SP), place a secondary order and verify GET /api/dms/secondary-orders returns it in the response with placed_by_name filled.
+      (B) Cancel endpoint — SP cancels own pending order (200), retailer cancels someone else's (403), tries to cancel dispatched (400).
+      (C) Edit endpoint — SP edits own pending items (totals recomputed), edit after dispatch fails (400).
+      (D) SP cash payment — SP records payment for retailer under their assigned distributor (200), for retailer NOT in their dist (403).
+      (E) tracking/live — hit as owner and as regional_manager; verify team_leaders[] key present in response.
+      Existing seed users password: Demo@2026. Test creds: /app/memory/test_credentials.md
+
+  - agent: "testing"
+    message: |
+      ✅ PHASE 1 BACKEND TESTING COMPLETE — ALL 6 TESTS PASSED (100%)
+      
+      Comprehensive backend API testing completed for Phase 1 changes.
+      All endpoints working correctly with proper RBAC, data validation, and business logic.
+      
+      **SUMMARY:**
+      ✅ TEST 1: Salesperson order visibility BUG FIX working
+         - SP placed order → order appears in GET /api/dms/secondary-orders
+         - placed_by_name and distributor_name fields populated correctly
+         - Previously broken for SPs without distributor assignments — NOW FIXED
+      
+      ✅ TEST 2: Cancel order endpoint (POST /api/dms/secondary-orders/{oid}/cancel)
+         - SP can cancel own orders (200)
+         - Cannot cancel already cancelled (400)
+         - Retailer cannot cancel SP's order (403)
+         - Team leader can cancel orders under assigned distributors (200)
+         - Cannot cancel dispatched orders (400)
+      
+      ✅ TEST 3: Edit order endpoint (PUT /api/dms/secondary-orders/{oid})
+         - SP can edit pending orders, totals recalculated correctly
+         - Cannot edit dispatched orders (400)
+         - Retailer cannot edit SP's orders (403)
+      
+      ✅ TEST 4: Secondary payment endpoint (POST /api/dms/ledger/secondary/payment)
+         - SP can record cash payments for retailers under assigned distributors (200)
+         - SP cannot record for retailers outside assigned distributors (403)
+         - Distributor flow still works (regression OK)
+         - Retailer cannot record payments (403)
+      
+      ✅ TEST 5: Tracking live endpoint (GET /api/dms/tracking/live)
+         - Regional manager: team_leaders array present
+         - Owner: team_leaders array present
+         - Team leader: existing keys intact (regression OK)
+      
+      ✅ TEST 6: All regression tests passed
+         - All dashboard endpoints working
+         - TL orders endpoint working
+         - Order detail enrich fields present
+      
+      **NO CRITICAL ISSUES FOUND.**
+      All Phase 1 backend APIs production-ready.
+      
+      **ACTION ITEMS FOR MAIN AGENT:**
+      - All Phase 1 backend tests passed with no issues
+      - Please summarize and finish
+      
+      YOU MUST ASK USER BEFORE DOING FRONTEND TESTING

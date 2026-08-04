@@ -5,34 +5,38 @@ import { PageHeader } from "./OwnerPages";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { TrendingUp, ShoppingCart, ClipboardList, Percent, Handshake, Users, Store, AlertTriangle, LogIn, LogOut, Clock, MapPin, RefreshCw, Truck } from "lucide-react";
+import { TrendingUp, ShoppingCart, ClipboardList, Percent, Handshake, Users, Store, AlertTriangle, LogIn, LogOut, Clock, MapPin, RefreshCw, Truck, Ban } from "lucide-react";
 
 // ============================================================================
 // TL Dashboard
 // ============================================================================
 export function TlDashboardPage() {
   const [k, setK] = useState(null);
+  const nav = useNavigate();
   useEffect(() => { dms.tlDashboard().then(d => setK(d.kpis)).catch(() => {}); }, []);
   const cards = [
-    { label: "Today's Sales",         value: k ? inr(k.today_sales) : "—",     icon: TrendingUp,   tint: "bg-emerald-50 text-emerald-700" },
-    { label: "This Month's Sales",    value: k ? inr(k.monthly_sales) : "—",   icon: TrendingUp,   tint: "bg-[#faf6e6] text-[#a67c00]" },
-    { label: "Total Orders",          value: k?.total_orders ?? "—",           icon: ShoppingCart, tint: "bg-blue-50 text-blue-700" },
-    { label: "Pending Orders",        value: k?.pending_orders ?? "—",         icon: ClipboardList,tint: "bg-amber-50 text-amber-700" },
-    { label: "Fulfillment %",         value: k ? `${k.fulfillment_pct}%` : "—",icon: Percent,      tint: "bg-indigo-50 text-indigo-700" },
-    { label: "Assigned Distributors", value: k?.assigned_distributors ?? "—",  icon: Handshake,    tint: "bg-purple-50 text-purple-700" },
-    { label: "Assigned Salespersons", value: k?.assigned_salespersons ?? "—",  icon: Users,        tint: "bg-fuchsia-50 text-fuchsia-700" },
-    { label: "Total Retailers",       value: k?.total_retailers ?? "—",        icon: Store,        tint: "bg-orange-50 text-orange-700" },
-    { label: "Stock Alerts",          value: k?.stock_alerts ?? "—",           icon: AlertTriangle,tint: "bg-rose-50 text-rose-700" },
+    { label: "Today's Sales",         value: k ? inr(k.today_sales) : "—",     icon: TrendingUp,   tint: "bg-emerald-50 text-emerald-700",   to: "/dms/team-leader/orders" },
+    { label: "This Month's Sales",    value: k ? inr(k.monthly_sales) : "—",   icon: TrendingUp,   tint: "bg-[#faf6e6] text-[#a67c00]",      to: "/dms/team-leader/orders" },
+    { label: "Total Orders",          value: k?.total_orders ?? "—",           icon: ShoppingCart, tint: "bg-blue-50 text-blue-700",         to: "/dms/team-leader/orders" },
+    { label: "Pending Orders",        value: k?.pending_orders ?? "—",         icon: ClipboardList,tint: "bg-amber-50 text-amber-700",       to: "/dms/team-leader/orders?status=pending" },
+    { label: "Fulfillment %",         value: k ? `${k.fulfillment_pct}%` : "—",icon: Percent,      tint: "bg-indigo-50 text-indigo-700",     to: "/dms/team-leader/orders" },
+    { label: "Assigned Distributors", value: k?.assigned_distributors ?? "—",  icon: Handshake,    tint: "bg-purple-50 text-purple-700",     to: "/dms/team-leader/distributors" },
+    { label: "Assigned Salespersons", value: k?.assigned_salespersons ?? "—",  icon: Users,        tint: "bg-fuchsia-50 text-fuchsia-700",   to: "/dms/team-leader/salespersons" },
+    { label: "Total Retailers",       value: k?.total_retailers ?? "—",        icon: Store,        tint: "bg-orange-50 text-orange-700",     to: "/dms/team-leader/retailers" },
+    { label: "Stock Alerts",          value: k?.stock_alerts ?? "—",           icon: AlertTriangle,tint: "bg-rose-50 text-rose-700",         to: "/dms/team-leader/distributors" },
   ];
   return (
     <div>
       <PageHeader title="Team Leader Dashboard" subtitle="Overview of your assigned team and distributors" />
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         {cards.map(c => (
-          <Card key={c.label} className="p-4">
+          <Card key={c.label} className="p-4 cursor-pointer hover:shadow-md transition"
+                onClick={() => nav(c.to)} data-testid={`tl-kpi-${c.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>
             <div className={`inline-flex h-9 w-9 rounded-lg items-center justify-center mb-2 ${c.tint}`}>
               <c.icon size={18} />
             </div>
@@ -170,7 +174,7 @@ export function TlSalespersonsPage() {
 }
 
 // ============================================================================
-// TL: Order monitoring with filters
+// TL: Order monitoring with filters — Phase 1: row click → detail dialog with SP + items, Cancel Order for pending
 // ============================================================================
 export function TlOrdersMonitoringPage() {
   const [orders, setOrders] = useState([]);
@@ -178,6 +182,16 @@ export function TlOrdersMonitoringPage() {
   const [retailers, setRetailers] = useState([]);
   const [sps, setSps] = useState([]);
   const [f, setF] = useState({ status: "", distributor_id: "", salesperson_id: "", retailer_id: "" });
+  const [detailOrder, setDetailOrder] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+
+  // Support ?status=pending deep-link from dashboard
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const st = sp.get("status");
+    if (st) setF(x => ({ ...x, status: st }));
+  }, []);
 
   const refresh = () => {
     const params = Object.fromEntries(Object.entries(f).filter(([, v]) => v));
@@ -192,9 +206,28 @@ export function TlOrdersMonitoringPage() {
   }, []);
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [f]);
 
+  const openDetail = async (o) => {
+    try {
+      const full = await dms.getSecondaryOrder(o.id);
+      setDetailOrder(full);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed to load order"); }
+  };
+
+  const doCancel = async () => {
+    if (!detailOrder) return;
+    setBusy(true);
+    try {
+      await dms.cancelSecondaryOrder(detailOrder.id, cancelReason || "Cancelled by team leader");
+      toast.success(`Order ${detailOrder.order_no} cancelled`);
+      setDetailOrder(null); setCancelReason("");
+      refresh();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+    setBusy(false);
+  };
+
   return (
     <div>
-      <PageHeader title="Order Monitoring" subtitle="All secondary orders across your team" />
+      <PageHeader title="Order Monitoring" subtitle="All secondary orders across your team — click any row for full details" />
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
         <Filter value={f.status} onChange={v => setF({ ...f, status: v })} placeholder="Any status" options={[
           { v: "", label: "All statuses" }, { v: "pending", label: "Pending" }, { v: "fulfilled", label: "Fulfilled" },
@@ -217,18 +250,20 @@ export function TlOrdersMonitoringPage() {
               <TableHead>Order</TableHead>
               <TableHead>Distributor</TableHead>
               <TableHead>Retailer</TableHead>
+              <TableHead>Placed By</TableHead>
               <TableHead className="text-right">Total</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Placed</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {orders.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-8 text-slate-400">No orders match filters</TableCell></TableRow>}
+            {orders.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-slate-400">No orders match filters</TableCell></TableRow>}
             {orders.map(o => (
-              <TableRow key={o.id}>
-                <TableCell className="font-mono text-xs">{o.id}</TableCell>
+              <TableRow key={o.id} className="cursor-pointer hover:bg-slate-50" onClick={() => openDetail(o)} data-testid={`tl-order-row-${o.id}`}>
+                <TableCell className="font-mono text-xs">{o.order_no || o.id}</TableCell>
                 <TableCell>{o.distributor_name}</TableCell>
                 <TableCell>{o.retailer_name}</TableCell>
+                <TableCell className="text-sm">{o.placed_by_name || <span className="text-slate-400">—</span>}</TableCell>
                 <TableCell className="text-right font-medium">{inr(o.total)}</TableCell>
                 <TableCell><span className={`px-2 py-0.5 rounded-full text-xs border ${statusPill(o.status)}`}>{o.status}</span></TableCell>
                 <TableCell className="text-xs text-slate-500">{niceDate(o.created_at)}</TableCell>
@@ -237,6 +272,83 @@ export function TlOrdersMonitoringPage() {
           </TableBody>
         </Table>
       </Card>
+
+      {/* Order detail dialog */}
+      <Dialog open={!!detailOrder} onOpenChange={o => { if (!o) { setDetailOrder(null); setCancelReason(""); } }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Order {detailOrder?.order_no}</DialogTitle>
+          </DialogHeader>
+          {detailOrder && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <InfoBlock label="Retailer" value={detailOrder.retailer?.name || detailOrder.retailer_name} sub={detailOrder.retailer?.phone} />
+                <InfoBlock label="Distributor" value={detailOrder.distributor?.name} sub={detailOrder.distributor?.phone} />
+                <InfoBlock label="Placed By" value={detailOrder.placed_by_name || "—"} sub={detailOrder.placed_by_role || detailOrder.placed_by_user?.role} />
+                <InfoBlock label="Placed At" value={niceDate(detailOrder.created_at)} />
+                <InfoBlock label="Status" value={<span className={`px-2 py-0.5 rounded-full text-xs border ${statusPill(detailOrder.status)}`}>{detailOrder.status}</span>} />
+                <InfoBlock label="Total" value={<span className="text-lg font-bold text-[#a67c00]">{inr(detailOrder.total)}</span>} />
+              </div>
+              {detailOrder.cancel_reason && (
+                <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-sm text-rose-800">
+                  <b>Cancelled:</b> {detailOrder.cancel_reason}
+                </div>
+              )}
+              <div>
+                <div className="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2">Items ({detailOrder.items?.length || 0})</div>
+                <Card className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Product</TableHead>
+                        <TableHead>SKU</TableHead>
+                        <TableHead className="text-right">Boxes</TableHead>
+                        <TableHead className="text-right">Nos</TableHead>
+                        <TableHead className="text-right">Line Total</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {(detailOrder.items || []).map((it, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="font-medium">{it.product_name}</TableCell>
+                          <TableCell className="font-mono text-xs">{it.sku_code}</TableCell>
+                          <TableCell className="text-right">{it.qty_boxes_ordered}</TableCell>
+                          <TableCell className="text-right">{it.qty_pcs_ordered || 0}</TableCell>
+                          <TableCell className="text-right font-medium">{inr(it.line_total)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </Card>
+              </div>
+              {detailOrder.status === "pending" && (
+                <div className="pt-2 border-t">
+                  <Label>Cancel reason (optional)</Label>
+                  <Input value={cancelReason} onChange={e => setCancelReason(e.target.value)} placeholder="e.g. Retailer cancelled" data-testid="tl-cancel-reason" />
+                </div>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setDetailOrder(null); setCancelReason(""); }}>Close</Button>
+            {detailOrder?.status === "pending" && (
+              <Button className="bg-rose-700 hover:bg-rose-800 text-white" disabled={busy} onClick={doCancel} data-testid="tl-cancel-order">
+                <Ban size={14} className="mr-1" /> Cancel Order
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function InfoBlock({ label, value, sub }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
+      <div className="mt-0.5 font-medium text-slate-900">{value || "—"}</div>
+      {sub && <div className="text-xs text-slate-500">{sub}</div>}
     </div>
   );
 }
