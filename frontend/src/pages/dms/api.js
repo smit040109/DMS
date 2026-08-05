@@ -152,6 +152,7 @@ export const dms = {
   cpnActivateCoupon: (cid) => api.post(`/dms/coupons/coupons/${cid}/activate`).then(r => r.data),
   cpnDeactivateCoupon: (cid) => api.post(`/dms/coupons/coupons/${cid}/deactivate`).then(r => r.data),
   cpnActivateRange: (body) => api.post(`/dms/coupons/activate-range`, body).then(r => r.data),
+  cpnActivateRangePreview: (body) => api.post(`/dms/coupons/activate-range/preview`, body).then(r => r.data),
   cpnDeactivateRange: (body) => api.post(`/dms/coupons/deactivate-range`, body).then(r => r.data),
   cpnBulkActivate: (coupon_ids) => api.post(`/dms/coupons/coupons/bulk-activate`, { coupon_ids }).then(r => r.data),
   cpnBulkDeactivate: (coupon_ids) => api.post(`/dms/coupons/coupons/bulk-deactivate`, { coupon_ids }).then(r => r.data),

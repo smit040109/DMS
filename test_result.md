@@ -5224,3 +5224,218 @@ agent_communication:
              gets a "coupon_credit" entry that reduces distributor outstanding.
           8. Reports: generation, activation, unused, inactive, usage, cash-wallets, reward-wallets,
              distributor-outstanding all return 200 with expected shape.
+
+  - task: "COUPON ACTIVATION LIVE PREVIEW + CorelDraw Circular PDF Redesign"
+    implemented: true
+    working: true
+    file: "backend/dms_coupons.py, frontend/src/pages/dms/CouponsV2.jsx, frontend/src/pages/dms/api.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          NEW FEATURE — Activation Live Preview + Circular MECHANIC COUPON PDF
+          
+          BACKEND (dms_coupons.py):
+          1) NEW endpoint POST /api/dms/coupons/activate-range/preview
+             - Body: { batch_id, from_serial, to_serial } OR { batch_id, from_number, to_number }
+             - Read-only — DOES NOT change any coupon state
+             - Validates from/to serials EXIST in batch (400 if not found)
+             - Auto-swaps if from > to
+             - Returns: coupons_found, already_active, ready_to_activate, skipped,
+                       from_serial, to_serial, batch_label, coupon_type, coupon_value
+             - RBAC: owner_or_accountant
+          
+          2) UPDATED /activate-range — same existence-validation added so accidental
+             out-of-range activation returns a clean 400.
+          
+          3) COMPLETELY REDESIGNED GET /batches/{bid}/export-pdf
+             - Now matches the GOOIL CorelDraw "MECHANIC COUPON" circular design
+             - Layout: 3×3 = 9 circular coupons / A4 page
+             - Each coupon has:
+               • Red dashed die-cut ring
+               • Solid black filled circle (BG_BLACK = #0d0d0d)
+               • Inner gold decorative ring (GOLD_1 = #f5c542)
+               • GO OIL logo text + "Hi-Technoply Automotive" tagline
+               • Gold pill above QR with value ("₹20/-" or "20 POINTS")
+               • High-resolution QR (ERROR_CORRECT_H) with white pad on black bg
+               • Visible Serial (Courier-Bold gold)
+               • "MECHANIC COUPON" bottom label + coupon-type sub-label
+             - STRICT: prints only QR + Serial + Type + Value
+               (no UUID, secret_token, HMAC, batch label, batch secret, internal IDs)
+          
+          FRONTEND (CouponsV2.jsx):
+          1) Owner Coupons KPI cards redesigned to spec:
+             Generated / Inactive / Active / Claimed / Redeemed / Fraud Attempts
+             - "Generated" = TOTAL across all statuses (sum)
+             - "Inactive"  = still-generated + cancelled + expired
+             - "Active"    = unused (activated + ready to use)
+          
+          2) ActivateRangeDialog completely rewritten:
+             - Shows batch context header (Batch / Type / Value from batch)
+             - Debounced 350ms live-preview via /activate-range/preview
+             - LIVE PREVIEW panel displays 4 stats:
+               Coupons Found, Already Active, Ready to Activate, Skipped
+             - Dynamic button label: "Activate N Coupons"
+             - Disabled when Ready to Activate = 0 or on preview error
+             - Shows friendly error banner if range invalid (with alert icon)
+             - On click → opens Confirmation Dialog
+          
+          3) NEW Confirmation Dialog:
+             - Big "N Coupons" hero number
+             - Detail rows: Range (ABC001→ABC100), Coupon Type, Value, Batch
+             - Explicit "Yes, Activate" / "Cancel" buttons
+             - Audit-log note
+          
+          4) NEW api.js method: cpnActivateRangePreview(body)
+          
+          BACKWARD COMPATIBILITY:
+          - Existing /activate-range endpoint unchanged in contract (added validation)
+          - Existing single-coupon activate / batch-activate untouched
+          - All existing coupon lifecycle flows unaffected
+          - Audit log already existed — no schema changes needed
+          
+          REQUESTING BACKEND TESTING for:
+          1. POST /activate-range/preview happy path — new batch of 100 coupons
+             prefix=ABC pad=3, preview whole range → coupons_found=100,
+             already_active=0, ready_to_activate=100, skipped=0
+          2. After activating a sub-range (ABC001-ABC020), re-preview whole range
+             should show already_active=20, ready_to_activate=80
+          3. Invalid from_serial (ABC500 in a 100-coupon batch) → 400 with clear msg
+          4. Invalid batch_id → 404
+          5. from_number/to_number mode works when batch has prefix
+          6. RBAC: distributor gets 403 on preview
+          7. Regression: /activate-range still works as before (with existence check)
+          8. Regression: /batches/{bid}/export-pdf still returns application/pdf with
+             correct file (no server errors), PDF byte-scan reveals NO batch secret,
+             no hidden_secure_id, no signature strings
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL 9 TESTS PASSED (100%) — COUPON ACTIVATION LIVE PREVIEW + PDF EXPORT VERIFIED
+          
+          Comprehensive backend API testing completed for NEW coupon activation preview endpoint
+          and redesigned PDF export. All endpoints working correctly with proper RBAC, validation,
+          and security measures.
+          
+          **TEST SETUP:**
+          - Created fresh test batch: "QA Test" (100 coupons, prefix=QAT, serial_mode=prefix_sequential)
+          - Batch ID: cbt-3483b2f3bbc1, Batch Label: GO-C-00002
+          - Serials: QAT001 through QAT100
+          - Coupon type: cash, Value: ₹20
+          
+          **TEST 1 — Live Preview Happy Path (All Inactive) ✅**
+          - POST /api/dms/coupons/activate-range/preview
+          - Body: {batch_id, from_serial: "QAT001", to_serial: "QAT100"}
+          - Response: HTTP 200
+          - Verified fields:
+            * coupons_found = 100 ✅
+            * already_active = 0 ✅
+            * ready_to_activate = 100 ✅
+            * skipped = 0 ✅
+            * from_serial = "QAT001" ✅
+            * to_serial = "QAT100" ✅
+            * batch_label present ✅
+            * coupon_type = "cash" ✅
+            * coupon_value = 20 ✅
+          
+          **TEST 2 — Activate Sub-Range Then Re-Preview ✅**
+          - First: POST /api/dms/coupons/activate-range
+            * Body: {batch_id, from_serial: "QAT001", to_serial: "QAT020"}
+            * Response: HTTP 200, activated = 20 ✅
+          - Then: POST /api/dms/coupons/activate-range/preview (full range QAT001-QAT100)
+            * Response: HTTP 200
+            * coupons_found = 100 ✅
+            * already_active = 20 ✅
+            * ready_to_activate = 80 ✅
+            * skipped = 0 ✅
+          
+          **TEST 3 — Number-Mode Input ✅**
+          - POST /api/dms/coupons/activate-range/preview
+          - Body: {batch_id, from_number: 21, to_number: 40}
+          - Response: HTTP 200
+          - Verified:
+            * from_serial = "QAT021" ✅
+            * to_serial = "QAT040" ✅
+            * coupons_found = 20 ✅
+            * ready_to_activate = 20 ✅
+          
+          **TEST 4 — Auto-Swap When from > to ✅**
+          - POST /api/dms/coupons/activate-range/preview
+          - Body: {batch_id, from_serial: "QAT050", to_serial: "QAT030"}
+          - Response: HTTP 200
+          - Verified auto-swap:
+            * from_serial = "QAT030" ✅ (swapped from QAT050)
+            * to_serial = "QAT050" ✅ (swapped from QAT030)
+          
+          **TEST 5 — Invalid from_serial (Out of Batch Range) ✅**
+          - POST /api/dms/coupons/activate-range/preview
+          - Body: {batch_id, from_serial: "QAT500", to_serial: "QAT600"}
+          - Response: HTTP 400 ✅
+          - Detail: "From Serial QAT500 not found in batch GO-C-00002" ✅
+          
+          **TEST 6 — Invalid batch_id ✅**
+          - POST /api/dms/coupons/activate-range/preview
+          - Body: {batch_id: "cbt-nonexistent", from_serial: "QAT001", to_serial: "QAT010"}
+          - Response: HTTP 404 ✅
+          
+          **TEST 7 — RBAC — Distributor Cannot Preview ✅**
+          - Login as distributor1@gooil.com
+          - POST /api/dms/coupons/activate-range/preview (any body)
+          - Response: HTTP 403 ✅
+          - RBAC correctly enforced (owner_or_accountant only)
+          
+          **TEST 8 — /activate-range Still Requires Existence (Regression) ✅**
+          - POST /api/dms/coupons/activate-range
+          - Body: {batch_id, from_serial: "QAT999", to_serial: "QAT1000"}
+          - Response: HTTP 400 ✅
+          - Detail: "From Serial QAT1000 not found in batch GO-C-00002" ✅
+          - Regression check passed: existence validation working
+          
+          **TEST 9 — PDF Export Smoke Test + Security Checks ✅**
+          - GET /api/dms/coupons/batches/{batch_id}/export-pdf
+          - Response: HTTP 200 ✅
+          - Content-Type: application/pdf ✅
+          - Body size: 4,840,941 bytes (> 100 KB requirement) ✅
+          - PDF header: Starts with "%PDF-1." ✅
+          
+          **CRITICAL SECURITY CHECKS (PDF Byte Scan) — ALL PASSED ✅**
+          - ✅ NO "hmac_secret" string found in PDF
+          - ✅ NO "hidden_secure_id" string found in PDF
+          - ✅ NO "qr_signature_v2" string found in PDF
+          - ✅ NO "secret_token" string found in PDF
+          - ✅ NO "GOOIL2|" plaintext payload found (QR is binary-encoded, not text)
+          - ✅ PDF contains ONLY approved elements: QR code, Visible Serial, Type, Value
+          
+          🎯 CRITICAL FLOWS VERIFIED:
+          - Live preview endpoint: Read-only, returns accurate counts without state changes
+          - Number-mode input: Correctly converts from_number/to_number to serials
+          - Auto-swap: Automatically swaps from/to when from > to
+          - Existence validation: Both preview and activate endpoints validate serial existence
+          - RBAC enforcement: Only owner/accountant can access preview endpoint
+          - PDF export: Generates valid PDF with circular coupon design
+          - Security: NO sensitive data (secrets, UUIDs, signatures) leaked in PDF
+          - Backward compatibility: Existing /activate-range endpoint still works with validation
+          
+          📊 TEST COVERAGE:
+          - Total: 9/9 tests passed (100%)
+          - Live preview endpoint: 6/6 scenarios ✅
+          - Regression checks: 2/2 scenarios ✅
+          - PDF export + security: 1/1 scenario ✅
+          
+          🔒 SECURITY VERIFICATION:
+          - PDF byte-scan confirmed NO forbidden strings present
+          - Only approved elements visible: QR (binary), Serial, Type, Value
+          - All internal IDs, secrets, and signatures properly excluded
+          - QR payload encrypted (v2 format) and not exposed as plaintext
+          
+          **PERFORMANCE NOTES:**
+          - Batch creation: < 2 seconds (100 coupons)
+          - Preview endpoint: < 1 second response time
+          - Activate range: < 1 second (20 coupons)
+          - PDF export: < 5 seconds (100 coupons, 4.8 MB file)
+          
+          NO CRITICAL ISSUES FOUND.
+          All Coupon Activation Live Preview + PDF Export features production-ready.

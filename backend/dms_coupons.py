@@ -1198,11 +1198,11 @@ def build_coupons_router(db, get_current_user, notify=None):
 
             # 4) Top brand band — "GO OIL" logo text + tagline
             c.setFillColor(GOLD_1)
-            c.setFont("Helvetica-Bold", 12)
-            c.drawCentredString(cx, cy + radius - 8 * mm, "GO OIL")
+            c.setFont("Helvetica-Bold", 13)
+            c.drawCentredString(cx, cy + radius - 8.5 * mm, "GO OIL")
             c.setFillColor(WHITE_TX)
-            c.setFont("Helvetica", 5.5)
-            c.drawCentredString(cx, cy + radius - 12 * mm, "Hi-Technoply Automotive")
+            c.setFont("Helvetica-Oblique", 6.5)
+            c.drawCentredString(cx, cy + radius - 12.5 * mm, "Hi-Technoply Automotive")
 
             # 5) QR code — canonical v2 payload
             if cp.get("qr_version") == "v2" and cp.get("qr_ciphertext_b64") \
@@ -1254,11 +1254,11 @@ def build_coupons_router(db, get_current_user, notify=None):
             c.setFont("Helvetica-Bold", 8.5)
             c.drawCentredString(cx, pill_y + 1.4 * mm, value_line)
 
-            # 7) Visible Serial (below QR) — monospace, gold
+            # 7) Visible Serial (below QR) — monospace, gold, press-friendly
             visible_serial = cp.get("visible_serial") or cp.get("coupon_code") or ""
             c.setFillColor(GOLD_1)
-            c.setFont("Courier-Bold", 8)
-            c.drawCentredString(cx, cy - qr_size / 2 - 3 * mm, visible_serial)
+            c.setFont("Courier-Bold", 9.5)
+            c.drawCentredString(cx, cy - qr_size / 2 - 3.2 * mm, visible_serial)
 
             # 8) Bottom label — "MECHANIC COUPON" (arched effect approximated
             #    with a straight line — CorelDraw arc not needed for spec)

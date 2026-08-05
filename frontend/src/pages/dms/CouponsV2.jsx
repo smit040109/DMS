@@ -131,6 +131,11 @@ export function OwnerCouponsPage() {
   const cashValueUnused = cash?.unused?.value || 0;
   const rewardValueUnused = reward?.unused?.value || 0;
 
+  // "Generated" (per spec) = TOTAL coupons ever generated across all statuses
+  const totalGenerated = Object.values(t).reduce((a, b) => a + (Number(b) || 0), 0);
+  // "Inactive" = created-but-not-usable (generated status + cancelled)
+  const totalInactive  = (t.generated || 0) + (t.cancelled || 0) + (t.expired || 0);
+
   return (
     <div>
       <PageHeader
@@ -148,15 +153,14 @@ export function OwnerCouponsPage() {
         }
       />
 
-      {/* Life-cycle KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-5">
-        <Kpi label="Generated"  value={t.generated || 0}          tint="bg-slate-100 text-slate-700"       icon={Ticket} />
-        <Kpi label="Unused"     value={t.unused || 0}             tint="bg-emerald-50 text-emerald-700"    icon={PackageCheck} />
-        <Kpi label="Claimed"    value={t.claimed || 0}            tint="bg-amber-50 text-amber-700"        icon={ScanLine} />
-        <Kpi label="Pending"    value={t.redemption_pending || 0} tint="bg-orange-50 text-orange-700"      icon={Activity} />
-        <Kpi label="Redeemed"   value={t.redeemed || 0}           tint="bg-emerald-100 text-emerald-800"   icon={CheckCircle2} />
-        <Kpi label="Expired"    value={t.expired || 0}            tint="bg-slate-200 text-slate-700"       icon={PauseCircle} />
-        <Kpi label="Fraud"      value={summary?.fraud_attempts || 0} tint="bg-rose-50 text-rose-700"       icon={ShieldAlert} />
+      {/* Life-cycle KPIs — as per Owner Dashboard spec */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
+        <Kpi label="Generated"      value={totalGenerated}               tint="bg-slate-100 text-slate-700"     icon={Ticket} />
+        <Kpi label="Inactive"       value={totalInactive}                tint="bg-slate-200 text-slate-700"     icon={PauseCircle} />
+        <Kpi label="Active"         value={t.unused || 0}                tint="bg-emerald-50 text-emerald-700"  icon={PackageCheck} />
+        <Kpi label="Claimed"        value={t.claimed || 0}               tint="bg-amber-50 text-amber-700"      icon={ScanLine} />
+        <Kpi label="Redeemed"       value={t.redeemed || 0}              tint="bg-emerald-100 text-emerald-800" icon={CheckCircle2} />
+        <Kpi label="Fraud Attempts" value={summary?.fraud_attempts || 0} tint="bg-rose-50 text-rose-700"        icon={ShieldAlert} />
       </div>
 
       {/* Type breakdown */}
@@ -829,12 +833,16 @@ function FieldCopy({ label, value, mono = false, truncate = false }) {
 }
 
 function ActivateRangeDialog({ open, onClose, batch, onDone }) {
-  const [mode, setMode] = useState("serial");   // "serial" or "number"
+  const [mode, setMode] = useState("serial");     // "serial" or "number"
   const [fromS, setFromS] = useState("");
   const [toS, setToS] = useState("");
   const [fromN, setFromN] = useState("");
   const [toN, setToN] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false);        // preview-in-flight OR activating
+  const [preview, setPreview] = useState(null);   // {coupons_found, already_active, ready_to_activate, skipped, ...}
+  const [previewError, setPreviewError] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const previewTimer = useRef(null);
 
   useEffect(() => {
     if (open && batch) {
@@ -847,10 +855,13 @@ function ActivateRangeDialog({ open, onClose, batch, onDone }) {
       setFromN(start);
       setToN(end);
       setMode("serial");
+      setPreview(null);
+      setPreviewError("");
     }
   }, [open, batch]);
 
-  const preview = useMemo(() => {
+  // Local prediction (only for showing the normalized "will activate" range)
+  const localRange = useMemo(() => {
     if (!batch?.prefix) return null;
     const pad = batch.serial_pad || 3;
     const norm = (v) => {
@@ -870,52 +881,97 @@ function ActivateRangeDialog({ open, onClose, batch, onDone }) {
     };
   }, [batch, fromS, toS, fromN, toN, mode]);
 
-  const submit = async () => {
-    setBusy(true);
-    try {
+  // Debounced live preview — hit /activate-range/preview whenever range changes
+  useEffect(() => {
+    if (!open || !batch) return;
+    if (previewTimer.current) clearTimeout(previewTimer.current);
+    previewTimer.current = setTimeout(async () => {
       const body = { batch_id: batch.id };
       if (mode === "serial") {
-        if (!fromS || !toS) { toast.error("From and To serial required"); setBusy(false); return; }
+        if (!fromS || !toS) { setPreview(null); setPreviewError(""); return; }
         body.from_serial = fromS; body.to_serial = toS;
       } else {
         const f = Number(fromN), t = Number(toN);
-        if (!f || !t) { toast.error("From and To number required"); setBusy(false); return; }
+        if (!f || !t) { setPreview(null); setPreviewError(""); return; }
         body.from_number = f; body.to_number = t;
       }
+      setBusy(true);
+      try {
+        const r = await dms.cpnActivateRangePreview(body);
+        setPreview(r);
+        setPreviewError("");
+      } catch (e) {
+        setPreview(null);
+        setPreviewError(e?.response?.data?.detail || "Could not compute preview");
+      } finally { setBusy(false); }
+    }, 350);
+    return () => previewTimer.current && clearTimeout(previewTimer.current);
+  }, [open, batch, mode, fromS, toS, fromN, toN]);
+
+  const doActivate = async () => {
+    if (!preview || !preview.ready_to_activate) return;
+    setBusy(true);
+    try {
+      const body = { batch_id: batch.id };
+      if (mode === "serial") { body.from_serial = fromS; body.to_serial = toS; }
+      else { body.from_number = Number(fromN); body.to_number = Number(toN); }
       const r = await dms.cpnActivateRange(body);
       toast.success(`Activated ${r.activated} of ${r.matched} in range ${r.from_serial} – ${r.to_serial}`);
-      onDone?.(); onClose();
+      setConfirmOpen(false);
+      onDone?.();
+      onClose();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to activate range");
     } finally { setBusy(false); }
   };
 
+  const canActivate = !!preview && preview.ready_to_activate > 0 && !previewError;
+  const typeLabel = (batch?.coupon_type === "cash")
+    ? `Cash Coupon` : (batch?.coupon_type === "reward" ? `Reward Coupon` : "");
+  const valueLabel = batch
+    ? (batch.coupon_type === "cash" ? inr(batch.coupon_value) : `${batch.coupon_value} Points`)
+    : "";
+
   return (
+    <>
     <Dialog open={open} onOpenChange={o => !o && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Activate Coupon Range</DialogTitle></DialogHeader>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Activate Coupons</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
+          {/* Batch header context (Coupon Type & Value are BATCH-level, not user-input) */}
+          {batch && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+              <span className="text-slate-500">Batch:</span>
+              <span className="font-mono font-semibold text-slate-900">{batch.batch_label}</span>
+              <span className="text-slate-500 ml-2">Type:</span>
+              <span className="font-semibold text-slate-900">{typeLabel}</span>
+              <span className="text-slate-500 ml-2">Value:</span>
+              <span className="font-semibold text-[#8a6600]">{valueLabel}</span>
+            </div>
+          )}
           <div>
             <Label>Input Mode</Label>
             <Select value={mode} onValueChange={setMode}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="serial">By Serial (e.g. ABC1 to ABC50)</SelectItem>
-                <SelectItem value="number">By Number Only (1 to 50)</SelectItem>
+                <SelectItem value="serial">By Serial (e.g. {batch?.prefix || "ABC"}1 to {batch?.prefix || "ABC"}100)</SelectItem>
+                <SelectItem value="number">By Number Only (1 to 100)</SelectItem>
               </SelectContent>
             </Select>
           </div>
           {mode === "serial" ? (
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>From Serial</Label>
+                <Label>From Serial Number</Label>
                 <Input value={fromS} onChange={e => setFromS(e.target.value.toUpperCase())}
-                       placeholder={`${batch?.prefix || "ABC"}1`} data-testid="range-from-serial" />
+                       placeholder={`${batch?.prefix || "ABC"}001`} data-testid="range-from-serial" />
               </div>
               <div>
-                <Label>To Serial</Label>
+                <Label>To Serial Number</Label>
                 <Input value={toS} onChange={e => setToS(e.target.value.toUpperCase())}
-                       placeholder={`${batch?.prefix || "ABC"}50`} data-testid="range-to-serial" />
+                       placeholder={`${batch?.prefix || "ABC"}100`} data-testid="range-to-serial" />
               </div>
             </div>
           ) : (
@@ -930,25 +986,131 @@ function ActivateRangeDialog({ open, onClose, batch, onDone }) {
               </div>
             </div>
           )}
-          {preview && preview.fs && preview.ts && (
-            <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded p-2 font-mono">
-              Will activate: <b>{preview.fs}</b> … <b>{preview.ts}</b>
+
+          {/* Normalized range hint */}
+          {localRange && localRange.fs && localRange.ts && (
+            <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded px-2 py-1.5 font-mono">
+              Range: <b>{localRange.fs}</b> … <b>{localRange.ts}</b>
             </div>
           )}
-          <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
-            You can type <b>ABC1</b> or <b>ABC001</b> — system will auto-pad based on batch config.
-            Only coupons currently <b>generated</b> or <b>unused-inactive</b> will be activated.
-            Claimed / redeemed / cancelled coupons are protected and skipped.
+
+          {/* ── LIVE PREVIEW panel ─────────────────────────────────────── */}
+          <div className="rounded-lg border-2 border-[#e6d194] bg-gradient-to-br from-amber-50 to-white p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Activity size={14} className="text-[#a67c00]" />
+              <div className="text-xs font-bold uppercase tracking-wider text-[#8a6600]">
+                Live Preview
+              </div>
+              {busy && (
+                <RefreshCw size={12} className="animate-spin text-slate-400 ml-auto" />
+              )}
+            </div>
+            {previewError ? (
+              <div className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded px-2 py-1.5 flex items-start gap-2">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <span>{previewError}</span>
+              </div>
+            ) : preview ? (
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <PreviewStat label="Coupons Found"       value={preview.coupons_found}      tint="text-slate-800" />
+                <PreviewStat label="Already Active"      value={preview.already_active}     tint="text-blue-700" />
+                <PreviewStat label="Ready to Activate"   value={preview.ready_to_activate}  tint="text-emerald-700" />
+                <PreviewStat label="Skipped"             value={preview.skipped}            tint="text-slate-500" />
+              </div>
+            ) : (
+              <div className="text-xs text-slate-500 text-center py-2">
+                Enter a range to see the preview…
+              </div>
+            )}
+          </div>
+
+          <div className="bg-slate-50 border border-slate-200 rounded p-2.5 text-[11px] text-slate-600 leading-relaxed">
+            <b>Skipped</b> = coupons that cannot be activated (already claimed, redeemed, cancelled or expired).
+            Coupon <b>Type</b> and <b>Value</b> come from the batch and cannot be changed here.
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={busy} className={GOLD_BTN} data-testid="range-submit">
-            {busy ? "Activating…" : "Activate Range"}
+          <Button
+            onClick={() => setConfirmOpen(true)}
+            disabled={!canActivate || busy}
+            className={GOLD_BTN}
+            data-testid="range-submit">
+            <Play size={14} className="mr-1" />
+            {preview && preview.ready_to_activate
+              ? `Activate ${preview.ready_to_activate.toLocaleString("en-IN")} Coupon${preview.ready_to_activate === 1 ? "" : "s"}`
+              : "Activate"}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Confirmation dialog — asks final Yes/Cancel */}
+    <Dialog open={confirmOpen} onOpenChange={o => !o && setConfirmOpen(false)}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Confirm Activation</DialogTitle>
+        </DialogHeader>
+        {preview && (
+          <div className="space-y-3">
+            <div className="text-center py-3">
+              <div className="text-xs uppercase text-slate-500 font-semibold tracking-wider">You are about to activate</div>
+              <div className="text-4xl font-black text-[#8a6600] my-1">
+                {preview.ready_to_activate.toLocaleString("en-IN")}
+              </div>
+              <div className="text-sm text-slate-600">
+                Coupon{preview.ready_to_activate === 1 ? "" : "s"}
+              </div>
+            </div>
+            <div className="rounded-lg border border-slate-200 divide-y divide-slate-100 text-sm">
+              <ConfirmRow k="Range" v={<span className="font-mono font-semibold">{preview.from_serial} → {preview.to_serial}</span>} />
+              <ConfirmRow k="Coupon Type" v={<span className="font-semibold">{typeLabel}</span>} />
+              <ConfirmRow k="Value" v={<span className="font-semibold text-[#8a6600]">{valueLabel}</span>} />
+              <ConfirmRow k="Batch" v={<span className="font-mono">{preview.batch_label}</span>} />
+              {preview.already_active > 0 && (
+                <ConfirmRow k="Already Active (skipped)" v={<span className="text-blue-700">{preview.already_active}</span>} />
+              )}
+              {preview.skipped > 0 && (
+                <ConfirmRow k="Skipped (claimed / cancelled)" v={<span className="text-slate-500">{preview.skipped}</span>} />
+              )}
+            </div>
+            <div className="text-xs text-slate-500 leading-relaxed">
+              Only <b>{preview.ready_to_activate}</b> coupon{preview.ready_to_activate === 1 ? "" : "s"} will be activated.
+              An audit-log entry will be created with your name, timestamp, range and count.
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={busy}>Cancel</Button>
+          <Button onClick={doActivate} disabled={busy} className={GOLD_BTN} data-testid="confirm-activate">
+            {busy ? "Activating…" : "Yes, Activate"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
+  );
+}
+
+function PreviewStat({ label, value, tint = "text-slate-800" }) {
+  return (
+    <div className="rounded bg-white/80 border border-slate-200 px-2 py-2">
+      <div className={`text-2xl font-black ${tint}`}>
+        {(value || 0).toLocaleString("en-IN")}
+      </div>
+      <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold mt-0.5">
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function ConfirmRow({ k, v }) {
+  return (
+    <div className="flex items-center justify-between px-3 py-2">
+      <span className="text-slate-500">{k}</span>
+      <span>{v}</span>
+    </div>
   );
 }
 
