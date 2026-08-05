@@ -4,9 +4,9 @@ import { useAuth } from "@/context/AuthContext";
 import { dms } from "./api";
 import { ImpersonationBanner } from "./OwnerUsersPage";
 import SalespersonGpsPinger from "@/components/SalespersonGpsPinger";
-import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight, Ticket, ShieldAlert, ScanLine, Droplet, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity } from "lucide-react";
+import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight, Ticket, ShieldAlert, ScanLine, Droplet, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity, AlertTriangle } from "lucide-react";
 
-const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, Ticket, ShieldAlert, ScanLine, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity };
+const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, Ticket, ShieldAlert, ScanLine, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity, AlertTriangle };
 
 // Phase 2A: Expenses nav item (all roles except retailer)
 const EXPENSES_NAV = { label: "Expenses", to: "/dms/expenses", icon: "Receipt" };
@@ -40,6 +40,7 @@ const NAV_BY_ROLE = {
     { label: "Credit Notes",       to: "/dms/owner/coupons/credit-notes",        icon: "FileText" },
     { label: "Dispatch Advices",   to: "/dms/owner/coupons/dispatch-advices",    icon: "Truck" },
     { label: "Coupon Reports",     to: "/dms/owner/coupon-reports",              icon: "ShieldAlert" },
+    { label: "Fraud Dashboard",    to: "/dms/owner/coupons/fraud",               icon: "AlertTriangle" },
     { label: "Coupon Audit Log",   to: "/dms/owner/coupons/audit-log",           icon: "Activity" },
     // Phase 2C
     { label: "+Add Sales",      to: "/dms/direct-sales",          icon: "Receipt" },

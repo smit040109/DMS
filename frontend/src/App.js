@@ -38,6 +38,7 @@ import {
   OwnerDispatchAdvicesPage,
   OwnerCouponReportsPage,
   OwnerCouponAuditLogPage,
+  OwnerFraudDashboardPage,
   SalesOfficerScanPage,
   RetailerWalletPage,
   DistributorCouponsPage,
@@ -110,6 +111,7 @@ function AppRoutes() {
       <Route path="/dms/owner/coupons/credit-notes"     element={<DmsPage Component={OwnerCreditNotesPage} />} />
       <Route path="/dms/owner/coupons/dispatch-advices" element={<DmsPage Component={OwnerDispatchAdvicesPage} />} />
       <Route path="/dms/owner/coupons/audit-log"        element={<DmsPage Component={OwnerCouponAuditLogPage} />} />
+      <Route path="/dms/owner/coupons/fraud"            element={<DmsPage Component={OwnerFraudDashboardPage} />} />
       <Route path="/dms/owner/coupon-reports"           element={<DmsPage Component={OwnerCouponReportsPage} />} />
       <Route path="/dms/owner/price-circulars"     element={<DmsPage Component={PriceCircularsPage} />} />
       <Route path="/dms/owner/price-circulars/new" element={<DmsPage Component={NewPriceCircularPage} />} />

@@ -148,6 +148,11 @@ export const dms = {
   cpnMarkPrinted: (bid) => api.post(`/dms/coupons/batches/${bid}/mark-printed`).then(r => r.data),
   cpnIssueToProd: (bid) => api.post(`/dms/coupons/batches/${bid}/issue-to-production`).then(r => r.data),
   cpnDeactivateBatch: (bid) => api.post(`/dms/coupons/batches/${bid}/deactivate`).then(r => r.data),
+  // v2 — per-coupon and range activation
+  cpnActivateCoupon: (cid) => api.post(`/dms/coupons/coupons/${cid}/activate`).then(r => r.data),
+  cpnDeactivateCoupon: (cid) => api.post(`/dms/coupons/coupons/${cid}/deactivate`).then(r => r.data),
+  cpnActivateRange: (body) => api.post(`/dms/coupons/activate-range`, body).then(r => r.data),
+  cpnDeactivateRange: (body) => api.post(`/dms/coupons/deactivate-range`, body).then(r => r.data),
   cpnExportPdfUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-pdf`,
   cpnExportXlsxUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-xlsx`,
   cpnExportPdf: async (bid, filename) => {
@@ -192,6 +197,17 @@ export const dms = {
   cpnReportsFraud: () => api.get("/dms/coupons/reports/fraud").then(r => r.data),
   cpnReportsDuplicate: () => api.get("/dms/coupons/reports/duplicate-scans").then(r => r.data),
   cpnReportsWalletSummary: () => api.get("/dms/coupons/reports/wallet-summary").then(r => r.data),
+  // v2 — new reports & fraud dashboard
+  cpnFraudDashboard: () => api.get("/dms/coupons/reports/fraud-dashboard").then(r => r.data),
+  cpnReportsFraudFiltered: (params = {}) => api.get("/dms/coupons/reports/fraud", { params }).then(r => r.data),
+  cpnReportsGeneration: () => api.get("/dms/coupons/reports/generation").then(r => r.data),
+  cpnReportsActivation: (params = {}) => api.get("/dms/coupons/reports/activation", { params }).then(r => r.data),
+  cpnReportsUnused: (params = {}) => api.get("/dms/coupons/reports/unused", { params }).then(r => r.data),
+  cpnReportsInactive: (params = {}) => api.get("/dms/coupons/reports/inactive", { params }).then(r => r.data),
+  cpnReportsUsage: (params = {}) => api.get("/dms/coupons/reports/usage", { params }).then(r => r.data),
+  cpnReportsCashWallets: () => api.get("/dms/coupons/reports/cash-wallets").then(r => r.data),
+  cpnReportsRewardWallets: () => api.get("/dms/coupons/reports/reward-wallets").then(r => r.data),
+  cpnReportsDistributorOutstanding: () => api.get("/dms/coupons/reports/distributor-outstanding").then(r => r.data),
 
   // Products import/export
   exportProducts: async () => {

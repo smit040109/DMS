@@ -790,6 +790,14 @@ async def on_startup():
     else:
         logger.info("[seed] Skipping workflow / transactional seed (production-clean start)")
 
+    # --- Coupons v2 indexes + legacy backfill ---
+    try:
+        if hasattr(coupons_router, "_coupons_startup"):
+            await coupons_router._coupons_startup()
+            logger.info("[coupons] v2 indexes + backfill complete")
+    except Exception as e:
+        logger.warning(f"[coupons] startup failed: {e}")
+
     logger.info(f"{PLATFORM_NAME} startup complete.")
 
 

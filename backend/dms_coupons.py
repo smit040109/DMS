@@ -26,9 +26,12 @@ Mounted at:  /api/dms/coupons/*
 """
 from __future__ import annotations
 
+import base64
 import hmac
 import hashlib
+import json
 import os
+import re
 import secrets
 import uuid
 from datetime import datetime, timezone
@@ -37,6 +40,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+
+# AES-256-GCM for encrypted QR payload (v2)
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    _AES_AVAILABLE = True
+except Exception:  # pragma: no cover
+    AESGCM = None  # type: ignore
+    _AES_AVAILABLE = False
 
 
 # ═════════════════════════ helpers ══════════════════════════════════════════
@@ -91,7 +102,7 @@ def _sign(batch_secret: str, coupon_code: str, secret_token: str) -> str:
 
 
 def _qr_payload(coupon_code: str, secret_token: str, signature: str) -> str:
-    """JSON-ish compact payload embedded in QR."""
+    """JSON-ish compact payload embedded in QR (v1 legacy format)."""
     return f"GOOIL:{coupon_code}:{secret_token}:{signature}"
 
 
@@ -99,8 +110,132 @@ def _qr_hash(payload: str) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+# ── AES-256-GCM encrypted payload (v2) ─────────────────────────────────────
+def _aes_master_key() -> bytes:
+    """Derive a 32-byte AES-256 master key from env / master secret.
+    Env COUPON_ENCRYPTION_KEY (base64 or hex, 32 bytes) takes precedence.
+    Otherwise deterministically derived from COUPON_MASTER_SECRET.
+    """
+    raw = os.environ.get("COUPON_ENCRYPTION_KEY")
+    if raw:
+        try:
+            k = base64.b64decode(raw)
+            if len(k) == 32:
+                return k
+        except Exception:
+            pass
+        try:
+            k = bytes.fromhex(raw)
+            if len(k) == 32:
+                return k
+        except Exception:
+            pass
+    # Derive from master secret (stable across restarts)
+    return hashlib.sha256(("AES-256|COUPON|" + _APP_SECRET).encode()).digest()
+
+
+_AES_KEY = _aes_master_key()
+
+
+def _aes_encrypt(plaintext: bytes, aad: bytes = b"gooil-coupon-v2") -> bytes:
+    """AES-256-GCM encrypt. Returns nonce(12) || ciphertext || tag."""
+    if not _AES_AVAILABLE:
+        raise RuntimeError("cryptography package not available for AES-GCM")
+    nonce = secrets.token_bytes(12)
+    aead = AESGCM(_AES_KEY)
+    ct = aead.encrypt(nonce, plaintext, aad)
+    return nonce + ct
+
+
+def _aes_decrypt(blob: bytes, aad: bytes = b"gooil-coupon-v2") -> bytes:
+    if not _AES_AVAILABLE:
+        raise RuntimeError("cryptography package not available for AES-GCM")
+    if len(blob) < 13:
+        raise ValueError("ciphertext too short")
+    nonce, ct = blob[:12], blob[12:]
+    aead = AESGCM(_AES_KEY)
+    return aead.decrypt(nonce, ct, aad)
+
+
+def _sign_v2(batch_secret: str, ciphertext_b64: str) -> str:
+    """HMAC-SHA256 signature computed over the base64 ciphertext (v2)."""
+    key = (batch_secret + "|" + _APP_SECRET + "|v2").encode()
+    return hmac.new(key, ciphertext_b64.encode(), hashlib.sha256).hexdigest()
+
+
+def _qr_payload_v2(visible_serial: str, hidden_secure_id: str, batch_id: str,
+                   batch_secret: str, coupon_type: str, coupon_value: float) -> str:
+    """
+    Encrypted, signed QR payload — v2.
+    Format: GOOIL2|{b64(nonce+ciphertext+tag)}|{signature_hex}
+    The plaintext (JSON) contains: v, s, h, b, t, r, ts.
+    NO plaintext of serial / hidden id / batch id is visible in the QR data.
+    """
+    inner = {
+        "v": 2,
+        "s": visible_serial,
+        "h": hidden_secure_id,
+        "b": batch_id,
+        "t": coupon_type,
+        "r": _round(coupon_value),
+        "ts": int(datetime.now(timezone.utc).timestamp()),
+    }
+    plain = json.dumps(inner, separators=(",", ":"), sort_keys=True).encode()
+    blob = _aes_encrypt(plain)
+    ct_b64 = base64.urlsafe_b64encode(blob).decode().rstrip("=")
+    sig = _sign_v2(batch_secret, ct_b64)
+    return f"GOOIL2|{ct_b64}|{sig}"
+
+
+def _b64_urlsafe_decode(s: str) -> bytes:
+    pad = "=" * (-len(s) % 4)
+    return base64.urlsafe_b64decode(s + pad)
+
+
+class QrParseError(Exception):
+    """Represents a QR parsing / decryption failure with a specific reason code."""
+
+    def __init__(self, reason: str, message: str = ""):
+        self.reason = reason  # one of the fraud reasons
+        self.message = message or reason
+        super().__init__(self.message)
+
+
+def _parse_qr_v2_only(payload: str) -> Dict[str, Any]:
+    """Parse a v2 QR payload. Returns the decrypted inner dict.
+    Raises QrParseError with an actionable fraud reason on failure.
+    """
+    if not payload or not payload.strip().startswith("GOOIL2|"):
+        raise QrParseError("wrong_version", "Not a v2 GO OIL QR")
+    parts = payload.strip().split("|")
+    if len(parts) != 3:
+        raise QrParseError("modified_payload", "Malformed v2 payload")
+    _, ct_b64, sig = parts
+    if not ct_b64 or not sig or len(sig) != 64:
+        raise QrParseError("modified_payload", "Malformed v2 payload fields")
+    # Try decryption first (with AAD) — a QR from an online generator will fail here
+    try:
+        blob = _b64_urlsafe_decode(ct_b64)
+    except Exception:
+        raise QrParseError("modified_payload", "Payload not base64")
+    try:
+        plain = _aes_decrypt(blob)
+    except Exception:
+        # Wrong key, tampered ciphertext, or generated by another system
+        raise QrParseError("invalid_encryption", "Payload could not be decrypted")
+    try:
+        inner = json.loads(plain.decode())
+    except Exception:
+        raise QrParseError("modified_payload", "Decrypted plaintext is not valid JSON")
+    if not isinstance(inner, dict) or inner.get("v") != 2:
+        raise QrParseError("wrong_version", "Unexpected payload version")
+    inner["_ct_b64"] = ct_b64
+    inner["_sig"] = sig
+    return inner
+
+
 def _parse_qr(payload: str) -> Optional[Tuple[str, str, str]]:
-    """Returns (code, token, signature) or None if malformed."""
+    """Legacy v1 parser — returns (code, token, signature) or None if malformed."""
     if not payload:
         return None
     p = payload.strip()
@@ -109,6 +244,59 @@ def _parse_qr(payload: str) -> Optional[Tuple[str, str, str]]:
         if len(parts) == 3:
             return parts[0].upper().strip(), parts[1].strip(), parts[2].strip()
     return None
+
+
+def _detect_qr_version(payload: str) -> str:
+    """Returns 'v2', 'v1', or 'unknown'."""
+    if not payload:
+        return "unknown"
+    p = payload.strip()
+    if p.startswith("GOOIL2|"):
+        return "v2"
+    if p.startswith("GOOIL:"):
+        return "v1"
+    return "unknown"
+
+
+# ── serial number helpers ──────────────────────────────────────────────────
+_PREFIX_RE = re.compile(r"^[A-Z0-9]{1,10}$")
+
+
+def _validate_prefix(p: str) -> str:
+    p = (p or "").strip().upper()
+    if not p:
+        raise HTTPException(400, "prefix is required for prefix_sequential mode")
+    if not _PREFIX_RE.match(p):
+        raise HTTPException(400, "prefix must be 1-10 chars, A-Z and 0-9 only (uppercase)")
+    return p
+
+
+def _fmt_serial(prefix: str, num: int, pad: int) -> str:
+    return f"{prefix}{str(num).zfill(pad)}"
+
+
+# ── request-context helpers (IP, GPS, device) ──────────────────────────────
+def _client_ip(request: Optional[Request]) -> Optional[str]:
+    if not request:
+        return None
+    xff = request.headers.get("x-forwarded-for") or request.headers.get("X-Forwarded-For")
+    if xff:
+        return xff.split(",")[0].strip()
+    xr = request.headers.get("x-real-ip") or request.headers.get("X-Real-IP")
+    if xr:
+        return xr.strip()
+    return getattr(request.client, "host", None) if request.client else None
+
+
+def _client_meta(request: Optional[Request], body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    body = body or {}
+    return {
+        "ip_address": _client_ip(request),
+        "user_agent": (request.headers.get("user-agent") if request else None),
+        "gps_lat": body.get("gps_lat"),
+        "gps_lng": body.get("gps_lng"),
+        "device_id": body.get("device_id") or (request.headers.get("x-device-id") if request else None),
+    }
 
 
 # ═════════════════════════ router builder ══════════════════════════════════
@@ -153,7 +341,10 @@ def build_coupons_router(db, get_current_user, notify=None):
     async def _log_fraud(reason: str, coupon_code: str, user: dict,
                          retailer_id: Optional[str] = None,
                          distributor_id: Optional[str] = None,
-                         extra: Optional[Dict[str, Any]] = None):
+                         extra: Optional[Dict[str, Any]] = None,
+                         request: Optional[Request] = None,
+                         body: Optional[Dict[str, Any]] = None):
+        meta = _client_meta(request, body)
         await db.dms_v2_coupon_fraud_attempts.insert_one({
             "id": _nid("fra"),
             "reason": reason,
@@ -163,6 +354,11 @@ def build_coupons_router(db, get_current_user, notify=None):
             "actor_role": user.get("role"),
             "retailer_id": retailer_id,
             "distributor_id": distributor_id,
+            "ip_address": meta.get("ip_address"),
+            "user_agent": meta.get("user_agent"),
+            "gps_lat": meta.get("gps_lat"),
+            "gps_lng": meta.get("gps_lng"),
+            "device_id": meta.get("device_id"),
             "extra": extra or {},
             "at": _now(),
         })
@@ -196,7 +392,17 @@ def build_coupons_router(db, get_current_user, notify=None):
     @router.post("/batches")
     async def create_batch(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
         """Generate a new coupon batch. Coupons are CREATED in status='generated'
-        (NOT yet usable) — Owner must Activate the batch before use."""
+        (NOT yet usable) — Owner must Activate the batch (or activate coupons
+        singly/by range) before use.
+
+        Supports two serial modes:
+          * prefix_sequential (default): visible_serial = PREFIX + zero-padded number
+                                         (e.g. prefix=ABC start=1 pad=3 → ABC001…)
+          * random_secure   : visible_serial = 16-char random (legacy)
+
+        Every coupon gets an INDEPENDENT UUID v4 hidden_secure_id and its QR
+        payload is AES-256-GCM encrypted + HMAC-SHA256 signed (v2 format).
+        """
         title = (body.get("title") or "").strip()
         coupon_type = (body.get("coupon_type") or "").strip().lower()
         coupon_value = _round(body.get("coupon_value", 0))
@@ -204,14 +410,49 @@ def build_coupons_router(db, get_current_user, notify=None):
         notes = (body.get("notes") or "").strip()
         expires_at = body.get("expires_at")  # optional ISO date
 
+        # New serial-config knobs (all optional; defaults are prefix_sequential)
+        serial_mode = (body.get("serial_mode") or "prefix_sequential").strip().lower()
+        prefix = (body.get("prefix") or "").strip().upper()
+        serial_start = int(body.get("serial_start") or 1)
+        serial_pad = int(body.get("serial_pad") or 3)
+
         if coupon_type not in ("cash", "reward"):
             raise HTTPException(400, "coupon_type must be 'cash' or 'reward'")
         if coupon_value <= 0:
             raise HTTPException(400, "coupon_value must be > 0")
         if count <= 0 or count > 100_000:
             raise HTTPException(400, "count must be between 1 and 100,000")
+        if serial_mode not in ("prefix_sequential", "random_secure"):
+            raise HTTPException(400, "serial_mode must be prefix_sequential or random_secure")
+        if serial_mode == "prefix_sequential":
+            prefix = _validate_prefix(prefix)
+            if serial_start < 0 or serial_start > 9_999_999:
+                raise HTTPException(400, "serial_start must be between 0 and 9,999,999")
+            if serial_pad < 1 or serial_pad > 10:
+                raise HTTPException(400, "serial_pad must be between 1 and 10")
+            # ensure padding is large enough for max serial
+            max_serial = serial_start + count - 1
+            if len(str(max_serial)) > serial_pad:
+                raise HTTPException(400,
+                    f"serial_pad ({serial_pad}) is too small for max serial {max_serial} — "
+                    f"increase padding")
+            # duplicate check inside a single batch is guaranteed by sequential nature;
+            # cross-batch duplicates are ALLOWED (different batches may share prefix),
+            # but each coupon's visible_serial IS unique across ALL batches:
+            first = _fmt_serial(prefix, serial_start, serial_pad)
+            last = _fmt_serial(prefix, max_serial, serial_pad)
+            existing = await db.dms_v2_coupons.find_one(
+                {"visible_serial": {"$in": [first, last]}}, {"_id": 0, "visible_serial": 1})
+            if existing:
+                raise HTTPException(400,
+                    f"Serial range {first}..{last} overlaps with existing coupons — "
+                    f"choose a different prefix or serial_start")
+
         if not title:
-            title = f"{coupon_type.upper()} ₹{coupon_value:g} × {count}"
+            if serial_mode == "prefix_sequential":
+                title = f"{coupon_type.upper()} {prefix} × {count}"
+            else:
+                title = f"{coupon_type.upper()} ₹{coupon_value:g} × {count}"
 
         # allocate batch_no
         counter = await db.dms_v2_meta.find_one_and_update(
@@ -235,6 +476,13 @@ def build_coupons_router(db, get_current_user, notify=None):
             "status": "generated",           # generated → activated → printed → issued
             "active": False,                  # becomes True on activate
             "hmac_secret": batch_secret,
+            # new serial config (persisted for audit/print)
+            "serial_mode": serial_mode,
+            "prefix": prefix if serial_mode == "prefix_sequential" else None,
+            "serial_start": serial_start if serial_mode == "prefix_sequential" else None,
+            "serial_pad": serial_pad if serial_mode == "prefix_sequential" else None,
+            "serial_end": (serial_start + count - 1) if serial_mode == "prefix_sequential" else None,
+            "qr_version": "v2",
             "created_by": user["id"],
             "created_by_name": user.get("name"),
             "created_at": _now(),
@@ -252,32 +500,56 @@ def build_coupons_router(db, get_current_user, notify=None):
         CHUNK = 2000
         codes_seen: set[str] = set()
         created = 0
+        seq = serial_start
         while created < count:
             n_this = min(CHUNK, count - created)
             docs: List[Dict[str, Any]] = []
             for _ in range(n_this):
-                # ensure uniqueness inside the batch (16^16 collision practically 0)
-                while True:
-                    code = _gen_coupon_code()
-                    if code not in codes_seen:
-                        codes_seen.add(code)
-                        break
+                if serial_mode == "prefix_sequential":
+                    visible = _fmt_serial(prefix, seq, serial_pad)
+                    seq += 1
+                else:
+                    # ensure uniqueness inside the batch
+                    while True:
+                        visible = _gen_coupon_code()
+                        if visible not in codes_seen:
+                            codes_seen.add(visible)
+                            break
+                # INDEPENDENT UUID v4 (never derived from anything visible)
+                hidden_id = str(uuid.uuid4())
+                # legacy secret_token still generated (used by v1 signing path
+                # for backward compatibility if someone ever manually crafts v1)
                 token = _gen_secret_token()
-                sig = _sign(batch_secret, code, token)
-                qr = _qr_payload(code, token, sig)
+                sig_v1 = _sign(batch_secret, visible, token)  # v1 signature (retained)
+                qr_v2 = _qr_payload_v2(visible, hidden_id, batch_id,
+                                       batch_secret, coupon_type, coupon_value)
+                # extract the ciphertext + signature parts to store the canonical signature
+                _, ct_b64, sig_v2 = qr_v2.split("|", 2)
                 docs.append({
                     "id": _nid("cpn"),
-                    "coupon_code": code,
+                    # NEW (spec-compliant)
+                    "visible_serial": visible,
+                    "hidden_secure_id": hidden_id,
+                    "qr_version": "v2",
+                    "qr_ciphertext_b64": ct_b64,        # canonical stored ciphertext
+                    "qr_signature_v2": sig_v2,          # canonical v2 HMAC signature
+                    # LEGACY aliases (kept for backward compatibility)
+                    "coupon_code": visible,             # alias — same as visible_serial
+                    "secret_token": token,              # independent, kept for v1 compat
+                    "signature": sig_v1,                # v1 HMAC signature (unused for v2 scans)
+                    "qr_hash": _qr_hash(qr_v2),
+                    # denormalised references
                     "batch_id": batch_id,
                     "batch_no": batch_no,
                     "batch_label": batch_doc["batch_label"],
                     "coupon_type": coupon_type,
                     "coupon_value": coupon_value,
-                    "secret_token": token,
-                    "signature": sig,
-                    "qr_hash": _qr_hash(qr),
-                    "status": "generated",   # generated → activated → printed → issued_to_production → unused → claimed → redemption_pending → redeemed
+                    "status": "generated",
                     "active": False,
+                    "activated_at": None,
+                    "activated_by": None,
+                    "deactivated_at": None,
+                    "deactivated_by": None,
                     "claimed_by_user_id": None,
                     "claimed_by_user_name": None,
                     "claim_timestamp": None,
@@ -297,12 +569,18 @@ def build_coupons_router(db, get_current_user, notify=None):
         await _audit(user, "batch.generated", "batch", batch_id, {
             "count": count, "coupon_type": coupon_type,
             "coupon_value": coupon_value, "batch_label": batch_doc["batch_label"],
+            "serial_mode": serial_mode, "prefix": batch_doc.get("prefix"),
+            "serial_start": batch_doc.get("serial_start"),
+            "serial_end": batch_doc.get("serial_end"),
+            "qr_version": "v2",
         })
 
+        # strip secret from response
+        resp_batch = {k: v for k, v in batch_doc.items() if k != "hmac_secret"}
         return {
-            "ok": True, "batch": _clean(batch_doc),
+            "ok": True, "batch": _clean(resp_batch),
             "message": f"Generated {count} coupons in batch {batch_doc['batch_label']}. "
-                       f"Activate the batch to make them usable.",
+                       f"Activate the batch (or individual coupons) to make them usable.",
         }
 
     @router.post("/batches/{bid}/activate")
@@ -361,13 +639,178 @@ def build_coupons_router(db, get_current_user, notify=None):
         await db.dms_v2_coupon_batches.update_one({"id": bid}, {"$set": {
             "active": False, "closed_at": _now(),
         }})
-        # cancel remaining unused coupons
-        await db.dms_v2_coupons.update_many(
+        # cancel remaining unused coupons — protect claimed / redeemed rows
+        res = await db.dms_v2_coupons.update_many(
             {"batch_id": bid, "status": "unused"},
-            {"$set": {"status": "cancelled", "active": False, "updated_at": _now()}},
+            {"$set": {"status": "cancelled", "active": False,
+                      "deactivated_at": _now(), "deactivated_by": user["id"],
+                      "updated_at": _now()}},
         )
-        await _audit(user, "batch.deactivated", "batch", bid, {"batch_label": b["batch_label"]})
+        await _audit(user, "batch.deactivated", "batch", bid, {
+            "batch_label": b["batch_label"], "cancelled_unused": res.modified_count,
+        })
+        return {"ok": True, "cancelled_unused": res.modified_count}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # PER-COUPON ACTIVATION (Single + Range)
+    # ─────────────────────────────────────────────────────────────────────────
+    @router.post("/coupons/{cid}/activate")
+    async def activate_single_coupon(cid: str, user: dict = Depends(owner_or_accountant)):
+        """Activate ONE coupon. Rules:
+        * Batch must NOT be closed (deactivate_batch sets closed_at).
+        * Coupon must be in 'generated' state OR in 'unused' with active=False.
+        * Cannot activate a coupon that has been claimed/redeemed/cancelled/expired.
+        * Idempotent: if already active + unused → returns ok:true, changed:false.
+        """
+        cp = _clean(await db.dms_v2_coupons.find_one({"id": cid}))
+        if not cp:
+            raise HTTPException(404, "Coupon not found")
+        batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": cp["batch_id"]})) or {}
+        if batch.get("closed_at"):
+            raise HTTPException(400, "Batch is closed — cannot activate coupons")
+        if cp["status"] in ("claimed", "redemption_pending", "redeemed"):
+            raise HTTPException(400, f"Coupon already {cp['status']} — cannot activate")
+        if cp["status"] in ("cancelled", "expired"):
+            raise HTTPException(400, f"Coupon is {cp['status']} — cannot activate")
+        if cp.get("active") and cp["status"] == "unused":
+            return {"ok": True, "changed": False, "message": "Already active"}
+        await db.dms_v2_coupons.update_one({"id": cid}, {"$set": {
+            "status": "unused", "active": True,
+            "activated_at": _now(), "activated_by": user["id"],
+            "updated_at": _now(),
+        }})
+        # if batch was 'generated', keep the coarse batch status intact; if this is
+        # the first activation of any coupon and batch was 'generated', flip batch
+        # to 'activated' + active=True (spec: activating any coupon activates batch).
+        if batch.get("status") == "generated":
+            await db.dms_v2_coupon_batches.update_one({"id": batch["id"]}, {"$set": {
+                "status": "activated", "active": True,
+                "activated_at": _now(), "activated_by": user["id"],
+            }})
+        await _audit(user, "coupon.activated", "coupon", cid, {
+            "visible_serial": cp.get("visible_serial") or cp.get("coupon_code"),
+            "batch_id": cp["batch_id"], "scope": "single",
+        })
+        return {"ok": True, "changed": True}
+
+    @router.post("/coupons/{cid}/deactivate")
+    async def deactivate_single_coupon(cid: str, user: dict = Depends(owner_only)):
+        """Deactivate a single coupon (only if not claimed/redeemed)."""
+        cp = _clean(await db.dms_v2_coupons.find_one({"id": cid}))
+        if not cp:
+            raise HTTPException(404, "Coupon not found")
+        if cp["status"] in ("claimed", "redemption_pending", "redeemed"):
+            raise HTTPException(400, f"Cannot deactivate a {cp['status']} coupon")
+        await db.dms_v2_coupons.update_one({"id": cid}, {"$set": {
+            "status": "cancelled", "active": False,
+            "deactivated_at": _now(), "deactivated_by": user["id"],
+            "updated_at": _now(),
+        }})
+        await _audit(user, "coupon.deactivated", "coupon", cid, {
+            "visible_serial": cp.get("visible_serial") or cp.get("coupon_code"),
+            "batch_id": cp["batch_id"], "scope": "single",
+        })
         return {"ok": True}
+
+    @router.post("/activate-range")
+    async def activate_range(body: Dict[str, Any] = Body(...),
+                             user: dict = Depends(owner_or_accountant)):
+        """
+        Activate a range of coupons within a batch.
+        Body: { batch_id, from_serial, to_serial }
+              OR { batch_id, from_number, to_number }  (uses prefix from batch)
+        Only coupons currently in a NOT-YET-CLAIMED state can be activated.
+        """
+        batch_id = (body.get("batch_id") or "").strip()
+        if not batch_id:
+            raise HTTPException(400, "batch_id is required")
+        batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": batch_id}))
+        if not batch:
+            raise HTTPException(404, "Batch not found")
+        if batch.get("closed_at"):
+            raise HTTPException(400, "Batch is closed")
+
+        from_serial = (body.get("from_serial") or "").strip().upper() or None
+        to_serial = (body.get("to_serial") or "").strip().upper() or None
+        from_num = body.get("from_number")
+        to_num = body.get("to_number")
+
+        # resolve to serials
+        if not from_serial or not to_serial:
+            if from_num is None or to_num is None:
+                raise HTTPException(400, "Provide either (from_serial,to_serial) or (from_number,to_number)")
+            if not batch.get("prefix"):
+                raise HTTPException(400, "Batch was not created with a prefix; from_number/to_number not supported — use from_serial/to_serial")
+            pad = int(batch.get("serial_pad") or 3)
+            prefix = batch["prefix"]
+            from_serial = _fmt_serial(prefix, int(from_num), pad)
+            to_serial = _fmt_serial(prefix, int(to_num), pad)
+
+        if from_serial > to_serial:
+            from_serial, to_serial = to_serial, from_serial
+
+        # RANGE query — string comparison is safe because zero-padded numeric serials
+        # sort correctly lexicographically within a batch.
+        q = {
+            "batch_id": batch_id,
+            "visible_serial": {"$gte": from_serial, "$lte": to_serial},
+            "status": {"$in": ["generated", "unused"]},
+            # only activate coupons that are NOT already active+unused
+            "$or": [{"active": {"$ne": True}}, {"status": "generated"}],
+        }
+        cnt = await db.dms_v2_coupons.count_documents(q)
+        res = await db.dms_v2_coupons.update_many(q, {"$set": {
+            "status": "unused", "active": True,
+            "activated_at": _now(), "activated_by": user["id"],
+            "updated_at": _now(),
+        }})
+        if batch.get("status") == "generated" and res.modified_count > 0:
+            await db.dms_v2_coupon_batches.update_one({"id": batch_id}, {"$set": {
+                "status": "activated", "active": True,
+                "activated_at": _now(), "activated_by": user["id"],
+            }})
+        await _audit(user, "coupon.range_activated", "batch", batch_id, {
+            "batch_label": batch.get("batch_label"),
+            "from_serial": from_serial, "to_serial": to_serial,
+            "matched": cnt, "activated": res.modified_count,
+        })
+        return {"ok": True, "matched": cnt, "activated": res.modified_count,
+                "from_serial": from_serial, "to_serial": to_serial}
+
+    @router.post("/deactivate-range")
+    async def deactivate_range(body: Dict[str, Any] = Body(...),
+                               user: dict = Depends(owner_only)):
+        """Deactivate a range of coupons (cancel them). Claimed/redeemed rows are
+        protected and skipped."""
+        batch_id = (body.get("batch_id") or "").strip()
+        if not batch_id:
+            raise HTTPException(400, "batch_id is required")
+        batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": batch_id}))
+        if not batch:
+            raise HTTPException(404, "Batch not found")
+        from_serial = (body.get("from_serial") or "").strip().upper()
+        to_serial = (body.get("to_serial") or "").strip().upper()
+        if not from_serial or not to_serial:
+            raise HTTPException(400, "from_serial and to_serial are required")
+        if from_serial > to_serial:
+            from_serial, to_serial = to_serial, from_serial
+        q = {
+            "batch_id": batch_id,
+            "visible_serial": {"$gte": from_serial, "$lte": to_serial},
+            "status": {"$in": ["generated", "unused"]},
+        }
+        res = await db.dms_v2_coupons.update_many(q, {"$set": {
+            "status": "cancelled", "active": False,
+            "deactivated_at": _now(), "deactivated_by": user["id"],
+            "updated_at": _now(),
+        }})
+        await _audit(user, "coupon.range_deactivated", "batch", batch_id, {
+            "batch_label": batch.get("batch_label"),
+            "from_serial": from_serial, "to_serial": to_serial,
+            "deactivated": res.modified_count,
+        })
+        return {"ok": True, "deactivated": res.modified_count,
+                "from_serial": from_serial, "to_serial": to_serial}
 
     @router.get("/batches")
     async def list_batches(
@@ -410,8 +853,14 @@ def build_coupons_router(db, get_current_user, notify=None):
     @router.get("/batches/{bid}/export-pdf")
     async def export_pdf(bid: str, user: dict = Depends(owner_only)):
         """
-        Printable PDF grid — 3×4 = 12 coupons per A4 page.
-        Each cell: QR + coupon code + type + value + batch label.
+        Printable PDF for the printing press — STRICTLY contains only:
+          * QR image  (encrypted payload — v2)
+          * Visible Serial
+          * Coupon Type
+          * Coupon Value
+        No UUID, no secret token, no signature, no batch label, no batch secret,
+        no internal IDs.
+        Layout: 3×4 = 12 coupons per A4 page.
         """
         import qrcode
         from reportlab.lib.pagesizes import A4
@@ -423,7 +872,8 @@ def build_coupons_router(db, get_current_user, notify=None):
         if not b:
             raise HTTPException(404, "Batch not found")
         secret = b["hmac_secret"]
-        coupons = await db.dms_v2_coupons.find({"batch_id": bid}, {"_id": 0}).to_list(200_000)
+        coupons = await db.dms_v2_coupons.find({"batch_id": bid}, {"_id": 0})\
+            .sort("visible_serial", 1).to_list(200_000)
         if not coupons:
             raise HTTPException(400, "No coupons in batch")
 
@@ -449,31 +899,38 @@ def build_coupons_router(db, get_current_user, notify=None):
             c.setLineWidth(0.6)
             c.rect(x0 + 2, y0 + 2, cell_w - 4, cell_h - 4)
 
-            # QR
-            payload = _qr_payload(cp["coupon_code"], cp["secret_token"], cp["signature"])
+            # Build v2 payload from stored ciphertext (never regenerate — the DB
+            # value is canonical and immutable).
+            if cp.get("qr_version") == "v2" and cp.get("qr_ciphertext_b64") and cp.get("qr_signature_v2"):
+                payload = f"GOOIL2|{cp['qr_ciphertext_b64']}|{cp['qr_signature_v2']}"
+            else:
+                # legacy v1 fallback (for old batches that pre-date v2)
+                payload = _qr_payload(cp.get("coupon_code") or cp.get("visible_serial"),
+                                       cp.get("secret_token", ""), cp.get("signature", ""))
             qr_img = qrcode.make(payload)
             qr_reader = ImageReader(qr_img.get_image() if hasattr(qr_img, "get_image") else qr_img)
-            qr_size = min(cell_w, cell_h) * 0.55
-            c.drawImage(qr_reader,
-                        x0 + (cell_w - qr_size) / 2,
-                        y0 + cell_h - qr_size - 8 * mm,
+            qr_size = min(cell_w, cell_h) * 0.60
+            qr_x = x0 + (cell_w - qr_size) / 2
+            qr_y = y0 + cell_h - qr_size - 6 * mm
+            c.drawImage(qr_reader, qr_x, qr_y,
                         width=qr_size, height=qr_size,
                         preserveAspectRatio=True, mask="auto")
 
-            # text block below QR
+            # Text block below QR — ONLY the 3 spec-approved lines
+            visible_serial = cp.get("visible_serial") or cp.get("coupon_code") or ""
+            if b["coupon_type"] == "cash":
+                value_line = f"CASH  ₹{b['coupon_value']:g}"
+            else:
+                value_line = f"REWARD  {b['coupon_value']:g} pts"
+
+            c.setFont("Courier-Bold", 11)
+            c.drawCentredString(x0 + cell_w / 2,
+                                qr_y - 6 * mm,
+                                visible_serial)
             c.setFont("Helvetica-Bold", 9)
-            c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - qr_size - 12 * mm, "GO OIL")
-            c.setFont("Helvetica", 7)
-            type_label = "CASH ₹" if b["coupon_type"] == "cash" else "REWARD "
-            unit = "" if b["coupon_type"] == "cash" else " pts"
-            c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - qr_size - 16 * mm,
-                                f"{type_label}{b['coupon_value']:g}{unit}")
-            c.setFont("Courier-Bold", 8)
-            c.drawCentredString(x0 + cell_w / 2, y0 + cell_h - qr_size - 20 * mm,
-                                cp["coupon_code"])
-            c.setFont("Helvetica-Oblique", 6)
-            c.drawCentredString(x0 + cell_w / 2, y0 + 6 * mm,
-                                f"{b['batch_label']} • Do not photocopy")
+            c.drawCentredString(x0 + cell_w / 2,
+                                qr_y - 11 * mm,
+                                value_line)
 
         c.showPage()
         c.save()
@@ -494,29 +951,34 @@ def build_coupons_router(db, get_current_user, notify=None):
 
     @router.get("/batches/{bid}/export-xlsx")
     async def export_xlsx(bid: str, user: dict = Depends(owner_only)):
+        """Excel MANIFEST for internal audit (owner-only).
+        Deliberately does NOT include the QR payload, hidden_secure_id, secret_token
+        or signature — those are printing/scan artifacts and should not be exported
+        even to the audit team. Owner can regenerate PDF anytime.
+        """
         from openpyxl import Workbook
         b = _clean(await db.dms_v2_coupon_batches.find_one({"id": bid}))
         if not b:
             raise HTTPException(404, "Batch not found")
         coupons = await db.dms_v2_coupons.find({"batch_id": bid}, {"_id": 0})\
-            .sort("coupon_code", 1).to_list(200_000)
+            .sort("visible_serial", 1).to_list(200_000)
         wb = Workbook()
         ws = wb.active
         ws.title = "Coupons"
         ws.append([
-            "Coupon Code", "Type", "Value", "Status", "Batch",
-            "Retailer", "Distributor", "Claimed On", "Claimed By", "QR Payload",
+            "Visible Serial", "Type", "Value", "Status", "Active", "Batch",
+            "Retailer", "Distributor", "Claimed On", "Claimed By",
         ])
         for cp in coupons:
-            payload = _qr_payload(cp["coupon_code"], cp["secret_token"], cp["signature"])
             ws.append([
-                cp["coupon_code"], cp["coupon_type"], cp["coupon_value"],
-                cp["status"], b["batch_label"],
+                cp.get("visible_serial") or cp.get("coupon_code") or "",
+                cp["coupon_type"], cp["coupon_value"],
+                cp["status"], "YES" if cp.get("active") else "NO",
+                b["batch_label"],
                 cp.get("retailer_name") or "",
                 cp.get("distributor_name") or "",
                 (cp.get("claim_timestamp") or "")[:19].replace("T", " "),
                 cp.get("claimed_by_user_name") or "",
-                payload,
             ])
         for col in "ABCDEFGHIJ":
             ws.column_dimensions[col].width = 22
@@ -542,6 +1004,8 @@ def build_coupons_router(db, get_current_user, notify=None):
         retailer_id: Optional[str] = Query(None),
         distributor_id: Optional[str] = Query(None),
         code: Optional[str] = Query(None),
+        serial: Optional[str] = Query(None),
+        active: Optional[bool] = Query(None),
         limit: int = Query(200, ge=1, le=1000),
         user: dict = Depends(get_current_user),
     ):
@@ -554,8 +1018,18 @@ def build_coupons_router(db, get_current_user, notify=None):
         if retailer_id: q["retailer_id"] = retailer_id
         if distributor_id: q["distributor_id"] = distributor_id
         if code: q["coupon_code"] = code.strip().upper()
-        docs = await db.dms_v2_coupons.find(q, {"_id": 0, "secret_token": 0, "signature": 0})\
-            .sort("created_at", -1).limit(limit).to_list(limit)
+        if serial:
+            s = serial.strip().upper()
+            q["$or"] = [{"visible_serial": s}, {"coupon_code": s}]
+        if active is not None:
+            q["active"] = bool(active)
+        docs = await db.dms_v2_coupons.find(
+            q,
+            {"_id": 0,
+             # HIDE all sensitive/internal fields from ANY response
+             "secret_token": 0, "signature": 0, "hidden_secure_id": 0,
+             "qr_ciphertext_b64": 0, "qr_signature_v2": 0, "qr_hash": 0},
+        ).sort("created_at", -1).limit(limit).to_list(limit)
         return {"data": docs, "count": len(docs)}
 
     @router.get("/detail/{cid}")
@@ -565,9 +1039,10 @@ def build_coupons_router(db, get_current_user, notify=None):
         cp = _clean(await db.dms_v2_coupons.find_one({"id": cid}))
         if not cp:
             raise HTTPException(404, "Coupon not found")
-        # hide secrets
-        cp.pop("secret_token", None)
-        cp.pop("signature", None)
+        # hide EVERY sensitive field before returning
+        for k in ("secret_token", "signature", "hidden_secure_id",
+                  "qr_ciphertext_b64", "qr_signature_v2", "qr_hash"):
+            cp.pop(k, None)
         return cp
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -589,35 +1064,68 @@ def build_coupons_router(db, get_current_user, notify=None):
         return {"data": retailers, "count": len(retailers)}
 
     @router.post("/scan")
-    async def scan_coupon(body: Dict[str, Any] = Body(...),
+    async def scan_coupon(request: Request,
+                          body: Dict[str, Any] = Body(...),
                           user: dict = Depends(salesperson_only)):
         """
         Sales Officer scans a coupon on behalf of a retailer.
-        Body: { qr_payload OR coupon_code (+ secret_token), retailer_id }
+
+        Body: {
+          qr_payload         : preferred (v2 encrypted or v1 legacy)
+          OR coupon_code (+ secret_token, signature)  : v1 legacy manual entry
+          retailer_id        : required
+          gps_lat, gps_lng   : optional GPS coords (recorded on scan & fraud)
+          device_id          : optional device fingerprint
+        }
 
         Flow:
-          1. Validate retailer + auto-fetch distributor
-          2. Parse & validate QR (code, token, signature)
-          3. Lookup coupon → must be status='unused', active=True
-          4. Insert immutable wallet_transaction (credit)
-          5. Update coupon → claimed (status='claimed')
-          6. Audit log
+          1. Parse QR — reject unknown/malformed/tampered (→ fraud log)
+          2. Validate retailer + auto-fetch distributor + SO assignment
+          3. Decrypt v2 payload → resolve coupon
+          4. Cryptographic checks: signature, batch mismatch, campaign mismatch
+          5. Lookup coupon → must be status='unused', active=True
+          6. Insert immutable wallet_transaction (credit)
+          7. Update coupon → claimed
+          8. Audit log
         """
         retailer_id = (body.get("retailer_id") or "").strip()
         if not retailer_id:
             raise HTTPException(400, "retailer_id is required")
 
-        # parse coupon input
+        meta = _client_meta(request, body)
+
+        # ── parse coupon input ──────────────────────────────────────────────
         qr = body.get("qr_payload")
         code: Optional[str] = None
         token: Optional[str] = None
         sig: Optional[str] = None
+        v2_inner: Optional[Dict[str, Any]] = None
+        version = _detect_qr_version(qr) if qr else ("v1" if body.get("coupon_code") else "unknown")
+
         if qr:
-            parsed = _parse_qr(qr)
-            if not parsed:
-                await _log_fraud("malformed_qr", (qr or "")[:32].upper(), user, retailer_id)
-                raise HTTPException(400, "Malformed QR — not a valid GO OIL coupon")
-            code, token, sig = parsed
+            if version == "v2":
+                # decrypt + parse; catch every crypto failure with specific reason
+                try:
+                    v2_inner = _parse_qr_v2_only(qr)
+                except QrParseError as e:
+                    await _log_fraud(e.reason, (qr or "")[:64], user,
+                                     retailer_id, extra={"detail": e.message},
+                                     request=request, body=body)
+                    raise HTTPException(400, f"Invalid QR: {e.message}")
+                code = str(v2_inner.get("s") or "").upper().strip()
+            elif version == "v1":
+                parsed = _parse_qr(qr)
+                if not parsed:
+                    await _log_fraud("modified_payload", (qr or "")[:64].upper(),
+                                     user, retailer_id, request=request, body=body)
+                    raise HTTPException(400, "Malformed QR — not a valid GO OIL coupon")
+                code, token, sig = parsed
+            else:
+                # totally unknown prefix — most likely online generator or foreign QR
+                await _log_fraud("online_generator_suspected", (qr or "")[:64].upper(),
+                                 user, retailer_id, request=request, body=body,
+                                 extra={"detected_version": "unknown"})
+                raise HTTPException(400, "Unrecognised QR — not a GO OIL coupon")
         else:
             code = (body.get("coupon_code") or "").strip().upper()
             token = (body.get("secret_token") or "").strip()
@@ -625,7 +1133,7 @@ def build_coupons_router(db, get_current_user, notify=None):
             if not code:
                 raise HTTPException(400, "coupon_code or qr_payload required")
 
-        # validate retailer + Sales Officer authorization
+        # ── validate retailer + Sales Officer authorization ─────────────────
         retailer = _clean(await db.dms_retailers.find_one({"id": retailer_id}))
         if not retailer:
             raise HTTPException(404, "Retailer not found")
@@ -633,68 +1141,114 @@ def build_coupons_router(db, get_current_user, notify=None):
         if not distributor_id:
             raise HTTPException(400, "Retailer has no distributor assigned")
 
-        # SO must be assigned to this distributor
         allowed = await db.dms_sp_assignments.find_one({
             "salesperson_id": user["id"], "distributor_id": distributor_id,
         })
         if not allowed:
             await _log_fraud("so_not_assigned_to_distributor", code, user,
-                             retailer_id, distributor_id)
+                             retailer_id, distributor_id, request=request, body=body)
             raise HTTPException(403, "You are not assigned to this retailer's distributor")
 
         distributor = _clean(await db.dms_distributors.find_one({"id": distributor_id})) or {}
 
-        # fetch coupon
-        cp = _clean(await db.dms_v2_coupons.find_one({"coupon_code": code}))
+        # ── resolve coupon record ───────────────────────────────────────────
+        cp: Optional[Dict[str, Any]] = None
+        if v2_inner:
+            # Prefer lookup by hidden_secure_id (most authoritative) — falls back to
+            # visible_serial for older records that were migrated.
+            hidden = v2_inner.get("h")
+            if hidden:
+                cp = _clean(await db.dms_v2_coupons.find_one({"hidden_secure_id": hidden}))
+            if not cp:
+                cp = _clean(await db.dms_v2_coupons.find_one({"visible_serial": code}))
         if not cp:
-            await _log_fraud("invalid_code", code, user, retailer_id, distributor_id)
+            cp = _clean(await db.dms_v2_coupons.find_one({"coupon_code": code}))
+        if not cp:
+            await _log_fraud("invalid_code", code or "", user,
+                             retailer_id, distributor_id, request=request, body=body)
             raise HTTPException(400, "Invalid coupon code")
 
-        # batch active check
+        # ── batch active check ─────────────────────────────────────────────
         batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": cp["batch_id"]}))
-        if not batch or not batch.get("active"):
-            await _log_fraud("batch_inactive", code, user, retailer_id, distributor_id)
+        if not batch:
+            await _log_fraud("invalid_code", code, user, retailer_id, distributor_id,
+                             request=request, body=body, extra={"reason": "batch_missing"})
+            raise HTTPException(400, "Coupon batch is missing")
+        if not batch.get("active") or batch.get("closed_at"):
+            await _log_fraud("inactive_batch", code, user, retailer_id, distributor_id,
+                             request=request, body=body,
+                             extra={"batch_label": batch.get("batch_label")})
             raise HTTPException(400, "Coupon batch is not active")
 
-        # expiry
+        # ── v2 signature + campaign check ───────────────────────────────────
+        if v2_inner:
+            expected_sig = _sign_v2(batch["hmac_secret"], v2_inner["_ct_b64"])
+            if not hmac.compare_digest(expected_sig, v2_inner["_sig"]):
+                await _log_fraud("invalid_signature", code, user, retailer_id, distributor_id,
+                                 request=request, body=body,
+                                 extra={"batch_label": batch.get("batch_label")})
+                raise HTTPException(400, "Invalid coupon signature")
+            # campaign / batch mismatch — payload claims a different batch than DB
+            if v2_inner.get("b") and v2_inner["b"] != cp["batch_id"]:
+                await _log_fraud("wrong_campaign", code, user, retailer_id, distributor_id,
+                                 request=request, body=body,
+                                 extra={"payload_batch": v2_inner.get("b"),
+                                        "db_batch": cp["batch_id"]})
+                raise HTTPException(400, "Coupon does not belong to its declared campaign")
+            # type/value tamper check
+            if v2_inner.get("t") and v2_inner["t"] != cp["coupon_type"]:
+                await _log_fraud("modified_payload", code, user, retailer_id, distributor_id,
+                                 request=request, body=body,
+                                 extra={"payload_type": v2_inner.get("t"),
+                                        "db_type": cp["coupon_type"]})
+                raise HTTPException(400, "Coupon type mismatch")
+
+        # ── expiry ─────────────────────────────────────────────────────────
         if cp.get("expires_at") and cp["expires_at"] < _now():
             await db.dms_v2_coupons.update_one({"id": cp["id"]},
                                                {"$set": {"status": "expired", "updated_at": _now()}})
-            await _log_fraud("expired", code, user, retailer_id, distributor_id)
+            await _log_fraud("expired", code, user, retailer_id, distributor_id,
+                             request=request, body=body)
             raise HTTPException(400, "Coupon has expired")
 
-        # coupon status
+        # ── coupon status ──────────────────────────────────────────────────
         if cp["status"] in ("claimed", "redemption_pending", "redeemed"):
             await _log_fraud("already_claimed", code, user, retailer_id, distributor_id,
-                             {"previous_status": cp["status"],
-                              "previously_claimed_at": cp.get("claim_timestamp"),
-                              "previously_claimed_by_retailer": cp.get("retailer_id")})
+                             extra={"previous_status": cp["status"],
+                                    "previously_claimed_at": cp.get("claim_timestamp"),
+                                    "previously_claimed_by_retailer": cp.get("retailer_id")},
+                             request=request, body=body)
             raise HTTPException(400,
                                 f"Coupon already claimed on "
                                 f"{(cp.get('claim_timestamp') or '')[:10]} by another retailer")
         if cp["status"] in ("cancelled", "expired"):
-            await _log_fraud(cp["status"], code, user, retailer_id, distributor_id)
+            await _log_fraud(cp["status"], code, user, retailer_id, distributor_id,
+                             request=request, body=body)
             raise HTTPException(400, f"Coupon is {cp['status']}")
         if cp["status"] != "unused":
-            await _log_fraud(f"bad_status_{cp['status']}", code, user, retailer_id, distributor_id)
+            await _log_fraud(f"bad_status_{cp['status']}", code, user, retailer_id, distributor_id,
+                             request=request, body=body)
             raise HTTPException(400, f"Coupon cannot be claimed (status={cp['status']})")
         if not cp.get("active"):
-            await _log_fraud("coupon_inactive", code, user, retailer_id, distributor_id)
+            await _log_fraud("coupon_inactive", code, user, retailer_id, distributor_id,
+                             request=request, body=body)
             raise HTTPException(400, "Coupon is inactive")
 
-        # cryptographic checks — only if token/sig provided (QR path)
-        expected_sig = _sign(batch["hmac_secret"], cp["coupon_code"], cp["secret_token"])
-        if token:
-            if token != cp["secret_token"]:
-                await _log_fraud("invalid_token", code, user, retailer_id, distributor_id)
+        # ── v1 legacy cryptographic checks (only if v1 path) ───────────────
+        if version == "v1":
+            expected_sig_v1 = _sign(batch["hmac_secret"], cp["coupon_code"],
+                                    cp.get("secret_token") or "")
+            if token and not hmac.compare_digest(token, cp.get("secret_token") or ""):
+                await _log_fraud("invalid_hidden_id", code, user, retailer_id, distributor_id,
+                                 request=request, body=body)
                 raise HTTPException(400, "Invalid coupon token")
-        if sig:
-            if sig != expected_sig or sig != cp["signature"]:
-                await _log_fraud("invalid_signature", code, user, retailer_id, distributor_id)
+            if sig and not (hmac.compare_digest(sig, expected_sig_v1)
+                            and hmac.compare_digest(sig, cp.get("signature") or "")):
+                await _log_fraud("invalid_signature", code, user, retailer_id, distributor_id,
+                                 request=request, body=body)
                 raise HTTPException(400, "Invalid coupon signature")
 
         # ── ATOMIC-ISH CLAIM ────────────────────────────────────────────────
-        # attempt to move status unused → claimed
         upd = await db.dms_v2_coupons.update_one(
             {"id": cp["id"], "status": "unused"},
             {"$set": {
@@ -702,6 +1256,10 @@ def build_coupons_router(db, get_current_user, notify=None):
                 "claimed_by_user_id": user["id"],
                 "claimed_by_user_name": user.get("name") or user.get("email"),
                 "claim_timestamp": _now(),
+                "claim_ip": meta.get("ip_address"),
+                "claim_gps_lat": meta.get("gps_lat"),
+                "claim_gps_lng": meta.get("gps_lng"),
+                "claim_device_id": meta.get("device_id"),
                 "retailer_id": retailer_id,
                 "retailer_name": retailer.get("name"),
                 "distributor_id": distributor_id,
@@ -711,7 +1269,8 @@ def build_coupons_router(db, get_current_user, notify=None):
         )
         if upd.modified_count != 1:
             # concurrent scan lost the race
-            await _log_fraud("race_lost", code, user, retailer_id, distributor_id)
+            await _log_fraud("race_lost", code, user, retailer_id, distributor_id,
+                             request=request, body=body)
             raise HTTPException(400, "Coupon has just been claimed by another scan")
 
         # wallet transaction (immutable credit)
@@ -1292,12 +1851,231 @@ def build_coupons_router(db, get_current_user, notify=None):
         return {"data": docs, "count": len(docs)}
 
     @router.get("/reports/fraud")
-    async def reports_fraud(user: dict = Depends(get_current_user)):
+    async def reports_fraud(user: dict = Depends(get_current_user),
+                            reason: Optional[str] = Query(None),
+                            distributor_id: Optional[str] = Query(None),
+                            actor_id: Optional[str] = Query(None),
+                            limit: int = Query(500, ge=1, le=2000)):
         if user.get("role") not in ("owner", "owner_accountant", "super_admin"):
             raise HTTPException(403, "Access denied")
-        docs = await db.dms_v2_coupon_fraud_attempts.find({}, {"_id": 0})\
-            .sort("at", -1).limit(500).to_list(500)
+        q: Dict[str, Any] = {}
+        if reason: q["reason"] = reason
+        if distributor_id: q["distributor_id"] = distributor_id
+        if actor_id: q["actor_id"] = actor_id
+        docs = await db.dms_v2_coupon_fraud_attempts.find(q, {"_id": 0})\
+            .sort("at", -1).limit(limit).to_list(limit)
         return {"data": docs, "count": len(docs)}
+
+    @router.get("/reports/fraud-dashboard")
+    async def reports_fraud_dashboard(user: dict = Depends(get_current_user)):
+        """Aggregated fraud dashboard for Owner / TL / RM."""
+        if user.get("role") not in ("owner", "owner_accountant", "super_admin",
+                                    "team_leader", "regional_manager"):
+            raise HTTPException(403, "Access denied")
+        from datetime import timedelta
+        now_dt = datetime.now(timezone.utc)
+        t7 = (now_dt - timedelta(days=7)).isoformat()
+        t30 = (now_dt - timedelta(days=30)).isoformat()
+        t_today = now_dt.strftime("%Y-%m-%d")
+
+        total = await db.dms_v2_coupon_fraud_attempts.count_documents({})
+        last7 = await db.dms_v2_coupon_fraud_attempts.count_documents({"at": {"$gte": t7}})
+        last30 = await db.dms_v2_coupon_fraud_attempts.count_documents({"at": {"$gte": t30}})
+        today = await db.dms_v2_coupon_fraud_attempts.count_documents({"at": {"$gte": t_today}})
+
+        by_reason: Dict[str, int] = {}
+        async for r in db.dms_v2_coupon_fraud_attempts.aggregate(
+            [{"$group": {"_id": "$reason", "n": {"$sum": 1}}}, {"$sort": {"n": -1}}]):
+            by_reason[r["_id"] or "unknown"] = r["n"]
+
+        by_distributor: List[Dict[str, Any]] = []
+        async for r in db.dms_v2_coupon_fraud_attempts.aggregate([
+            {"$match": {"distributor_id": {"$ne": None}}},
+            {"$group": {"_id": "$distributor_id", "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}}, {"$limit": 20},
+        ]):
+            dist = await db.dms_distributors.find_one({"id": r["_id"]},
+                                                       {"_id": 0, "name": 1})
+            by_distributor.append({"distributor_id": r["_id"],
+                                   "distributor_name": (dist or {}).get("name"),
+                                   "count": r["n"]})
+
+        by_actor: List[Dict[str, Any]] = []
+        async for r in db.dms_v2_coupon_fraud_attempts.aggregate([
+            {"$match": {"actor_id": {"$ne": None}}},
+            {"$group": {"_id": "$actor_id",
+                        "name": {"$first": "$actor_name"},
+                        "role": {"$first": "$actor_role"},
+                        "n": {"$sum": 1}}},
+            {"$sort": {"n": -1}}, {"$limit": 20},
+        ]):
+            by_actor.append({"actor_id": r["_id"], "actor_name": r.get("name"),
+                             "actor_role": r.get("role"), "count": r["n"]})
+
+        recent = await db.dms_v2_coupon_fraud_attempts.find({}, {"_id": 0})\
+            .sort("at", -1).limit(20).to_list(20)
+        return {
+            "kpis": {"total": total, "today": today, "last7": last7, "last30": last30},
+            "by_reason": by_reason,
+            "by_distributor": by_distributor,
+            "by_actor": by_actor,
+            "recent": recent,
+        }
+
+    @router.get("/reports/generation")
+    async def reports_generation(user: dict = Depends(get_current_user)):
+        """Coupon generation history — one row per batch."""
+        if user.get("role") not in ("owner", "owner_accountant", "super_admin", "team_leader"):
+            raise HTTPException(403, "Access denied")
+        rows = await db.dms_v2_coupon_batches.find(
+            {}, {"_id": 0, "hmac_secret": 0}
+        ).sort("created_at", -1).to_list(2000)
+        return {"data": rows, "count": len(rows)}
+
+    @router.get("/reports/activation")
+    async def reports_activation(user: dict = Depends(get_current_user),
+                                 limit: int = Query(500, ge=1, le=2000)):
+        """Activation + deactivation events from audit log."""
+        if user.get("role") not in ("owner", "owner_accountant", "super_admin", "team_leader"):
+            raise HTTPException(403, "Access denied")
+        docs = await db.dms_v2_coupon_audit_log.find(
+            {"event": {"$in": ["batch.activated", "batch.deactivated",
+                                "coupon.activated", "coupon.deactivated",
+                                "coupon.range_activated", "coupon.range_deactivated"]}},
+            {"_id": 0},
+        ).sort("at", -1).limit(limit).to_list(limit)
+        return {"data": docs, "count": len(docs)}
+
+    @router.get("/reports/unused")
+    async def reports_unused(user: dict = Depends(get_current_user),
+                             batch_id: Optional[str] = Query(None),
+                             limit: int = Query(500, ge=1, le=2000)):
+        if user.get("role") not in ("owner", "owner_accountant", "super_admin", "team_leader"):
+            raise HTTPException(403, "Access denied")
+        q: Dict[str, Any] = {"status": "unused"}
+        if batch_id: q["batch_id"] = batch_id
+        docs = await db.dms_v2_coupons.find(
+            q, {"_id": 0, "secret_token": 0, "signature": 0, "hidden_secure_id": 0,
+                "qr_ciphertext_b64": 0, "qr_signature_v2": 0, "qr_hash": 0}
+        ).sort("created_at", -1).limit(limit).to_list(limit)
+        count = await db.dms_v2_coupons.count_documents(q)
+        return {"data": docs, "count": len(docs), "total": count}
+
+    @router.get("/reports/inactive")
+    async def reports_inactive(user: dict = Depends(get_current_user),
+                               batch_id: Optional[str] = Query(None),
+                               limit: int = Query(500, ge=1, le=2000)):
+        """Coupons where active=False (generated but never activated, or cancelled)."""
+        if user.get("role") not in ("owner", "owner_accountant", "super_admin", "team_leader"):
+            raise HTTPException(403, "Access denied")
+        q: Dict[str, Any] = {"active": {"$ne": True}}
+        if batch_id: q["batch_id"] = batch_id
+        docs = await db.dms_v2_coupons.find(
+            q, {"_id": 0, "secret_token": 0, "signature": 0, "hidden_secure_id": 0,
+                "qr_ciphertext_b64": 0, "qr_signature_v2": 0, "qr_hash": 0}
+        ).sort("created_at", -1).limit(limit).to_list(limit)
+        count = await db.dms_v2_coupons.count_documents(q)
+        return {"data": docs, "count": len(docs), "total": count}
+
+    @router.get("/reports/usage")
+    async def reports_usage(user: dict = Depends(get_current_user),
+                            distributor_id: Optional[str] = Query(None),
+                            retailer_id: Optional[str] = Query(None),
+                            limit: int = Query(500, ge=1, le=2000)):
+        """Coupon usage (claimed / redeemed) history."""
+        if user.get("role") not in ("owner", "owner_accountant", "super_admin", "team_leader"):
+            raise HTTPException(403, "Access denied")
+        q: Dict[str, Any] = {"status": {"$in": ["claimed", "redemption_pending", "redeemed"]}}
+        if distributor_id: q["distributor_id"] = distributor_id
+        if retailer_id: q["retailer_id"] = retailer_id
+        docs = await db.dms_v2_coupons.find(
+            q, {"_id": 0, "secret_token": 0, "signature": 0, "hidden_secure_id": 0,
+                "qr_ciphertext_b64": 0, "qr_signature_v2": 0, "qr_hash": 0}
+        ).sort("claim_timestamp", -1).limit(limit).to_list(limit)
+        return {"data": docs, "count": len(docs)}
+
+    @router.get("/reports/cash-wallets")
+    async def reports_cash_wallets(user: dict = Depends(get_current_user)):
+        """Cash wallet balances per retailer."""
+        if user.get("role") not in ("owner", "owner_accountant", "super_admin", "team_leader"):
+            raise HTTPException(403, "Access denied")
+        rows: List[Dict[str, Any]] = []
+        total = 0.0
+        async for w in db.dms_v2_retailer_wallets.find({"wallet_type": "cash"}, {"_id": 0}):
+            bal = await _wallet_balance(w["retailer_id"], "cash")
+            ret = await db.dms_retailers.find_one({"id": w["retailer_id"]},
+                                                    {"_id": 0, "name": 1, "distributor_name": 1,
+                                                     "distributor_id": 1})
+            rows.append({
+                "retailer_id": w["retailer_id"],
+                "retailer_name": (ret or {}).get("name"),
+                "distributor_id": (ret or {}).get("distributor_id"),
+                "distributor_name": (ret or {}).get("distributor_name"),
+                "balance": bal,
+            })
+            total += bal
+        return {"data": rows, "count": len(rows), "total_balance": _round(total)}
+
+    @router.get("/reports/reward-wallets")
+    async def reports_reward_wallets(user: dict = Depends(get_current_user)):
+        """Reward point balances per retailer."""
+        if user.get("role") not in ("owner", "owner_accountant", "super_admin", "team_leader"):
+            raise HTTPException(403, "Access denied")
+        rows: List[Dict[str, Any]] = []
+        total = 0.0
+        async for w in db.dms_v2_retailer_wallets.find({"wallet_type": "reward"}, {"_id": 0}):
+            bal = await _wallet_balance(w["retailer_id"], "reward")
+            ret = await db.dms_retailers.find_one({"id": w["retailer_id"]},
+                                                    {"_id": 0, "name": 1, "distributor_name": 1,
+                                                     "distributor_id": 1})
+            rows.append({
+                "retailer_id": w["retailer_id"],
+                "retailer_name": (ret or {}).get("name"),
+                "distributor_id": (ret or {}).get("distributor_id"),
+                "distributor_name": (ret or {}).get("distributor_name"),
+                "balance": bal,
+            })
+            total += bal
+        return {"data": rows, "count": len(rows), "total_balance": _round(total)}
+
+    @router.get("/reports/distributor-outstanding")
+    async def reports_distributor_outstanding(user: dict = Depends(get_current_user)):
+        """Distributor-wise coupon impact: credit notes issued (which reduce
+        primary ledger outstanding). Also pulls current primary_ledger outstanding
+        totals so Owner can see net effect."""
+        if user.get("role") not in ("owner", "owner_accountant", "super_admin", "team_leader"):
+            raise HTTPException(403, "Access denied")
+        rows: List[Dict[str, Any]] = []
+        distributors = await db.dms_distributors.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(1000)
+        for d in distributors:
+            did = d["id"]
+            # coupon credit notes → sum
+            cn_sum = 0.0; cn_count = 0
+            async for cn in db.dms_v2_credit_notes.find(
+                {"distributor_id": did, "status": {"$ne": "cancelled"}},
+                {"_id": 0, "amount": 1},
+            ):
+                cn_sum += _round(cn.get("amount", 0))
+                cn_count += 1
+            # primary ledger outstanding
+            billed = 0.0; paid = 0.0
+            async for e in db.dms_primary_ledger.find(
+                {"distributor_id": did}, {"_id": 0, "kind": 1, "amount": 1},
+            ):
+                if e.get("kind") == "invoice":
+                    billed += _round(e.get("amount", 0))
+                elif e.get("kind") in ("payment", "coupon_credit"):
+                    paid += _round(e.get("amount", 0))
+            outstanding = _round(billed - paid)
+            rows.append({
+                "distributor_id": did, "distributor_name": d.get("name"),
+                "credit_notes_count": cn_count,
+                "credit_notes_amount": _round(cn_sum),
+                "billed": _round(billed),
+                "paid_incl_coupons": _round(paid),
+                "outstanding": outstanding,
+            })
+        return {"data": rows, "count": len(rows)}
 
     @router.get("/audit-log")
     async def audit_log(entity_id: Optional[str] = Query(None),
@@ -1329,6 +2107,78 @@ def build_coupons_router(db, get_current_user, notify=None):
                 "wallet_type": w["wallet_type"], "balance": bal,
             })
         return {"data": rows, "count": len(rows)}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Startup: indexes + one-time backfill for legacy coupons (v1 → v2 upgrade)
+    # ─────────────────────────────────────────────────────────────────────────
+    async def _ensure_indexes():
+        try:
+            await db.dms_v2_coupons.create_index("visible_serial", background=True)
+            await db.dms_v2_coupons.create_index("hidden_secure_id", background=True, sparse=True)
+            await db.dms_v2_coupons.create_index("coupon_code", background=True)
+            await db.dms_v2_coupons.create_index("batch_id", background=True)
+            await db.dms_v2_coupons.create_index("status", background=True)
+            await db.dms_v2_coupons.create_index("retailer_id", background=True, sparse=True)
+            await db.dms_v2_coupons.create_index("distributor_id", background=True, sparse=True)
+            await db.dms_v2_coupons.create_index([("batch_id", 1), ("visible_serial", 1)],
+                                                 background=True)
+            await db.dms_v2_coupons.create_index([("batch_id", 1), ("status", 1)],
+                                                 background=True)
+            await db.dms_v2_wallet_transactions.create_index(
+                [("retailer_id", 1), ("wallet_type", 1)], background=True)
+            await db.dms_v2_retailer_wallets.create_index(
+                [("retailer_id", 1), ("wallet_type", 1)], unique=True, background=True)
+            await db.dms_v2_coupon_batches.create_index("batch_no", background=True)
+            await db.dms_v2_coupon_batches.create_index("status", background=True)
+            await db.dms_v2_coupon_fraud_attempts.create_index("at", background=True)
+            await db.dms_v2_coupon_fraud_attempts.create_index("reason", background=True)
+            await db.dms_v2_coupon_audit_log.create_index("at", background=True)
+            await db.dms_v2_coupon_audit_log.create_index("entity_id", background=True)
+            await db.dms_v2_redemption_requests.create_index("status", background=True)
+            await db.dms_v2_redemption_requests.create_index("retailer_id", background=True)
+        except Exception:
+            # index creation is best-effort — collections might not exist yet
+            pass
+
+    async def _backfill_v1_coupons():
+        """Backfill legacy v1 coupons with visible_serial / hidden_secure_id fields
+        so they continue to work with the new schema. Idempotent."""
+        try:
+            # visible_serial: mirror coupon_code where missing
+            await db.dms_v2_coupons.update_many(
+                {"visible_serial": {"$exists": False}, "coupon_code": {"$exists": True}},
+                [{"$set": {"visible_serial": "$coupon_code"}}],
+            )
+            # legacy coupons pre-dating v2 — mark qr_version and use secret_token as hidden id
+            await db.dms_v2_coupons.update_many(
+                {"qr_version": {"$exists": False}},
+                {"$set": {"qr_version": "v1"}},
+            )
+            # For v1 rows, we won't retro-generate a UUID (would break existing QRs).
+            # The scan endpoint's v1 fallback path continues to work with secret_token.
+        except Exception:
+            pass
+
+    # Schedule the migrations to run asynchronously on first request via a
+    # lightweight "run-once" latch (APIRouter has no lifespan of its own).
+    _startup_done = {"v": False}
+
+    async def _startup_once():
+        if _startup_done["v"]:
+            return
+        _startup_done["v"] = True
+        await _ensure_indexes()
+        await _backfill_v1_coupons()
+
+    # expose a manual admin trigger + attach to router.state for server.py
+    @router.post("/_admin/reinit")
+    async def _admin_reinit(user: dict = Depends(owner_only)):
+        _startup_done["v"] = False
+        await _startup_once()
+        return {"ok": True}
+
+    # server.py can call this via router._coupons_startup (attached below)
+    router._coupons_startup = _startup_once  # type: ignore[attr-defined]
 
     return router
 

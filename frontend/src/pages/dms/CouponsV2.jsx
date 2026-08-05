@@ -251,32 +251,82 @@ function Stat({ label, v, sub }) {
 function GenerateBatchDialog({ open, onClose, onDone }) {
   const [type, setType] = useState("cash");
   const [value, setValue] = useState(20);
-  const [count, setCount] = useState(1000);
+  const [count, setCount] = useState(100);
   const [title, setTitle] = useState("");
   const [notes, setNotes] = useState("");
+  const [mode, setMode] = useState("prefix_sequential"); // or "random_secure"
+  const [prefix, setPrefix] = useState("ABC");
+  const [serialStart, setSerialStart] = useState(1);
+  const [serialPad, setSerialPad] = useState(3);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (open) { setType("cash"); setValue(20); setCount(1000); setTitle(""); setNotes(""); }
+    if (open) {
+      setType("cash"); setValue(20); setCount(100); setTitle(""); setNotes("");
+      setMode("prefix_sequential"); setPrefix("ABC");
+      setSerialStart(1); setSerialPad(3);
+    }
   }, [open]);
+
+  // Auto-bump padding when serial count grows
+  useEffect(() => {
+    if (mode !== "prefix_sequential") return;
+    const maxSerial = Number(serialStart) + Number(count) - 1;
+    const needed = String(Math.max(1, maxSerial)).length;
+    if (needed > Number(serialPad)) setSerialPad(needed);
+  }, [count, serialStart, mode, serialPad]);
 
   const suggested = useMemo(() => {
     const unit = type === "cash" ? "₹" : "";
     const suffix = type === "cash" ? "" : " pts";
+    if (mode === "prefix_sequential") {
+      return `${type.toUpperCase()} ${prefix} × ${count}`;
+    }
     return `${type.toUpperCase()} ${unit}${value}${suffix} × ${count}`;
-  }, [type, value, count]);
+  }, [type, value, count, mode, prefix]);
+
+  const serialPreview = useMemo(() => {
+    if (mode !== "prefix_sequential") return null;
+    const pfx = (prefix || "").toUpperCase();
+    const pad = Math.max(1, Number(serialPad) || 3);
+    const start = Number(serialStart) || 1;
+    const cnt = Math.max(1, Number(count) || 1);
+    const first = `${pfx}${String(start).padStart(pad, "0")}`;
+    const second = `${pfx}${String(start + 1).padStart(pad, "0")}`;
+    const last = `${pfx}${String(start + cnt - 1).padStart(pad, "0")}`;
+    return { first, second, last };
+  }, [prefix, serialStart, serialPad, count, mode]);
 
   const submit = async () => {
     const v = Number(value);
     const c = Math.floor(Number(count));
     if (!v || v <= 0) { toast.error("Value must be > 0"); return; }
     if (!c || c <= 0 || c > 100000) { toast.error("Count must be 1 – 100,000"); return; }
+    if (mode === "prefix_sequential") {
+      const pfx = (prefix || "").trim().toUpperCase();
+      if (!/^[A-Z0-9]{1,10}$/.test(pfx)) {
+        toast.error("Prefix must be 1-10 chars: A-Z or 0-9 only");
+        return;
+      }
+      const maxSerial = Number(serialStart) + c - 1;
+      if (String(maxSerial).length > Number(serialPad)) {
+        toast.error(`Padding ${serialPad} too small for serial ${maxSerial}`);
+        return;
+      }
+    }
     setBusy(true);
     try {
-      const r = await dms.cpnCreateBatch({
+      const body = {
         coupon_type: type, coupon_value: v, count: c,
         title: (title || suggested).trim(), notes: notes.trim(),
-      });
+        serial_mode: mode,
+      };
+      if (mode === "prefix_sequential") {
+        body.prefix = (prefix || "").toUpperCase();
+        body.serial_start = Number(serialStart) || 1;
+        body.serial_pad = Number(serialPad) || 3;
+      }
+      const r = await dms.cpnCreateBatch(body);
       toast.success(`Batch ${r.batch.batch_label} created — ${c.toLocaleString()} coupons`);
       onDone?.(r.batch.id); onClose();
     } catch (e) {
@@ -305,13 +355,55 @@ function GenerateBatchDialog({ open, onClose, onDone }) {
               <Input type="number" min={1} value={value} onChange={e => setValue(e.target.value)} data-testid="gen-value" />
             </div>
           </div>
+
+          <div>
+            <Label>Serial Mode</Label>
+            <Select value={mode} onValueChange={setMode}>
+              <SelectTrigger data-testid="gen-mode"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="prefix_sequential">Prefix + Sequential (e.g. ABC001, ABC002…)</SelectItem>
+                <SelectItem value="random_secure">Random Secure (legacy, non-sequential)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {mode === "prefix_sequential" && (
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <Label>Prefix</Label>
+                <Input value={prefix} maxLength={10}
+                       onChange={e => setPrefix(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+                       data-testid="gen-prefix" />
+              </div>
+              <div>
+                <Label>Start #</Label>
+                <Input type="number" min={0} value={serialStart}
+                       onChange={e => setSerialStart(e.target.value)} data-testid="gen-start" />
+              </div>
+              <div>
+                <Label>Padding</Label>
+                <Input type="number" min={1} max={10} value={serialPad}
+                       onChange={e => setSerialPad(e.target.value)} data-testid="gen-pad" />
+              </div>
+            </div>
+          )}
+
           <div>
             <Label>Number of Coupons</Label>
             <Input type="number" min={1} max={100000} value={count} onChange={e => setCount(e.target.value)} data-testid="gen-count" />
-            <p className="text-[11px] text-slate-500 mt-1">
-              Codes will be non-sequential secure random (e.g. QSRD-9X7K-LA82-MPQ4). Max 100,000 per batch.
-            </p>
+            {mode === "prefix_sequential" && serialPreview ? (
+              <p className="text-[11px] text-slate-600 mt-1">
+                Preview: <span className="font-mono font-semibold text-slate-800">
+                  {serialPreview.first}, {serialPreview.second}, … {serialPreview.last}
+                </span>
+              </p>
+            ) : (
+              <p className="text-[11px] text-slate-500 mt-1">
+                Codes will be non-sequential secure random (e.g. QSRD-9X7K-LA82-MPQ4). Max 100,000 per batch.
+              </p>
+            )}
           </div>
+
           <div>
             <Label>Title <span className="text-slate-400 text-xs">(optional)</span></Label>
             <Input value={title} placeholder={suggested} onChange={e => setTitle(e.target.value)} />
@@ -321,9 +413,8 @@ function GenerateBatchDialog({ open, onClose, onDone }) {
             <Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2} />
           </div>
           <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
-            <b>Next steps:</b> Generated coupons start inactive. Owner must
-            <b> Activate</b> the batch before it becomes usable. Export the printable PDF
-            for the printing press and Excel manifest for internal audit.
+            <b>Security:</b> Every coupon gets an independent UUID v4 hidden ID + AES-256 encrypted QR payload + HMAC-SHA256 signature.<br/>
+            <b>Next steps:</b> Coupons start <b>inactive</b>. Activate a single coupon, a range, or the entire batch before printing.
           </div>
         </div>
         <DialogFooter>
@@ -345,6 +436,7 @@ export function OwnerCouponBatchDetailPage() {
   const [coupons, setCoupons] = useState([]);
   const [statusFilter, setStatusFilter] = useState("");
   const [busy, setBusy] = useState(false);
+  const [rangeOpen, setRangeOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!bid) return;
@@ -484,9 +576,9 @@ export function OwnerCouponBatchDetailPage() {
 
       {/* Coupons list */}
       <Card className="overflow-x-auto">
-        <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
           <span className="font-semibold text-slate-900">Coupons in this batch</span>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex items-center gap-2 flex-wrap">
             <Select value={statusFilter || "__all__"} onValueChange={v => setStatusFilter(v === "__all__" ? "" : v)}>
               <SelectTrigger className="w-48"><SelectValue placeholder="All statuses" /></SelectTrigger>
               <SelectContent>
@@ -495,34 +587,138 @@ export function OwnerCouponBatchDetailPage() {
                   .map(s => <SelectItem key={s} value={s}>{s.replace(/_/g, " ")}</SelectItem>)}
               </SelectContent>
             </Select>
+            {batch.serial_mode === "prefix_sequential" && (
+              <Button variant="outline" size="sm"
+                      onClick={() => setRangeOpen(true)} data-testid="open-range-dialog">
+                <Play size={14} className="mr-1" /> Activate Range
+              </Button>
+            )}
           </div>
         </div>
         <Table>
           <TableHeader><TableRow>
-            <TableHead>Coupon Code</TableHead><TableHead>Status</TableHead>
+            <TableHead>Visible Serial</TableHead><TableHead>Status</TableHead>
+            <TableHead>Active</TableHead>
             <TableHead>Retailer</TableHead><TableHead>Distributor</TableHead>
-            <TableHead>Claimed By</TableHead><TableHead>Claimed On</TableHead>
+            <TableHead>Claimed On</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
           </TableRow></TableHeader>
           <TableBody>
             {coupons.length === 0 && (
-              <TableRow><TableCell colSpan={6} className="text-center py-8 text-slate-400">
+              <TableRow><TableCell colSpan={7} className="text-center py-8 text-slate-400">
                 No coupons match this filter
               </TableCell></TableRow>
             )}
-            {coupons.map(c => (
-              <TableRow key={c.id}>
-                <TableCell className="font-mono font-semibold text-xs">{c.coupon_code}</TableCell>
-                <TableCell><StatusChip s={c.status} /></TableCell>
-                <TableCell className="text-xs">{c.retailer_name || <span className="text-slate-400">—</span>}</TableCell>
-                <TableCell className="text-xs">{c.distributor_name || <span className="text-slate-400">—</span>}</TableCell>
-                <TableCell className="text-xs">{c.claimed_by_user_name || <span className="text-slate-400">—</span>}</TableCell>
-                <TableCell className="text-xs text-slate-500">{c.claim_timestamp ? niceDate(c.claim_timestamp) : "—"}</TableCell>
-              </TableRow>
-            ))}
+            {coupons.map(c => {
+              const canAct = ["generated", "unused"].includes(c.status) && !c.active;
+              const canDeact = ["generated", "unused"].includes(c.status) && c.active;
+              return (
+                <TableRow key={c.id}>
+                  <TableCell className="font-mono font-semibold text-xs">{c.visible_serial || c.coupon_code}</TableCell>
+                  <TableCell><StatusChip s={c.status} /></TableCell>
+                  <TableCell>
+                    {c.active
+                      ? <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">ACTIVE</span>
+                      : <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">INACTIVE</span>}
+                  </TableCell>
+                  <TableCell className="text-xs">{c.retailer_name || <span className="text-slate-400">—</span>}</TableCell>
+                  <TableCell className="text-xs">{c.distributor_name || <span className="text-slate-400">—</span>}</TableCell>
+                  <TableCell className="text-xs text-slate-500">{c.claim_timestamp ? niceDate(c.claim_timestamp) : "—"}</TableCell>
+                  <TableCell className="text-right">
+                    {canAct && (
+                      <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={busy}
+                              onClick={() => doAction(() => dms.cpnActivateCoupon(c.id), "Coupon activated")}
+                              data-testid={`activate-${c.id}`}>
+                        Activate
+                      </Button>
+                    )}
+                    {canDeact && (
+                      <Button size="sm" variant="outline" className="h-7 px-2 text-xs text-rose-700 border-rose-200 hover:bg-rose-50" disabled={busy}
+                              onClick={() => doAction(() => dms.cpnDeactivateCoupon(c.id), "Coupon deactivated")}>
+                        Deactivate
+                      </Button>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </Card>
+
+      {/* Activate Range dialog */}
+      <ActivateRangeDialog open={rangeOpen} onClose={() => setRangeOpen(false)}
+                            batch={batch} onDone={load} />
     </div>
+  );
+}
+
+function ActivateRangeDialog({ open, onClose, batch, onDone }) {
+  const [fromN, setFromN] = useState("");
+  const [toN, setToN] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setFromN(batch?.serial_start ?? 1);
+      setToN(batch?.serial_end ?? "");
+    }
+  }, [open, batch]);
+  const preview = useMemo(() => {
+    if (!batch?.prefix) return null;
+    const pad = batch.serial_pad || 3;
+    const fs = `${batch.prefix}${String(fromN || batch.serial_start || 1).padStart(pad, "0")}`;
+    const ts = `${batch.prefix}${String(toN || batch.serial_end || fromN).padStart(pad, "0")}`;
+    return { fs, ts };
+  }, [batch, fromN, toN]);
+
+  const submit = async () => {
+    const f = Number(fromN), t = Number(toN);
+    if (!f || !t) { toast.error("From and To required"); return; }
+    setBusy(true);
+    try {
+      const r = await dms.cpnActivateRange({
+        batch_id: batch.id, from_number: f, to_number: t,
+      });
+      toast.success(`Activated ${r.activated} of ${r.matched} in range ${r.from_serial} – ${r.to_serial}`);
+      onDone?.(); onClose();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to activate range");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Activate Coupon Range</DialogTitle></DialogHeader>
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>From #</Label>
+              <Input type="number" value={fromN} onChange={e => setFromN(e.target.value)} data-testid="range-from" />
+            </div>
+            <div>
+              <Label>To #</Label>
+              <Input type="number" value={toN} onChange={e => setToN(e.target.value)} data-testid="range-to" />
+            </div>
+          </div>
+          {preview && (
+            <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded p-2 font-mono">
+              Range: <b>{preview.fs}</b> … <b>{preview.ts}</b>
+            </div>
+          )}
+          <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+            Only coupons currently <b>generated</b> or <b>unused-inactive</b> will be activated.
+            Claimed / redeemed / cancelled coupons are protected and skipped.
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={busy} className={GOLD_BTN} data-testid="range-submit">
+            {busy ? "Activating…" : "Activate Range"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1110,10 +1306,31 @@ export function SalesOfficerScanPage() {
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState(null);
   const [search, setSearch] = useState("");
+  const [gps, setGps] = useState(null);   // { lat, lng }
 
   useEffect(() => {
     dms.cpnSoRetailers().then(r => setRetailers(r.data || []))
       .catch(() => toast.error("Failed to load retailers"));
+    // best-effort geolocation on mount — permission handled by browser
+    if (typeof navigator !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => setGps(null),
+        { maximumAge: 60_000, timeout: 5_000, enableHighAccuracy: false },
+      );
+    }
+  }, []);
+
+  // stable device fingerprint stored in localStorage
+  const deviceId = useMemo(() => {
+    try {
+      let d = window.localStorage.getItem("gooil_device_id");
+      if (!d) {
+        d = "dev-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+        window.localStorage.setItem("gooil_device_id", d);
+      }
+      return d;
+    } catch { return null; }
   }, []);
 
   const selectedRet = useMemo(
@@ -1143,6 +1360,9 @@ export function SalesOfficerScanPage() {
         retailer_id: selectedRid,
         qr_payload: qr || undefined,
         coupon_code: cCode || undefined,
+        gps_lat: gps?.lat,
+        gps_lng: gps?.lng,
+        device_id: deviceId,
       });
       setLast({ ok: true, ...r });
       toast.success(r.message);
@@ -1578,6 +1798,198 @@ export function DistributorCouponsPage() {
           </Table>
         </Card>
       )}
+    </div>
+  );
+}
+
+
+// ═════════════════════════ OWNER: Fraud Detection Dashboard ═════════════════
+const FRAUD_REASON_LABELS = {
+  invalid_code: "Invalid Code (unknown QR)",
+  invalid_signature: "Wrong Digital Signature",
+  invalid_encryption: "Invalid Encryption / Tampered",
+  invalid_hidden_id: "Invalid Hidden Secure ID",
+  modified_payload: "Modified / Malformed Payload",
+  wrong_version: "Unsupported / Wrong Version",
+  wrong_campaign: "QR from Another Campaign",
+  online_generator_suspected: "Online Generator (Fake QR)",
+  inactive_batch: "QR from Inactive Batch",
+  already_claimed: "Already Claimed",
+  race_lost: "Race Condition (Concurrent)",
+  cancelled: "Coupon Cancelled",
+  expired: "Coupon Expired",
+  coupon_inactive: "Coupon Inactive",
+  so_not_assigned_to_distributor: "SO not assigned to Distributor",
+  batch_inactive: "Batch Inactive (legacy)",
+  malformed_qr: "Malformed QR (legacy)",
+  invalid_token: "Invalid Token (legacy)",
+};
+
+export function OwnerFraudDashboardPage() {
+  const [dash, setDash] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    try {
+      const [d, list] = await Promise.all([
+        dms.cpnFraudDashboard(),
+        dms.cpnReportsFraudFiltered(reason ? { reason } : {}),
+      ]);
+      setDash(d); setRows(list.data || []);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to load fraud dashboard");
+    } finally { setBusy(false); }
+  }, [reason]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const k = dash?.kpis || {};
+  const byReason = dash?.by_reason || {};
+  const byDist = dash?.by_distributor || [];
+  const byActor = dash?.by_actor || [];
+
+  return (
+    <div>
+      <PageHeader
+        title="Fraud Detection Dashboard"
+        subtitle="Real-time monitoring of failed coupon scans and suspicious QR activity"
+        action={<Button variant="outline" onClick={load} disabled={busy}><RefreshCw size={14} className="mr-1" /> Refresh</Button>}
+      />
+
+      {/* KPIs */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <Kpi label="Today" value={k.today || 0} tint="bg-rose-100 text-rose-800" icon={ShieldAlert} />
+        <Kpi label="Last 7 days" value={k.last7 || 0} tint="bg-orange-100 text-orange-800" icon={AlertTriangle} />
+        <Kpi label="Last 30 days" value={k.last30 || 0} tint="bg-amber-100 text-amber-800" icon={Activity} />
+        <Kpi label="All-time Total" value={k.total || 0} tint="bg-slate-200 text-slate-800" icon={Shield} />
+      </div>
+
+      {/* By reason + By distributor + By actor */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+        <Card className="p-4">
+          <div className="text-xs uppercase text-slate-500 font-semibold mb-3">By Reason</div>
+          {Object.keys(byReason).length === 0 ? (
+            <div className="text-sm text-slate-400 py-4 text-center">No fraud attempts recorded</div>
+          ) : (
+            <div className="space-y-1.5">
+              {Object.entries(byReason).map(([r, n]) => {
+                const max = Math.max(...Object.values(byReason));
+                const pct = max ? Math.round((n / max) * 100) : 0;
+                return (
+                  <div key={r}>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-700">{FRAUD_REASON_LABELS[r] || r}</span>
+                      <span className="font-semibold text-slate-900">{n}</span>
+                    </div>
+                    <div className="h-1.5 bg-slate-100 rounded overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-rose-400 to-rose-600"
+                           style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-4">
+          <div className="text-xs uppercase text-slate-500 font-semibold mb-3">Top Distributors (fraud attempts)</div>
+          {byDist.length === 0 ? (
+            <div className="text-sm text-slate-400 py-4 text-center">No distributor data</div>
+          ) : (
+            <div className="space-y-1.5">
+              {byDist.slice(0, 8).map(r => (
+                <div key={r.distributor_id} className="flex items-center justify-between text-xs">
+                  <span className="text-slate-700">{r.distributor_name || r.distributor_id}</span>
+                  <span className="font-semibold text-slate-900">{r.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-4">
+          <div className="text-xs uppercase text-slate-500 font-semibold mb-3">Top Actors (fraud attempts)</div>
+          {byActor.length === 0 ? (
+            <div className="text-sm text-slate-400 py-4 text-center">No actor data</div>
+          ) : (
+            <div className="space-y-1.5">
+              {byActor.slice(0, 8).map(r => (
+                <div key={r.actor_id} className="flex items-center justify-between text-xs">
+                  <span className="text-slate-700">
+                    {r.actor_name || r.actor_id} <span className="text-slate-400">({r.actor_role || "—"})</span>
+                  </span>
+                  <span className="font-semibold text-slate-900">{r.count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* Recent fraud attempts table */}
+      <Card className="overflow-x-auto">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
+          <span className="font-semibold text-slate-900">All Fraud Attempts</span>
+          <div className="ml-auto flex items-center gap-2">
+            <Select value={reason || "__all__"} onValueChange={v => setReason(v === "__all__" ? "" : v)}>
+              <SelectTrigger className="w-64"><SelectValue placeholder="All reasons" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">All reasons</SelectItem>
+                {Object.entries(FRAUD_REASON_LABELS).map(([v, l]) => (
+                  <SelectItem key={v} value={v}>{l}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>When</TableHead>
+              <TableHead>Reason</TableHead>
+              <TableHead>Coupon / Serial</TableHead>
+              <TableHead>Actor</TableHead>
+              <TableHead>Retailer</TableHead>
+              <TableHead>Distributor</TableHead>
+              <TableHead>IP</TableHead>
+              <TableHead>GPS</TableHead>
+              <TableHead>Device</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rows.length === 0 && (
+              <TableRow><TableCell colSpan={9} className="text-center py-10 text-slate-400">
+                No fraud attempts {reason ? `matching this reason` : `on record`}
+              </TableCell></TableRow>
+            )}
+            {rows.map(r => (
+              <TableRow key={r.id}>
+                <TableCell className="text-xs text-slate-500">{niceDate(r.at)}</TableCell>
+                <TableCell>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-100 text-rose-800 font-semibold">
+                    {FRAUD_REASON_LABELS[r.reason] || r.reason}
+                  </span>
+                </TableCell>
+                <TableCell className="font-mono text-xs">{r.coupon_code || "—"}</TableCell>
+                <TableCell className="text-xs">
+                  {r.actor_name || "—"} <span className="text-slate-400">({r.actor_role || "—"})</span>
+                </TableCell>
+                <TableCell className="text-xs">{r.retailer_id || "—"}</TableCell>
+                <TableCell className="text-xs">{r.distributor_id || "—"}</TableCell>
+                <TableCell className="text-xs font-mono">{r.ip_address || "—"}</TableCell>
+                <TableCell className="text-xs">
+                  {r.gps_lat && r.gps_lng ? `${Number(r.gps_lat).toFixed(3)}, ${Number(r.gps_lng).toFixed(3)}` : "—"}
+                </TableCell>
+                <TableCell className="text-xs font-mono">{r.device_id ? String(r.device_id).slice(0, 12) : "—"}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
     </div>
   );
 }
