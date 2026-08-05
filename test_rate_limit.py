@@ -3,7 +3,7 @@
 import requests
 import time
 
-BASE_URL = "https://oil-promo-system.preview.emergentagent.com/api"
+BASE_URL = "https://loyalty-qr-system-3.preview.emergentagent.com/api"
 
 print("Testing rate limiting on /auth/login (10/minute)...")
 print("Making 12 rapid login attempts with bad credentials...")

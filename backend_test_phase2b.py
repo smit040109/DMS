@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timedelta
 
 # Base URL from frontend/.env
-BASE_URL = "https://oil-promo-system.preview.emergentagent.com/api"
+BASE_URL = "https://loyalty-qr-system-3.preview.emergentagent.com/api"
 
 # Test credentials (all password: GoOil@2026)
 CREDENTIALS = {
