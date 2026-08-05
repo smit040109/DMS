@@ -34,20 +34,34 @@ import {
   Users, Store, Award, RefreshCw, PackageCheck, Printer, FileSpreadsheet,
   FileText, Wallet, Coins, Truck, Search, ArrowRight, ChevronLeft, ChevronRight,
   Play, PauseCircle, Copy, AlertTriangle, ClipboardList, Activity, TrendingUp,
+  Download, Share2, Eye, EyeOff, Lock, MessageCircle, Link2,
 } from "lucide-react";
 
 // ═════════════════════════ shared bits ══════════════════════════════════════
 const GOLD_BTN = "bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white";
 
-function Kpi({ label, value, tint = "bg-slate-100 text-slate-700", icon: Icon = Ticket, suffix }) {
+function Kpi({ label, value, tint = "bg-slate-100 text-slate-700", icon: Icon = Ticket, suffix, onClick, testid }) {
   const display = typeof value === "number" ? value.toLocaleString("en-IN") : (value ?? 0);
+  const clickable = typeof onClick === "function";
   return (
-    <Card className="p-4">
-      <div className={`inline-flex h-9 w-9 rounded-lg items-center justify-center mb-2 ${tint}`}>
-        <Icon size={18} />
+    <Card
+      onClick={clickable ? onClick : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={clickable ? (e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); } : undefined}
+      data-testid={testid}
+      className={`p-4 group relative ${clickable ? "cursor-pointer hover:shadow-md hover:border-amber-300 hover:-translate-y-0.5 transition-all" : ""}`}
+    >
+      <div className="flex items-start justify-between">
+        <div className={`inline-flex h-9 w-9 rounded-lg items-center justify-center mb-2 ${tint}`}>
+          <Icon size={18} />
+        </div>
+        {clickable && (
+          <ChevronRight size={14} className="text-slate-300 group-hover:text-[#a67c00] group-hover:translate-x-0.5 transition-all" />
+        )}
       </div>
       <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">{label}</div>
-      <div className="text-xl font-bold text-slate-900 mt-1">
+      <div className={`text-xl font-bold text-slate-900 mt-1 ${clickable ? "group-hover:text-[#8a6600] transition-colors" : ""}`}>
         {display}{suffix && <span className="text-sm text-slate-500 ml-1">{suffix}</span>}
       </div>
     </Card>
@@ -153,14 +167,26 @@ export function OwnerCouponsPage() {
         }
       />
 
-      {/* Life-cycle KPIs — as per Owner Dashboard spec */}
+      {/* Life-cycle KPIs — as per Owner Dashboard spec. All clickable → drill into filtered list */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
-        <Kpi label="Generated"      value={totalGenerated}               tint="bg-slate-100 text-slate-700"     icon={Ticket} />
-        <Kpi label="Inactive"       value={totalInactive}                tint="bg-slate-200 text-slate-700"     icon={PauseCircle} />
-        <Kpi label="Active"         value={t.unused || 0}                tint="bg-emerald-50 text-emerald-700"  icon={PackageCheck} />
-        <Kpi label="Claimed"        value={t.claimed || 0}               tint="bg-amber-50 text-amber-700"      icon={ScanLine} />
-        <Kpi label="Redeemed"       value={t.redeemed || 0}              tint="bg-emerald-100 text-emerald-800" icon={CheckCircle2} />
-        <Kpi label="Fraud Attempts" value={summary?.fraud_attempts || 0} tint="bg-rose-50 text-rose-700"        icon={ShieldAlert} />
+        <Kpi label="Generated"      value={totalGenerated}               tint="bg-slate-100 text-slate-700"     icon={Ticket}
+              onClick={() => nav("/dms/owner/coupons/all")}
+              testid="kpi-generated" />
+        <Kpi label="Inactive"       value={totalInactive}                tint="bg-slate-200 text-slate-700"     icon={PauseCircle}
+              onClick={() => nav("/dms/owner/coupons/all?status=generated")}
+              testid="kpi-inactive" />
+        <Kpi label="Active"         value={t.unused || 0}                tint="bg-emerald-50 text-emerald-700"  icon={PackageCheck}
+              onClick={() => nav("/dms/owner/coupons/all?status=unused")}
+              testid="kpi-active" />
+        <Kpi label="Claimed"        value={t.claimed || 0}               tint="bg-amber-50 text-amber-700"      icon={ScanLine}
+              onClick={() => nav("/dms/owner/coupons/all?status=claimed")}
+              testid="kpi-claimed" />
+        <Kpi label="Redeemed"       value={t.redeemed || 0}              tint="bg-emerald-100 text-emerald-800" icon={CheckCircle2}
+              onClick={() => nav("/dms/owner/coupons/all?status=redeemed")}
+              testid="kpi-redeemed" />
+        <Kpi label="Fraud Attempts" value={summary?.fraud_attempts || 0} tint="bg-rose-50 text-rose-700"        icon={ShieldAlert}
+              onClick={() => nav("/dms/owner/coupons/fraud")}
+              testid="kpi-fraud" />
       </div>
 
       {/* Type breakdown */}
@@ -443,6 +469,7 @@ export function OwnerCouponBatchDetailPage() {
   const [rangeOpen, setRangeOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState([]);
   const [qrModal, setQrModal] = useState(null);   // { cid, serial } | null
+  const [printOpen, setPrintOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!bid) return;
@@ -538,10 +565,10 @@ export function OwnerCouponBatchDetailPage() {
           )}
           {canPrint && (
             <>
-              <Button variant="outline" disabled={busy}
-                      onClick={() => dms.cpnExportPdf(bid, `${batch.batch_label}_coupons.pdf`).catch(e => toast.error("Failed"))}
+              <Button className={GOLD_BTN} disabled={busy}
+                      onClick={() => setPrintOpen(true)}
                       data-testid="batch-pdf">
-                <Printer size={14} className="mr-1" /> Export PDF (Printing Press)
+                <Printer size={14} className="mr-1" /> Print &amp; Share
               </Button>
               <Button variant="outline" disabled={busy}
                       onClick={() => dms.cpnExportXlsx(bid, `${batch.batch_label}_manifest.xlsx`).catch(e => toast.error("Failed"))}
@@ -735,9 +762,239 @@ export function OwnerCouponBatchDetailPage() {
       <ActivateRangeDialog open={rangeOpen} onClose={() => setRangeOpen(false)}
                             batch={batch} onDone={load} />
 
+      {/* Print & Share dialog */}
+      <PrintShareDialog open={printOpen} onClose={() => setPrintOpen(false)}
+                        batch={batch} onDone={load} />
+
       {/* QR view modal */}
       <CouponQrModal modal={qrModal} onClose={() => setQrModal(null)} />
     </div>
+  );
+}
+
+function PrintShareDialog({ open, onClose, batch, onDone }) {
+  const [diameter, setDiameter] = useState(34);
+  const [busy, setBusy] = useState(false);
+  const [share, setShare] = useState(null);      // { share_url, expires_at }
+  const [phone, setPhone] = useState("");
+
+  useEffect(() => {
+    if (open) {
+      setShare(null);
+      setPhone("");
+      setDiameter(34);
+    }
+  }, [open]);
+
+  const gridEstimate = useMemo(() => {
+    // Rough A4 fit estimate (matches backend calc): 210×297mm usable ≈ (210-16)/((d+2))
+    const cols = Math.max(1, Math.floor((210 - 16 + 2) / (diameter + 2)));
+    const rows = Math.max(1, Math.floor((297 - 16 + 2) / (diameter + 2)));
+    return { cols, rows, per_page: cols * rows };
+  }, [diameter]);
+
+  if (!batch) return null;
+
+  const doDownload = async () => {
+    setBusy(true);
+    try {
+      await dms.cpnExportPdf(batch.id,
+        `${batch.batch_label}_coupons_${diameter}mm.pdf`,
+        { diameter_mm: diameter });
+      toast.success("PDF downloaded — send it to your printer");
+      onDone?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Download failed");
+    } finally { setBusy(false); }
+  };
+
+  const doCreateShareLink = async () => {
+    setBusy(true);
+    try {
+      const r = await dms.cpnCreateShareLink(batch.id, { diameter_mm: diameter });
+      setShare(r);
+      toast.success("Share link ready — valid 24 hours");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to create link");
+    } finally { setBusy(false); }
+  };
+
+  const openWhatsApp = async () => {
+    if (!share) return;
+    const text =
+      `📦 *GO OIL Coupon Print Job*\n\n` +
+      `*Batch:* ${share.batch_label}\n` +
+      `*Coupons:* ${share.coupon_count}\n` +
+      `*Size:* ${share.diameter_mm} mm (circular die-cut)\n\n` +
+      `📄 *Download PDF:* ${share.share_url}\n\n` +
+      `_Please print full colour on 300 gsm art paper. Die-cut along red dashed circles. QR must be sharp and scannable._\n\n` +
+      `_Link valid till ${new Date(share.expires_at).toLocaleString("en-IN")}_`;
+
+    // Prefer native Web Share API (mobile) — auto-attaches PDF where supported
+    if (navigator.share) {
+      try {
+        // Try file share first
+        const blob = await dms.cpnExportPdfBlob(batch.id, { diameter_mm: diameter });
+        const file = new File([blob], `${batch.batch_label}_coupons_${diameter}mm.pdf`,
+                              { type: "application/pdf" });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            title: `GO OIL Coupons – ${share.batch_label}`,
+            text,
+            files: [file],
+          });
+          return;
+        }
+        // Fallback: share text/link only
+        await navigator.share({ title: `GO OIL Coupons – ${share.batch_label}`, text });
+        return;
+      } catch (_e) { /* user cancelled or failed → fall through to wa.me */ }
+    }
+    // Fallback: wa.me deep link
+    const cleanPhone = (phone || "").replace(/[^0-9]/g, "");
+    const url = cleanPhone
+      ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text)}`
+      : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, "_blank", "noopener");
+  };
+
+  const copyLink = () => {
+    if (!share) return;
+    navigator.clipboard?.writeText(share.share_url);
+    toast.success("Link copied to clipboard");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-lg w-[calc(100vw-32px)]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Printer size={18} className="text-[#a67c00]" />
+            Print &amp; Share to Printer
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          {/* Batch context */}
+          <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-sm flex flex-wrap gap-x-4 gap-y-1">
+            <span><span className="text-slate-500">Batch:</span>{" "}
+              <span className="font-mono font-semibold">{batch.batch_label}</span></span>
+            <span><span className="text-slate-500">Coupons:</span>{" "}
+              <span className="font-semibold">{batch.count}</span></span>
+            <span><span className="text-slate-500">Type:</span>{" "}
+              <span className="font-semibold">
+                {batch.coupon_type === "cash" ? "Cash Coupon" : "Reward Coupon"}
+              </span></span>
+            <span><span className="text-slate-500">Value:</span>{" "}
+              <span className="font-semibold text-[#8a6600]">
+                {batch.coupon_type === "cash" ? inr(batch.coupon_value) : `${batch.coupon_value} pts`}
+              </span></span>
+          </div>
+
+          {/* Diameter selector */}
+          <div>
+            <Label className="flex items-center justify-between mb-1.5">
+              <span>Coupon Size (Diameter)</span>
+              <span className="text-lg font-black text-[#8a6600]">{diameter} mm</span>
+            </Label>
+            <input type="range" min="20" max="80" step="1"
+                    value={diameter}
+                    onChange={e => setDiameter(Number(e.target.value))}
+                    className="w-full accent-[#a67c00]"
+                    disabled={busy}
+                    data-testid="print-size-slider" />
+            <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+              <span>20mm</span><span>34mm (CorelDraw)</span><span>80mm</span>
+            </div>
+            <div className="flex gap-1.5 mt-2 flex-wrap">
+              {[25, 30, 34, 40, 50, 60].map(d => (
+                <button key={d} type="button"
+                        onClick={() => setDiameter(d)}
+                        className={`text-[11px] px-2.5 py-1 rounded-full border ${
+                          diameter === d
+                            ? "bg-[#8a6600] text-white border-[#8a6600]"
+                            : "bg-white text-slate-700 border-slate-200 hover:border-amber-300"
+                        }`}>
+                  {d}mm{d === 34 ? " ★" : ""}
+                </button>
+              ))}
+            </div>
+            <div className="text-[11px] text-slate-500 mt-2 bg-slate-50 border border-slate-200 rounded px-2 py-1.5">
+              Estimated layout: <b>{gridEstimate.cols}×{gridEstimate.rows}</b> ={" "}
+              <b>{gridEstimate.per_page} coupons/A4 page</b> ≈{" "}
+              <b>{Math.ceil((batch.count || 0) / gridEstimate.per_page)} pages</b> total
+            </div>
+          </div>
+
+          {/* Section 1: Direct download */}
+          <div className="rounded-lg border border-slate-200 p-3">
+            <div className="text-xs uppercase tracking-wider text-slate-600 font-semibold mb-2 flex items-center gap-1.5">
+              <Download size={12} /> Option 1 — Download &amp; forward manually
+            </div>
+            <Button onClick={doDownload} disabled={busy} className={GOLD_BTN + " w-full"}
+                    data-testid="print-download">
+              <Download size={14} className="mr-1" />
+              Download PDF ({diameter}mm)
+            </Button>
+          </div>
+
+          {/* Section 2: WhatsApp share */}
+          <div className="rounded-lg border-2 border-emerald-300 bg-emerald-50/40 p-3">
+            <div className="text-xs uppercase tracking-wider text-emerald-800 font-semibold mb-2 flex items-center gap-1.5">
+              <MessageCircle size={12} /> Option 2 — Send directly to printer on WhatsApp
+            </div>
+            {!share ? (
+              <Button onClick={doCreateShareLink} disabled={busy}
+                      className="w-full bg-emerald-600 hover:bg-emerald-700 text-white"
+                      data-testid="print-create-link">
+                <Link2 size={14} className="mr-1" />
+                Generate WhatsApp Share Link (valid 24 h)
+              </Button>
+            ) : (
+              <div className="space-y-2">
+                <div className="text-[10px] text-slate-600 leading-relaxed">
+                  Public link ready. Expires{" "}
+                  <b>{new Date(share.expires_at).toLocaleString("en-IN")}</b>.
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <code className="flex-1 text-[10px] bg-white border border-slate-200 rounded px-2 py-1.5 font-mono truncate">
+                    {share.share_url}
+                  </code>
+                  <button onClick={copyLink}
+                          className="text-[10px] px-2 py-1.5 rounded border border-slate-200 hover:bg-slate-50 shrink-0"
+                          title="Copy link">
+                    <Copy size={11} />
+                  </button>
+                </div>
+                <div>
+                  <Label className="text-[11px]">Printer&apos;s WhatsApp Number (optional)</Label>
+                  <Input value={phone}
+                          onChange={e => setPhone(e.target.value)}
+                          placeholder="e.g. 91XXXXXXXXXX (with country code)"
+                          className="h-9 text-sm"
+                          data-testid="print-phone" />
+                </div>
+                <Button onClick={openWhatsApp} disabled={busy}
+                        className="w-full bg-[#25d366] hover:bg-[#128c7e] text-white"
+                        data-testid="print-open-wa">
+                  <MessageCircle size={14} className="mr-1" />
+                  {phone ? "Send to Printer on WhatsApp" : "Open WhatsApp Share"}
+                </Button>
+                <p className="text-[10px] text-slate-500 leading-relaxed">
+                  On mobile the WhatsApp app opens with a ready message including
+                  the PDF link. On desktop, WhatsApp Web opens. Attach the PDF
+                  from the copied link.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -745,9 +1002,10 @@ function CouponQrModal({ modal, onClose }) {
   const [data, setData] = useState(null);
   const [imgUrl, setImgUrl] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [showInternal, setShowInternal] = useState(false);
 
   useEffect(() => {
-    if (!modal) { setData(null); setImgUrl(null); return; }
+    if (!modal) { setData(null); setImgUrl(null); setShowInternal(false); return; }
     let alive = true;
     setBusy(true);
     (async () => {
@@ -770,48 +1028,133 @@ function CouponQrModal({ modal, onClose }) {
 
   if (!modal) return null;
 
+  const valueLabel = data
+    ? (data.coupon_type === "cash" ? `₹${data.coupon_value}` : `${data.coupon_value} pts`)
+    : "";
+
   return (
     <Dialog open={!!modal} onOpenChange={o => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-md w-[calc(100vw-32px)] overflow-hidden">
         <DialogHeader>
-          <DialogTitle className="font-mono">{modal.serial}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <ScanLine size={18} className="text-[#a67c00]" />
+            <span className="font-mono">{modal.serial}</span>
+          </DialogTitle>
         </DialogHeader>
-        {busy && <div className="py-10 text-center text-slate-500 text-sm">Generating QR…</div>}
-        {data && (
-          <div className="space-y-3">
-            <div className="flex justify-center">
-              {imgUrl ? (
-                <img src={imgUrl} alt="Coupon QR" className="border rounded shadow-sm" width={280} height={280} />
-              ) : (
-                <div className="w-[280px] h-[280px] bg-slate-100 animate-pulse rounded" />
-              )}
-            </div>
-            <div className="text-center text-xs text-slate-500">
-              {data.coupon_type === "cash" ? `CASH ₹${data.coupon_value}` : `${data.coupon_value} POINTS`}
-              {" · "}<span className="font-semibold">{data.status}</span>
-              {" · "}<span className={data.active ? "text-emerald-700 font-semibold" : "text-slate-500"}>
-                {data.active ? "ACTIVE" : "INACTIVE"}
-              </span>
-            </div>
-            <div className="border-t border-slate-100 pt-3 space-y-2">
-              <FieldCopy label="Visible Serial (public)" value={data.visible_serial} />
-              <FieldCopy label={`Unique ID / Hidden Secure ID (UUID v4)`}
-                          value={data.hidden_secure_id || "—"} mono />
-              <FieldCopy label={`Encrypted QR Payload (${data.qr_version})`}
-                          value={data.qr_payload} mono truncate />
-            </div>
-            <p className="text-[11px] text-slate-500 leading-relaxed">
-              <b>Note:</b> The QR embeds an AES-256-GCM encrypted payload + HMAC-SHA256 signature.
-              Only Owner &amp; Owner-Accountant see the Unique ID. Printing press
-              gets only the QR + serial + type + value.
-            </p>
+
+        {busy && !data && (
+          <div className="py-12 flex flex-col items-center justify-center gap-3 text-slate-500 text-sm">
+            <RefreshCw size={20} className="animate-spin" />
+            Generating QR…
           </div>
         )}
-        <DialogFooter>
+
+        {data && (
+          <div className="space-y-3">
+            {/* ─── QR card (looks like a mini-coupon) ───────────────────── */}
+            <div className="mx-auto rounded-2xl border-2 border-[#e6d194] bg-gradient-to-b from-[#0d0d0d] to-[#1a1a1a] p-4 flex flex-col items-center gap-2 w-full max-w-[280px]">
+              <div className="text-[10px] uppercase tracking-widest text-[#f5c542] font-bold">
+                GO OIL · Mechanic Coupon
+              </div>
+              {imgUrl ? (
+                <div className="rounded-lg bg-white p-2 shadow">
+                  <img src={imgUrl} alt="Coupon QR"
+                       className="block"
+                       style={{ width: 220, height: 220, imageRendering: "pixelated" }} />
+                </div>
+              ) : (
+                <div className="w-[220px] h-[220px] bg-white/10 animate-pulse rounded-lg" />
+              )}
+              <div className="rounded-full bg-[#f5c542] px-3 py-0.5 text-[11px] font-black text-black tracking-wide">
+                {data.coupon_type === "cash" ? `CASH  ${valueLabel}` : `REWARD  ${valueLabel}`}
+              </div>
+              <div className="font-mono text-[11px] text-[#f5c542] font-bold">
+                {data.visible_serial}
+              </div>
+            </div>
+
+            {/* ─── Status pill row ─────────────────────────────────────── */}
+            <div className="flex items-center justify-center gap-2 text-xs">
+              <StatusChip s={data.status} />
+              {data.active
+                ? <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold">ACTIVE</span>
+                : <span className="px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 font-semibold">INACTIVE</span>}
+            </div>
+
+            {/* ─── Public info (always visible) ────────────────────────── */}
+            <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+              <MiniRow k="Serial" v={<span className="font-mono">{data.visible_serial}</span>} />
+              <MiniRow k="Type"   v={<span className="font-semibold">{data.coupon_type === "cash" ? "Cash Coupon" : "Reward Coupon"}</span>} />
+              <MiniRow k="Value"  v={<span className="font-semibold text-[#8a6600]">{valueLabel}</span>} />
+            </div>
+
+            {/* ─── Owner-only sensitive info — collapsed by default ────── */}
+            <div className="rounded-lg border border-amber-200 bg-amber-50/50 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowInternal(v => !v)}
+                className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-amber-900 hover:bg-amber-100/60 transition">
+                <Lock size={12} />
+                <span className="flex-1 text-left">Internal Security Info (Owner Only)</span>
+                {showInternal ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+              {showInternal && (
+                <div className="px-3 pb-3 pt-1 space-y-2 border-t border-amber-200">
+                  <MiniCode label="Hidden Secure ID (UUID v4)" value={data.hidden_secure_id || "—"} />
+                  <MiniCode label={`Encrypted QR Payload (${data.qr_version || "v2"})`}
+                            value={data.qr_payload} truncate />
+                  <p className="text-[10px] text-amber-900/80 leading-relaxed">
+                    AES-256-GCM encrypted + HMAC-SHA256 signed. Never appears on printed coupons.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="gap-2">
+          {imgUrl && data && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                const a = document.createElement("a");
+                a.href = imgUrl;
+                a.download = `${data.visible_serial}_qr.png`;
+                a.click();
+              }}>
+              <Download size={14} className="mr-1" /> Download QR
+            </Button>
+          )}
           <Button variant="outline" onClick={onClose}>Close</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function MiniRow({ k, v }) {
+  return (
+    <div className="flex items-center justify-between px-3 py-1.5 text-xs">
+      <span className="text-slate-500">{k}</span>
+      <span>{v}</span>
+    </div>
+  );
+}
+
+function MiniCode({ label, value, truncate = false }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase text-amber-900 font-bold tracking-wide mb-0.5">{label}</div>
+      <div className="flex items-center gap-2">
+        <code className={`flex-1 text-[10px] bg-white border border-amber-200 rounded px-2 py-1 font-mono ${truncate ? "truncate" : "break-all"}`}>
+          {value}
+        </code>
+        <button className="text-[10px] px-2 py-1 rounded border border-amber-300 bg-white hover:bg-amber-50 text-amber-900 font-semibold shrink-0"
+                onClick={() => { navigator.clipboard?.writeText(value); toast.success("Copied"); }}>
+          <Copy size={11} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -1116,8 +1459,11 @@ function ConfirmRow({ k, v }) {
 
 // ═════════════════════════ OWNER: All Coupons list (across batches) ═════════
 export function OwnerCouponsListPage() {
-  const [status, setStatus] = useState("");
-  const [type, setType] = useState("");
+  // Pre-populate filters from URL query string (?status=unused&type=cash)
+  const searchParams = typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search) : new URLSearchParams();
+  const [status, setStatus] = useState(searchParams.get("status") || "");
+  const [type, setType] = useState(searchParams.get("type") || "");
   const [q, setQ] = useState("");
   const [rows, setRows] = useState([]);
   const [busy, setBusy] = useState(false);

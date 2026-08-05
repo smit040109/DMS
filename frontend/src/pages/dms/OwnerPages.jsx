@@ -50,6 +50,28 @@ export function EmptyState({ icon: Icon = Package, title, description, action })
   );
 }
 
+// Clickable Finance stat cell — used on the dashboard Cash & Bank Snapshot
+function FinanceStat({ label, value, valueClass = "", borderLeft = false, onClick }) {
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") onClick?.(); }}
+      className={`group rounded-lg cursor-pointer p-2 -m-2 hover:bg-amber-50/60 transition ${borderLeft ? "border-l pl-4" : ""}`}
+      data-testid={`finance-stat-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+    >
+      <div className="text-xs uppercase text-slate-500 flex items-center gap-1">
+        {label}
+        <ChevronRight size={11} className="text-slate-300 group-hover:text-[#a67c00] transition-colors" />
+      </div>
+      <div className={`text-xl font-bold ${valueClass} group-hover:underline decoration-dotted underline-offset-4`}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // Owner — Dashboard
 // ============================================================================
@@ -83,11 +105,17 @@ export function OwnerDashboardPage() {
       <PageHeader title="Owner Dashboard" subtitle="Overview of your distribution business" />
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
         {cards.map(c => (
-          <Card key={c.label} className="p-4 cursor-pointer hover:shadow-md transition"
+          <Card key={c.label} className="p-4 cursor-pointer group hover:shadow-md hover:border-amber-300 hover:-translate-y-0.5 transition-all relative"
                 onClick={() => nav(c.to)} data-testid={`owner-kpi-${c.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>
-            <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${colorMap[c.color]}`}><c.icon size={18} /></div>
+            <div className="flex items-start justify-between">
+              <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${colorMap[c.color]}`}><c.icon size={18} /></div>
+              <ChevronRight size={16} className="text-slate-300 group-hover:text-[#a67c00] group-hover:translate-x-0.5 transition-all" />
+            </div>
             <div className="mt-3 text-xs text-slate-500 uppercase tracking-wider">{c.label}</div>
-            <div className="mt-1 text-xl font-bold text-slate-900">{c.value}</div>
+            <div className="mt-1 text-xl font-bold text-slate-900 group-hover:text-[#8a6600] transition-colors">{c.value}</div>
+            <div className="mt-2 text-[10px] text-slate-400 group-hover:text-[#a67c00] uppercase tracking-wider font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+              View details →
+            </div>
           </Card>
         ))}
       </div>
@@ -99,26 +127,22 @@ export function OwnerDashboardPage() {
         </div>
         <Card className="p-5 border-amber-200" data-testid="finance-snapshot-card">
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <div>
-              <div className="text-xs uppercase text-slate-500">Cash in Bank</div>
-              <div className="text-xl font-bold text-emerald-700">{finance ? inr(finance.cash_in_bank) : "—"}</div>
-            </div>
-            <div>
-              <div className="text-xs uppercase text-slate-500">Cash in Hand</div>
-              <div className="text-xl font-bold text-amber-700">{finance ? inr(finance.cash_in_hand) : "—"}</div>
-            </div>
-            <div>
-              <div className="text-xs uppercase text-slate-500">Outstanding Loans</div>
-              <div className="text-xl font-bold text-rose-700">{finance ? inr(finance.outstanding_loans) : "—"}</div>
-            </div>
-            <div className="border-l pl-4">
-              <div className="text-xs uppercase text-slate-500">Net Liquid</div>
-              <div className="text-xl font-bold">{finance ? inr(finance.net_liquid) : "—"}</div>
-            </div>
-            <div>
-              <div className="text-xs uppercase text-slate-500">Net Position</div>
-              <div className={"text-xl font-bold " + (finance && finance.net_position < 0 ? "text-rose-700" : "text-emerald-700")}>{finance ? inr(finance.net_position) : "—"}</div>
-            </div>
+            <FinanceStat label="Cash in Bank" value={finance ? inr(finance.cash_in_bank) : "—"}
+                          valueClass="text-emerald-700"
+                          onClick={() => nav("/dms/finance/bank-accounts")} />
+            <FinanceStat label="Cash in Hand" value={finance ? inr(finance.cash_in_hand) : "—"}
+                          valueClass="text-amber-700"
+                          onClick={() => nav("/dms/finance/cash-transactions")} />
+            <FinanceStat label="Outstanding Loans" value={finance ? inr(finance.outstanding_loans) : "—"}
+                          valueClass="text-rose-700"
+                          onClick={() => nav("/dms/finance/loans")} />
+            <FinanceStat label="Net Liquid" value={finance ? inr(finance.net_liquid) : "—"}
+                          valueClass="text-slate-900" borderLeft
+                          onClick={() => nav("/dms/finance/bank-accounts")} />
+            <FinanceStat label="Net Position"
+                          value={finance ? inr(finance.net_position) : "—"}
+                          valueClass={finance && finance.net_position < 0 ? "text-rose-700" : "text-emerald-700"}
+                          onClick={() => nav("/dms/owner/ledger")} />
           </div>
         </Card>
       </div>

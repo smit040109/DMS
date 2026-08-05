@@ -165,12 +165,22 @@ export const dms = {
   },
   cpnExportPdfUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-pdf`,
   cpnExportXlsxUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-xlsx`,
-  cpnExportPdf: async (bid, filename) => {
-    const r = await api.get(`/dms/coupons/batches/${bid}/export-pdf`, { responseType: "blob" });
+  cpnExportPdf: async (bid, filename, opts = {}) => {
+    const params = {};
+    if (opts.diameter_mm) params.diameter_mm = opts.diameter_mm;
+    const r = await api.get(`/dms/coupons/batches/${bid}/export-pdf`, { responseType: "blob", params });
     const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
     const a = document.createElement("a"); a.href = url; a.download = filename || `batch_${bid}.pdf`;
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   },
+  cpnExportPdfBlob: async (bid, opts = {}) => {
+    const params = {};
+    if (opts.diameter_mm) params.diameter_mm = opts.diameter_mm;
+    const r = await api.get(`/dms/coupons/batches/${bid}/export-pdf`, { responseType: "blob", params });
+    return new Blob([r.data], { type: "application/pdf" });
+  },
+  cpnCreateShareLink: (bid, body = {}) =>
+    api.post(`/dms/coupons/batches/${bid}/share-link`, body).then(r => r.data),
   cpnExportXlsx: async (bid, filename) => {
     const r = await api.get(`/dms/coupons/batches/${bid}/export-xlsx`, { responseType: "blob" });
     const url = URL.createObjectURL(new Blob([r.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));

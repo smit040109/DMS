@@ -1125,10 +1125,17 @@ def build_coupons_router(db, get_current_user, notify=None):
     # PRINT / EXPORT (PDF grid + Excel manifest)
     # ─────────────────────────────────────────────────────────────────────────
     @router.get("/batches/{bid}/export-pdf")
-    async def export_pdf(bid: str, user: dict = Depends(owner_only)):
+    async def export_pdf(bid: str,
+                          diameter_mm: float = 34.0,
+                          per_row: Optional[int] = None,
+                          user: dict = Depends(owner_only)):
         """
         Printable PDF for the printing press — matches the GOOIL CorelDraw
         circular coupon design (die-cut circular MECHANIC COUPON).
+
+        Query params:
+          diameter_mm  – die-cut coupon diameter in mm (default 34, matches CorelDraw)
+          per_row      – override columns per row (auto-fit based on diameter by default)
 
         STRICTLY contains only:
           * QR image  (encrypted payload — v2)
@@ -1137,17 +1144,14 @@ def build_coupons_router(db, get_current_user, notify=None):
           * Coupon Value
 
         No UUID, no secret token, no signature, no batch label, no batch secret,
-        no internal IDs are ever printed.
-
-        Layout: 3×3 = 9 circular coupons per A4 page (with die-cut ring).
-        High resolution QR (ERROR_CORRECT_H) for reliable press printing.
+        no internal IDs are ever printed. High-res QR (ERROR_CORRECT_H).
         """
         import qrcode
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.units import mm
         from reportlab.pdfgen import canvas as pdfcanvas
         from reportlab.lib.utils import ImageReader
-        from reportlab.lib.colors import HexColor, black, white
+        from reportlab.lib.colors import HexColor, white
 
         b = _clean(await db.dms_v2_coupon_batches.find_one({"id": bid}))
         if not b:
@@ -1156,6 +1160,11 @@ def build_coupons_router(db, get_current_user, notify=None):
             .sort("visible_serial", 1).to_list(200_000)
         if not coupons:
             raise HTTPException(400, "No coupons in batch")
+
+        # Sanitize diameter — real-world circular coupon (die-cut) 20mm – 80mm
+        diameter_mm = max(20.0, min(80.0, float(diameter_mm)))
+        d_pts = diameter_mm * mm          # coupon diameter in PDF points
+        radius = d_pts / 2
 
         # ── Brand palette (GOOIL: black bg, gold accents, white text) ──────
         BG_BLACK = HexColor("#0d0d0d")
@@ -1168,43 +1177,63 @@ def build_coupons_router(db, get_current_user, notify=None):
         c = pdfcanvas.Canvas(buf, pagesize=A4)
         page_w, page_h = A4
 
-        # 3 × 3 layout = 9 coupons / A4 page
+        # Auto-fit layout: how many circles per row / col fit on A4 with margins
         margin = 8 * mm
-        cols, rows = 3, 3
-        cell_w = (page_w - 2 * margin) / cols
-        cell_h = (page_h - 2 * margin) / rows
-        # coupon radius (inside cell, leave a 3mm printer bleed)
-        radius = (min(cell_w, cell_h) - 6 * mm) / 2
+        gap = 2 * mm                          # gap between coupons for die-cut ease
+        usable_w = page_w - 2 * margin
+        usable_h = page_h - 2 * margin
+        cols = per_row if per_row else max(1, int((usable_w + gap) // (d_pts + gap)))
+        rows = max(1, int((usable_h + gap) // (d_pts + gap)))
+        # Centre the whole grid
+        grid_w = cols * d_pts + (cols - 1) * gap
+        grid_h = rows * d_pts + (rows - 1) * gap
+        left_pad = margin + (usable_w - grid_w) / 2
+        top_pad = margin + (usable_h - grid_h) / 2
+
+        def _fmt_value() -> str:
+            v = b["coupon_value"]
+            v_str = f"{int(v)}" if float(v).is_integer() else f"{v:g}"
+            return f"₹{v_str}/-" if b["coupon_type"] == "cash" else f"{v_str} POINTS"
+
+        # Font-size ladder derived from actual diameter (mm) — scales gracefully
+        # Reference: 34mm design -> title=8, tagline=4.6, pill=5.6, serial=6.4, footer=4.6
+        scale = diameter_mm / 34.0
+        FS_TITLE   = max(6.0, 8.0   * scale)
+        FS_TAG     = max(3.6, 4.6   * scale)
+        FS_PILL    = max(4.6, 5.6   * scale)
+        FS_SERIAL  = max(5.0, 6.4   * scale)
+        FS_FOOTER  = max(3.8, 4.6   * scale)
+        FS_SUBTAG  = max(3.4, 4.0   * scale)
 
         def _draw_coupon(cx: float, cy: float, cp: Dict[str, Any]) -> None:
             """Draw one circular MECHANIC COUPON centered at (cx, cy)."""
-            # 1) Red dashed die-cut guide ring (printers cut along this)
+            # 1) Red dashed die-cut guide ring
             c.setStrokeColor(RED_DIE)
-            c.setLineWidth(0.5)
+            c.setLineWidth(0.35)
             c.setDash(2, 2)
-            c.circle(cx, cy, radius + 1.2, stroke=1, fill=0)
-            c.setDash()  # reset dash
+            c.circle(cx, cy, radius + 0.6, stroke=1, fill=0)
+            c.setDash()
 
             # 2) Solid black filled circle (coupon background)
             c.setFillColor(BG_BLACK)
             c.setStrokeColor(GOLD_2)
-            c.setLineWidth(0.9)
+            c.setLineWidth(0.5)
             c.circle(cx, cy, radius, stroke=1, fill=1)
 
             # 3) Inner thin gold decorative ring
             c.setStrokeColor(GOLD_1)
-            c.setLineWidth(0.4)
-            c.circle(cx, cy, radius - 2.2 * mm, stroke=1, fill=0)
+            c.setLineWidth(0.3)
+            c.circle(cx, cy, radius - 1.4 * mm, stroke=1, fill=0)
 
             # 4) Top brand band — "GO OIL" logo text + tagline
             c.setFillColor(GOLD_1)
-            c.setFont("Helvetica-Bold", 13)
-            c.drawCentredString(cx, cy + radius - 8.5 * mm, "GO OIL")
+            c.setFont("Helvetica-Bold", FS_TITLE)
+            c.drawCentredString(cx, cy + radius - 4.6 * mm * scale, "GO OIL")
             c.setFillColor(WHITE_TX)
-            c.setFont("Helvetica-Oblique", 6.5)
-            c.drawCentredString(cx, cy + radius - 12.5 * mm, "Hi-Technoply Automotive")
+            c.setFont("Helvetica-Oblique", FS_TAG)
+            c.drawCentredString(cx, cy + radius - 6.8 * mm * scale, "Hi-Technoply Automotive")
 
-            # 5) QR code — canonical v2 payload
+            # 5) QR — canonical v2 payload
             if cp.get("qr_version") == "v2" and cp.get("qr_ciphertext_b64") \
                     and cp.get("qr_signature_v2"):
                 payload = f"GOOIL2|{cp['qr_ciphertext_b64']}|{cp['qr_signature_v2']}"
@@ -1214,7 +1243,7 @@ def build_coupons_router(db, get_current_user, notify=None):
                                        cp.get("signature", ""))
             qr = qrcode.QRCode(
                 version=None,
-                error_correction=qrcode.constants.ERROR_CORRECT_H,   # high-res, error-resilient
+                error_correction=qrcode.constants.ERROR_CORRECT_H,
                 box_size=10,
                 border=1,
             )
@@ -1223,11 +1252,10 @@ def build_coupons_router(db, get_current_user, notify=None):
             qr_img = qr.make_image(fill_color="black", back_color="white")
             qr_reader = ImageReader(
                 qr_img.get_image() if hasattr(qr_img, "get_image") else qr_img)
-            qr_size = radius * 0.90    # central QR — big and press-ready
+            qr_size = d_pts * 0.48    # QR ~48% of diameter — balanced with brand + serial
             qr_x = cx - qr_size / 2
-            qr_y = cy - qr_size / 2 - 1 * mm
-            # white pad behind QR so it stays scannable on black bg
-            pad = 1.2 * mm
+            qr_y = cy - qr_size / 2 - 0.3 * mm
+            pad = 0.6 * mm
             c.setFillColor(white)
             c.setStrokeColor(white)
             c.rect(qr_x - pad, qr_y - pad,
@@ -1237,48 +1265,45 @@ def build_coupons_router(db, get_current_user, notify=None):
                         width=qr_size, height=qr_size,
                         preserveAspectRatio=True, mask="auto")
 
-            # 6) Coupon Value strip — floating gold pill above QR area
-            if b["coupon_type"] == "cash":
-                value_line = f"₹{int(b['coupon_value']) if float(b['coupon_value']).is_integer() else b['coupon_value']:g}/-"
-            else:
-                value_line = f"{int(b['coupon_value']) if float(b['coupon_value']).is_integer() else b['coupon_value']:g} POINTS"
-            pill_h = 4.6 * mm
-            pill_w = radius * 1.05
+            # 6) Coupon Value pill above QR
+            value_line = _fmt_value()
+            pill_h = 2.6 * mm * scale
+            pill_w = d_pts * 0.62
             pill_x = cx - pill_w / 2
-            pill_y = cy + qr_size / 2 + 0.8 * mm
+            pill_y = cy + qr_size / 2 + 0.4 * mm
             c.setFillColor(GOLD_1)
             c.setStrokeColor(GOLD_2)
-            c.setLineWidth(0.4)
-            c.roundRect(pill_x, pill_y, pill_w, pill_h, 2.2 * mm, stroke=1, fill=1)
+            c.setLineWidth(0.25)
+            c.roundRect(pill_x, pill_y, pill_w, pill_h, 1.2 * mm, stroke=1, fill=1)
             c.setFillColor(BG_BLACK)
-            c.setFont("Helvetica-Bold", 8.5)
-            c.drawCentredString(cx, pill_y + 1.4 * mm, value_line)
+            c.setFont("Helvetica-Bold", FS_PILL)
+            c.drawCentredString(cx, pill_y + 0.7 * mm * scale, value_line)
 
-            # 7) Visible Serial (below QR) — monospace, gold, press-friendly
+            # 7) Visible Serial below QR
             visible_serial = cp.get("visible_serial") or cp.get("coupon_code") or ""
             c.setFillColor(GOLD_1)
-            c.setFont("Courier-Bold", 9.5)
-            c.drawCentredString(cx, cy - qr_size / 2 - 3.2 * mm, visible_serial)
+            c.setFont("Courier-Bold", FS_SERIAL)
+            c.drawCentredString(cx, cy - qr_size / 2 - 1.6 * mm * scale, visible_serial)
 
-            # 8) Bottom label — "MECHANIC COUPON" (arched effect approximated
-            #    with a straight line — CorelDraw arc not needed for spec)
+            # 8) Bottom label
             c.setFillColor(WHITE_TX)
-            c.setFont("Helvetica-Bold", 6.8)
-            c.drawCentredString(cx, cy - radius + 6 * mm, "MECHANIC COUPON")
-            # small type-tag under the label
+            c.setFont("Helvetica-Bold", FS_FOOTER)
+            c.drawCentredString(cx, cy - radius + 4.2 * mm * scale, "MECHANIC COUPON")
             c.setFillColor(GOLD_1)
-            c.setFont("Helvetica-Bold", 5.5)
-            c.drawCentredString(cx, cy - radius + 3 * mm,
+            c.setFont("Helvetica-Bold", FS_SUBTAG)
+            c.drawCentredString(cx, cy - radius + 2.1 * mm * scale,
                                 ("CASH COUPON" if b["coupon_type"] == "cash"
                                  else "REWARD COUPON"))
 
+        per_page = cols * rows
         for i, cp in enumerate(coupons):
-            col = i % cols
-            row = (i // cols) % rows
-            if i > 0 and i % (cols * rows) == 0:
+            if i > 0 and i % per_page == 0:
                 c.showPage()
-            cx = margin + col * cell_w + cell_w / 2
-            cy = page_h - margin - row * cell_h - cell_h / 2
+            idx_in_page = i % per_page
+            col = idx_in_page % cols
+            row = idx_in_page // cols
+            cx = left_pad + col * (d_pts + gap) + d_pts / 2
+            cy = page_h - top_pad - row * (d_pts + gap) - d_pts / 2
             _draw_coupon(cx, cy, cp)
 
         c.showPage()
@@ -1291,15 +1316,91 @@ def build_coupons_router(db, get_current_user, notify=None):
                 "status": "printed", "printed_at": _now(), "printed_by": user["id"],
             }})
             await _audit(user, "batch.printed", "batch", bid,
-                         {"batch_label": b["batch_label"]})
+                         {"batch_label": b["batch_label"],
+                          "diameter_mm": diameter_mm, "cols": cols, "rows": rows})
 
         return Response(
             content=buf.read(),
             media_type="application/pdf",
             headers={"Content-Disposition":
-                     f'attachment; filename="{b["batch_label"]}_coupons.pdf"'},
+                     f'attachment; filename="{b["batch_label"]}_coupons_{int(diameter_mm)}mm.pdf"'},
         )
 
+    # ─── Public share link (for sending PDF to printer via WhatsApp) ──────
+    @router.post("/batches/{bid}/share-link")
+    async def create_share_link(bid: str,
+                                 body: Dict[str, Any] = Body(default={}),
+                                 request: Request = None,
+                                 user: dict = Depends(owner_or_accountant)):
+        """
+        Creates a signed, time-limited public URL that returns the printable PDF
+        WITHOUT needing an auth token — so it can be shared to the printer over
+        WhatsApp / Email. Link expires in 24 h.
+        """
+        b = _clean(await db.dms_v2_coupon_batches.find_one({"id": bid}))
+        if not b:
+            raise HTTPException(404, "Batch not found")
+        diameter_mm = float(body.get("diameter_mm") or 34.0)
+        diameter_mm = max(20.0, min(80.0, diameter_mm))
+        exp = int(datetime.utcnow().timestamp()) + 24 * 3600     # 24h
+
+        secret = os.environ.get("APP_SECRET") \
+            or os.environ.get("JWT_SECRET") \
+            or "gooil-dms-share-fallback-secret"
+        raw = f"{bid}|{diameter_mm}|{exp}".encode()
+        sig = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()[:32]
+        # Use '~' as delimiter — never appears in bid or float strings
+        token = base64.urlsafe_b64encode(
+            f"{bid}~{diameter_mm}~{exp}~{sig}".encode()).decode().rstrip("=")
+
+        # Build absolute URL — request.base_url gives correct ingress URL
+        base = str(request.base_url).rstrip("/") if request else ""
+        share_url = f"{base}/api/dms/coupons/batches/public-download/{token}"
+        await _audit(user, "batch.share_link_created", "batch", bid, {
+            "batch_label": b["batch_label"], "diameter_mm": diameter_mm,
+            "expires_at": datetime.utcfromtimestamp(exp).isoformat() + "Z",
+        })
+        return {
+            "ok": True,
+            "share_url": share_url,
+            "expires_at": datetime.utcfromtimestamp(exp).isoformat() + "Z",
+            "batch_label": b["batch_label"],
+            "coupon_count": await db.dms_v2_coupons.count_documents({"batch_id": bid}),
+            "diameter_mm": diameter_mm,
+        }
+
+    @router.get("/batches/public-download/{token}")
+    async def public_download(token: str):
+        """
+        Public (no-auth) PDF download using a signed token from share-link.
+        Used by the printer's WhatsApp — link only, no login.
+        """
+        try:
+            padded = token + "=" * (-len(token) % 4)
+            raw = base64.urlsafe_b64decode(padded).decode()
+            bid, diameter_mm, exp, sig = raw.split("~", 3)
+            diameter_mm = float(diameter_mm)
+            exp = int(exp)
+        except Exception:
+            raise HTTPException(400, "Malformed share token")
+        if int(datetime.utcnow().timestamp()) > exp:
+            raise HTTPException(410, "Share link has expired")
+        secret = os.environ.get("APP_SECRET") \
+            or os.environ.get("JWT_SECRET") \
+            or "gooil-dms-share-fallback-secret"
+        expected = hmac.new(secret.encode(),
+                            f"{bid}|{diameter_mm}|{exp}".encode(),
+                            hashlib.sha256).hexdigest()[:32]
+        if not hmac.compare_digest(expected, sig):
+            raise HTTPException(403, "Invalid share signature")
+
+        b = _clean(await db.dms_v2_coupon_batches.find_one({"id": bid}))
+        if not b:
+            raise HTTPException(404, "Batch not found")
+        # reuse export_pdf logic — synthesize a fake owner user for the call
+        fake_owner = {"id": "share-link", "tenant_id": b.get("tenant_id")}
+        return await export_pdf(bid=bid, diameter_mm=diameter_mm,
+                                per_row=None, user=fake_owner)
     @router.get("/batches/{bid}/export-xlsx")
     async def export_xlsx(bid: str, user: dict = Depends(owner_only)):
         """Excel MANIFEST for internal audit (owner-only).
