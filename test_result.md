@@ -5656,3 +5656,74 @@ agent_communication:
           
           NO CRITICAL ISSUES FOUND.
           All Coupon Printing + Share Link features production-ready.
+
+  - task: "34mm Circular Coupon Print + WhatsApp Share Link + Clickable Dashboards + Fixed QR Modal UI"
+    implemented: true
+    working: true
+    file: "backend/dms_coupons.py, frontend/src/pages/dms/CouponsV2.jsx, frontend/src/pages/dms/OwnerPages.jsx, frontend/src/pages/dms/api.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ALL 12/12 BACKEND TESTS PASSED (100%) —
+          
+          Fixes/features shipped:
+          
+          1) BUG FIX — CouponQrModal (was showing overflowing QR + exposing 
+             internal fields inline). Rebuilt as: mini-coupon card preview 
+             (black bg + gold accent + QR + value pill + serial), status pills,
+             clean Serial/Type/Value rows, and internal security info 
+             (Hidden Secure ID + Encrypted Payload) COLLAPSED behind a 
+             "Owner Only" toggle. Contained inside dialog, no overflow.
+             Added Download-QR button.
+          
+          2) FEATURE — 34mm coupon PDF matching CorelDraw design.
+             GET /batches/{bid}/export-pdf now accepts `?diameter_mm=N` 
+             (default 34, clamped 20-80). Auto-fits circles on A4 
+             (5×7 = 35 coupons/A4 at 34mm). Font sizes scale with diameter. 
+             Filename includes size (e.g. GO-C-00003_coupons_34mm.pdf).
+          
+          3) FEATURE — WhatsApp share link (for sending PDF to printer).
+             * NEW POST /batches/{bid}/share-link — returns 24-h signed 
+               public URL (HMAC-SHA256). RBAC: owner_or_accountant.
+             * NEW GET /batches/public-download/{token} — no-auth PDF 
+               download. Verifies expiry + signature. Malformed/tampered 
+               tokens → 400/403.
+             * Frontend: PrintShareDialog with size slider (20-80mm), size 
+               presets (25/30/34★/40/50/60), live layout estimate (cols×rows 
+               = per page, total pages), TWO options — direct download 
+               OR generate share link + open WhatsApp (uses Web Share API 
+               with PDF file attachment on mobile, wa.me fallback with 
+               phone-number field on desktop). Copy-link button.
+          
+          4) FEATURE — Owner Dashboard KPI cards now visibly clickable.
+             All 7 cards (Distributors, Products, Pending Orders, Ready to 
+             Dispatch, Revenue MTD, Outstanding, Inventory Value) show a 
+             ChevronRight indicator + hover lift + amber border + 
+             "View details →" hint on hover. Cash & Bank Snapshot's 5 
+             finance cells (Cash in Bank, Cash in Hand, Outstanding Loans, 
+             Net Liquid, Net Position) are ALSO clickable now (drill to 
+             /finance/bank-accounts, /finance/cash-transactions, 
+             /finance/loans, /owner/ledger).
+          
+          5) FEATURE — Coupons Owner-page 6 KPI cards clickable too.
+             Generated → /coupons/all
+             Inactive → /coupons/all?status=generated
+             Active → /coupons/all?status=unused  
+             Claimed → /coupons/all?status=claimed  
+             Redeemed → /coupons/all?status=redeemed  
+             Fraud Attempts → /coupons/fraud
+             URL query pre-populates the list-page filter.
+          
+          6) SECURITY — verified via byte-scan of both 34mm and 50mm PDFs:
+             NO leak of hmac_secret / hidden_secure_id / qr_signature_v2 / 
+             secret_token / GOOIL2| plaintext. QR remains bitmap-only.
+          
+          BACKWARD COMPATIBILITY:
+          - Old export-pdf calls without ?diameter_mm still work (now 34 mm)
+          - Preview endpoint unchanged
+          - Coupon activation and lifecycle endpoints untouched
+          - Old QR-payload endpoint unchanged (modal reads same fields)
