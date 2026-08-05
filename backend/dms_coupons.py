@@ -736,6 +736,103 @@ def build_coupons_router(db, get_current_user, notify=None):
         })
         return {"ok": True}
 
+    @router.post("/activate-range/preview")
+    async def activate_range_preview(body: Dict[str, Any] = Body(...),
+                                     user: dict = Depends(owner_or_accountant)):
+        """
+        Live preview of an activation range — DOES NOT change any coupon state.
+        Returns coupons_found / already_active / ready_to_activate / skipped
+        so the UI can render confidence-boosting details before the actual activate.
+
+        Body: { batch_id, from_serial, to_serial }
+              OR { batch_id, from_number, to_number }
+        """
+        batch_id = (body.get("batch_id") or "").strip()
+        if not batch_id:
+            raise HTTPException(400, "batch_id is required")
+        batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": batch_id}))
+        if not batch:
+            raise HTTPException(404, "Batch not found")
+        if batch.get("closed_at"):
+            raise HTTPException(400, "Batch is closed")
+
+        from_serial_in = (body.get("from_serial") or "").strip() or None
+        to_serial_in = (body.get("to_serial") or "").strip() or None
+        from_num = body.get("from_number")
+        to_num = body.get("to_number")
+
+        from_serial: Optional[str] = None
+        to_serial: Optional[str] = None
+        if from_serial_in and to_serial_in:
+            from_serial = _normalize_serial(from_serial_in, batch)
+            to_serial = _normalize_serial(to_serial_in, batch)
+            if not from_serial or not to_serial:
+                raise HTTPException(400,
+                    f"Could not interpret serial range '{from_serial_in}' … '{to_serial_in}'")
+        elif from_num is not None and to_num is not None:
+            if not batch.get("prefix"):
+                raise HTTPException(400, "Batch has no prefix; use from_serial/to_serial instead")
+            pad = int(batch.get("serial_pad") or 3)
+            prefix = batch["prefix"]
+            from_serial = _fmt_serial(prefix, int(from_num), pad)
+            to_serial = _fmt_serial(prefix, int(to_num), pad)
+        else:
+            raise HTTPException(400,
+                "Provide either (from_serial,to_serial) or (from_number,to_number)")
+
+        if from_serial > to_serial:
+            from_serial, to_serial = to_serial, from_serial
+
+        # Validate FROM / TO actually exist in the batch (spec requires it)
+        first_exists = await db.dms_v2_coupons.find_one(
+            {"batch_id": batch_id, "visible_serial": from_serial}, {"_id": 1})
+        last_exists = await db.dms_v2_coupons.find_one(
+            {"batch_id": batch_id, "visible_serial": to_serial}, {"_id": 1})
+        if not first_exists:
+            raise HTTPException(400,
+                f"From Serial {from_serial} not found in batch {batch.get('batch_label')}")
+        if not last_exists:
+            raise HTTPException(400,
+                f"To Serial {to_serial} not found in batch {batch.get('batch_label')}")
+
+        base_q = {
+            "batch_id": batch_id,
+            "visible_serial": {"$gte": from_serial, "$lte": to_serial},
+        }
+        # coupons_found: total coupons in this range within the batch
+        coupons_found = await db.dms_v2_coupons.count_documents(base_q)
+
+        # already_active: currently active + unused (nothing to do)
+        already_active = await db.dms_v2_coupons.count_documents({
+            **base_q, "status": "unused", "active": True,
+        })
+        # ready_to_activate: eligible for activation now
+        ready_q = {
+            **base_q,
+            "status": {"$in": ["generated", "unused"]},
+            "$or": [{"active": {"$ne": True}}, {"status": "generated"}],
+        }
+        ready_to_activate = await db.dms_v2_coupons.count_documents(ready_q)
+
+        # skipped: everything else (claimed / redeemed / cancelled / expired / etc.)
+        skipped = coupons_found - already_active - ready_to_activate
+        if skipped < 0:
+            skipped = 0
+
+        return {
+            "ok": True,
+            "batch_id": batch_id,
+            "batch_label": batch.get("batch_label"),
+            "coupon_type": batch.get("coupon_type"),
+            "coupon_value": batch.get("coupon_value"),
+            "from_serial": from_serial,
+            "to_serial": to_serial,
+            "coupons_found": coupons_found,
+            "already_active": already_active,
+            "ready_to_activate": ready_to_activate,
+            "skipped": skipped,
+        }
+
     @router.post("/activate-range")
     async def activate_range(body: Dict[str, Any] = Body(...),
                              user: dict = Depends(owner_or_accountant)):
@@ -782,6 +879,18 @@ def build_coupons_router(db, get_current_user, notify=None):
 
         if from_serial > to_serial:
             from_serial, to_serial = to_serial, from_serial
+
+        # Spec: validate FROM / TO actually exist in the batch
+        first_exists = await db.dms_v2_coupons.find_one(
+            {"batch_id": batch_id, "visible_serial": from_serial}, {"_id": 1})
+        last_exists = await db.dms_v2_coupons.find_one(
+            {"batch_id": batch_id, "visible_serial": to_serial}, {"_id": 1})
+        if not first_exists:
+            raise HTTPException(400,
+                f"From Serial {from_serial} not found in batch {batch.get('batch_label')}")
+        if not last_exists:
+            raise HTTPException(400,
+                f"To Serial {to_serial} not found in batch {batch.get('batch_label')}")
 
         # RANGE query — string comparison is safe because zero-padded numeric serials
         # sort correctly lexicographically within a batch.
@@ -1018,94 +1127,171 @@ def build_coupons_router(db, get_current_user, notify=None):
     @router.get("/batches/{bid}/export-pdf")
     async def export_pdf(bid: str, user: dict = Depends(owner_only)):
         """
-        Printable PDF for the printing press — STRICTLY contains only:
+        Printable PDF for the printing press — matches the GOOIL CorelDraw
+        circular coupon design (die-cut circular MECHANIC COUPON).
+
+        STRICTLY contains only:
           * QR image  (encrypted payload — v2)
           * Visible Serial
           * Coupon Type
           * Coupon Value
+
         No UUID, no secret token, no signature, no batch label, no batch secret,
-        no internal IDs.
-        Layout: 3×4 = 12 coupons per A4 page.
+        no internal IDs are ever printed.
+
+        Layout: 3×3 = 9 circular coupons per A4 page (with die-cut ring).
+        High resolution QR (ERROR_CORRECT_H) for reliable press printing.
         """
         import qrcode
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.units import mm
         from reportlab.pdfgen import canvas as pdfcanvas
         from reportlab.lib.utils import ImageReader
+        from reportlab.lib.colors import HexColor, black, white
 
         b = _clean(await db.dms_v2_coupon_batches.find_one({"id": bid}))
         if not b:
             raise HTTPException(404, "Batch not found")
-        secret = b["hmac_secret"]
         coupons = await db.dms_v2_coupons.find({"batch_id": bid}, {"_id": 0})\
             .sort("visible_serial", 1).to_list(200_000)
         if not coupons:
             raise HTTPException(400, "No coupons in batch")
 
+        # ── Brand palette (GOOIL: black bg, gold accents, white text) ──────
+        BG_BLACK = HexColor("#0d0d0d")
+        GOLD_1   = HexColor("#f5c542")   # bright gold
+        GOLD_2   = HexColor("#c9a227")   # deep gold
+        RED_DIE  = HexColor("#e53935")   # die-cut guide ring (dashed red)
+        WHITE_TX = white
+
         buf = BytesIO()
         c = pdfcanvas.Canvas(buf, pagesize=A4)
         page_w, page_h = A4
-        margin = 12 * mm
-        cols, rows = 3, 4
+
+        # 3 × 3 layout = 9 coupons / A4 page
+        margin = 8 * mm
+        cols, rows = 3, 3
         cell_w = (page_w - 2 * margin) / cols
         cell_h = (page_h - 2 * margin) / rows
+        # coupon radius (inside cell, leave a 3mm printer bleed)
+        radius = (min(cell_w, cell_h) - 6 * mm) / 2
 
-        for i, cp in enumerate(coupons):
-            col = i % cols
-            row = (i // cols) % rows
-            new_page_needed = i > 0 and i % (cols * rows) == 0
-            if new_page_needed:
-                c.showPage()
+        def _draw_coupon(cx: float, cy: float, cp: Dict[str, Any]) -> None:
+            """Draw one circular MECHANIC COUPON centered at (cx, cy)."""
+            # 1) Red dashed die-cut guide ring (printers cut along this)
+            c.setStrokeColor(RED_DIE)
+            c.setLineWidth(0.5)
+            c.setDash(2, 2)
+            c.circle(cx, cy, radius + 1.2, stroke=1, fill=0)
+            c.setDash()  # reset dash
 
-            x0 = margin + col * cell_w
-            y0 = page_h - margin - (row + 1) * cell_h
+            # 2) Solid black filled circle (coupon background)
+            c.setFillColor(BG_BLACK)
+            c.setStrokeColor(GOLD_2)
+            c.setLineWidth(0.9)
+            c.circle(cx, cy, radius, stroke=1, fill=1)
 
-            # border
-            c.setLineWidth(0.6)
-            c.rect(x0 + 2, y0 + 2, cell_w - 4, cell_h - 4)
+            # 3) Inner thin gold decorative ring
+            c.setStrokeColor(GOLD_1)
+            c.setLineWidth(0.4)
+            c.circle(cx, cy, radius - 2.2 * mm, stroke=1, fill=0)
 
-            # Build v2 payload from stored ciphertext (never regenerate — the DB
-            # value is canonical and immutable).
-            if cp.get("qr_version") == "v2" and cp.get("qr_ciphertext_b64") and cp.get("qr_signature_v2"):
+            # 4) Top brand band — "GO OIL" logo text + tagline
+            c.setFillColor(GOLD_1)
+            c.setFont("Helvetica-Bold", 12)
+            c.drawCentredString(cx, cy + radius - 8 * mm, "GO OIL")
+            c.setFillColor(WHITE_TX)
+            c.setFont("Helvetica", 5.5)
+            c.drawCentredString(cx, cy + radius - 12 * mm, "Hi-Technoply Automotive")
+
+            # 5) QR code — canonical v2 payload
+            if cp.get("qr_version") == "v2" and cp.get("qr_ciphertext_b64") \
+                    and cp.get("qr_signature_v2"):
                 payload = f"GOOIL2|{cp['qr_ciphertext_b64']}|{cp['qr_signature_v2']}"
             else:
-                # legacy v1 fallback (for old batches that pre-date v2)
                 payload = _qr_payload(cp.get("coupon_code") or cp.get("visible_serial"),
-                                       cp.get("secret_token", ""), cp.get("signature", ""))
-            qr_img = qrcode.make(payload)
-            qr_reader = ImageReader(qr_img.get_image() if hasattr(qr_img, "get_image") else qr_img)
-            qr_size = min(cell_w, cell_h) * 0.60
-            qr_x = x0 + (cell_w - qr_size) / 2
-            qr_y = y0 + cell_h - qr_size - 6 * mm
+                                       cp.get("secret_token", ""),
+                                       cp.get("signature", ""))
+            qr = qrcode.QRCode(
+                version=None,
+                error_correction=qrcode.constants.ERROR_CORRECT_H,   # high-res, error-resilient
+                box_size=10,
+                border=1,
+            )
+            qr.add_data(payload)
+            qr.make(fit=True)
+            qr_img = qr.make_image(fill_color="black", back_color="white")
+            qr_reader = ImageReader(
+                qr_img.get_image() if hasattr(qr_img, "get_image") else qr_img)
+            qr_size = radius * 0.90    # central QR — big and press-ready
+            qr_x = cx - qr_size / 2
+            qr_y = cy - qr_size / 2 - 1 * mm
+            # white pad behind QR so it stays scannable on black bg
+            pad = 1.2 * mm
+            c.setFillColor(white)
+            c.setStrokeColor(white)
+            c.rect(qr_x - pad, qr_y - pad,
+                   qr_size + 2 * pad, qr_size + 2 * pad,
+                   stroke=0, fill=1)
             c.drawImage(qr_reader, qr_x, qr_y,
                         width=qr_size, height=qr_size,
                         preserveAspectRatio=True, mask="auto")
 
-            # Text block below QR — ONLY the 3 spec-approved lines
-            visible_serial = cp.get("visible_serial") or cp.get("coupon_code") or ""
+            # 6) Coupon Value strip — floating gold pill above QR area
             if b["coupon_type"] == "cash":
-                value_line = f"CASH  ₹{b['coupon_value']:g}"
+                value_line = f"₹{int(b['coupon_value']) if float(b['coupon_value']).is_integer() else b['coupon_value']:g}/-"
             else:
-                value_line = f"REWARD  {b['coupon_value']:g} pts"
+                value_line = f"{int(b['coupon_value']) if float(b['coupon_value']).is_integer() else b['coupon_value']:g} POINTS"
+            pill_h = 4.6 * mm
+            pill_w = radius * 1.05
+            pill_x = cx - pill_w / 2
+            pill_y = cy + qr_size / 2 + 0.8 * mm
+            c.setFillColor(GOLD_1)
+            c.setStrokeColor(GOLD_2)
+            c.setLineWidth(0.4)
+            c.roundRect(pill_x, pill_y, pill_w, pill_h, 2.2 * mm, stroke=1, fill=1)
+            c.setFillColor(BG_BLACK)
+            c.setFont("Helvetica-Bold", 8.5)
+            c.drawCentredString(cx, pill_y + 1.4 * mm, value_line)
 
-            c.setFont("Courier-Bold", 11)
-            c.drawCentredString(x0 + cell_w / 2,
-                                qr_y - 6 * mm,
-                                visible_serial)
-            c.setFont("Helvetica-Bold", 9)
-            c.drawCentredString(x0 + cell_w / 2,
-                                qr_y - 11 * mm,
-                                value_line)
+            # 7) Visible Serial (below QR) — monospace, gold
+            visible_serial = cp.get("visible_serial") or cp.get("coupon_code") or ""
+            c.setFillColor(GOLD_1)
+            c.setFont("Courier-Bold", 8)
+            c.drawCentredString(cx, cy - qr_size / 2 - 3 * mm, visible_serial)
+
+            # 8) Bottom label — "MECHANIC COUPON" (arched effect approximated
+            #    with a straight line — CorelDraw arc not needed for spec)
+            c.setFillColor(WHITE_TX)
+            c.setFont("Helvetica-Bold", 6.8)
+            c.drawCentredString(cx, cy - radius + 6 * mm, "MECHANIC COUPON")
+            # small type-tag under the label
+            c.setFillColor(GOLD_1)
+            c.setFont("Helvetica-Bold", 5.5)
+            c.drawCentredString(cx, cy - radius + 3 * mm,
+                                ("CASH COUPON" if b["coupon_type"] == "cash"
+                                 else "REWARD COUPON"))
+
+        for i, cp in enumerate(coupons):
+            col = i % cols
+            row = (i // cols) % rows
+            if i > 0 and i % (cols * rows) == 0:
+                c.showPage()
+            cx = margin + col * cell_w + cell_w / 2
+            cy = page_h - margin - row * cell_h - cell_h / 2
+            _draw_coupon(cx, cy, cp)
 
         c.showPage()
         c.save()
         buf.seek(0)
+
         # mark printed (idempotent)
         if b["status"] in ("activated",):
             await db.dms_v2_coupon_batches.update_one({"id": bid}, {"$set": {
                 "status": "printed", "printed_at": _now(), "printed_by": user["id"],
             }})
-            await _audit(user, "batch.printed", "batch", bid, {"batch_label": b["batch_label"]})
+            await _audit(user, "batch.printed", "batch", bid,
+                         {"batch_label": b["batch_label"]})
 
         return Response(
             content=buf.read(),

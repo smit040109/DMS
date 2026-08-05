@@ -20,7 +20,7 @@ import time
 from typing import Dict, Any, List, Optional
 
 # Backend URL from frontend/.env
-BASE_URL = "https://loyalty-qr-system-3.preview.emergentagent.com/api"
+BASE_URL = "https://print-coupon-manager.preview.emergentagent.com/api"
 
 # Generate unique prefix for test batches
 TEST_PREFIX = f"T{int(time.time()) % 100000}"
