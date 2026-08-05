@@ -153,6 +153,15 @@ export const dms = {
   cpnDeactivateCoupon: (cid) => api.post(`/dms/coupons/coupons/${cid}/deactivate`).then(r => r.data),
   cpnActivateRange: (body) => api.post(`/dms/coupons/activate-range`, body).then(r => r.data),
   cpnDeactivateRange: (body) => api.post(`/dms/coupons/deactivate-range`, body).then(r => r.data),
+  cpnBulkActivate: (coupon_ids) => api.post(`/dms/coupons/coupons/bulk-activate`, { coupon_ids }).then(r => r.data),
+  cpnBulkDeactivate: (coupon_ids) => api.post(`/dms/coupons/coupons/bulk-deactivate`, { coupon_ids }).then(r => r.data),
+  cpnCouponQrPayload: (cid) => api.get(`/dms/coupons/coupons/${cid}/qr-payload`).then(r => r.data),
+  cpnCouponQrImageBlob: async (cid, size = 6) => {
+    const r = await api.get(`/dms/coupons/coupons/${cid}/qr-image`, {
+      params: { size }, responseType: "blob",
+    });
+    return URL.createObjectURL(r.data);
+  },
   cpnExportPdfUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-pdf`,
   cpnExportXlsxUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-xlsx`,
   cpnExportPdf: async (bid, filename) => {

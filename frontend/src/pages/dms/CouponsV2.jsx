@@ -437,6 +437,8 @@ export function OwnerCouponBatchDetailPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [busy, setBusy] = useState(false);
   const [rangeOpen, setRangeOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [qrModal, setQrModal] = useState(null);   // { cid, serial } | null
 
   const load = useCallback(async () => {
     if (!bid) return;
@@ -447,6 +449,7 @@ export function OwnerCouponBatchDetailPage() {
         dms.cpnListCoupons({ batch_id: bid, limit: 500, status: statusFilter || undefined }),
       ]);
       setBatch(b); setCoupons(list.data || []);
+      setSelectedIds([]);   // clear selection on reload
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to load batch");
     } finally { setBusy(false); }
@@ -578,43 +581,122 @@ export function OwnerCouponBatchDetailPage() {
       <Card className="overflow-x-auto">
         <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
           <span className="font-semibold text-slate-900">Coupons in this batch</span>
+          {selectedIds.length > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-semibold">
+              {selectedIds.length} selected
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-2 flex-wrap">
             <Select value={statusFilter || "__all__"} onValueChange={v => setStatusFilter(v === "__all__" ? "" : v)}>
-              <SelectTrigger className="w-48"><SelectValue placeholder="All statuses" /></SelectTrigger>
+              <SelectTrigger className="w-40"><SelectValue placeholder="All statuses" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">All statuses</SelectItem>
                 {["generated", "unused", "claimed", "redemption_pending", "redeemed", "expired", "cancelled"]
                   .map(s => <SelectItem key={s} value={s}>{s.replace(/_/g, " ")}</SelectItem>)}
               </SelectContent>
             </Select>
+            {selectedIds.length > 0 && (
+              <>
+                <Button variant="outline" size="sm" disabled={busy}
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            const r = await dms.cpnBulkActivate(selectedIds);
+                            toast.success(`Activated ${r.activated} of ${r.requested} coupons`);
+                            await load();
+                          } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+                          finally { setBusy(false); }
+                        }}
+                        data-testid="bulk-activate">
+                  <Play size={14} className="mr-1" /> Activate Selected
+                </Button>
+                <Button variant="outline" size="sm" disabled={busy}
+                        className="text-rose-700 border-rose-200 hover:bg-rose-50"
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            const r = await dms.cpnBulkDeactivate(selectedIds);
+                            toast.success(`Deactivated ${r.deactivated} of ${r.requested} coupons`);
+                            await load();
+                          } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+                          finally { setBusy(false); }
+                        }}
+                        data-testid="bulk-deactivate">
+                  Deactivate Selected
+                </Button>
+              </>
+            )}
             {batch.serial_mode === "prefix_sequential" && (
               <Button variant="outline" size="sm"
                       onClick={() => setRangeOpen(true)} data-testid="open-range-dialog">
-                <Play size={14} className="mr-1" /> Activate Range
+                <Play size={14} className="mr-1" /> Activate by Range
               </Button>
             )}
           </div>
         </div>
         <Table>
           <TableHeader><TableRow>
-            <TableHead>Visible Serial</TableHead><TableHead>Status</TableHead>
+            <TableHead className="w-8">
+              <input type="checkbox"
+                     className="h-4 w-4 accent-amber-600"
+                     data-testid="select-all"
+                     checked={coupons.length > 0 && selectedIds.length === coupons.length}
+                     onChange={e => setSelectedIds(e.target.checked ? coupons.map(c => c.id) : [])} />
+            </TableHead>
+            <TableHead>Visible Serial</TableHead>
+            <TableHead>Unique ID (hidden)</TableHead>
+            <TableHead>QR</TableHead>
+            <TableHead>Status</TableHead>
             <TableHead>Active</TableHead>
-            <TableHead>Retailer</TableHead><TableHead>Distributor</TableHead>
+            <TableHead>Retailer</TableHead>
             <TableHead>Claimed On</TableHead>
             <TableHead className="text-right">Actions</TableHead>
           </TableRow></TableHeader>
           <TableBody>
             {coupons.length === 0 && (
-              <TableRow><TableCell colSpan={7} className="text-center py-8 text-slate-400">
+              <TableRow><TableCell colSpan={9} className="text-center py-8 text-slate-400">
                 No coupons match this filter
               </TableCell></TableRow>
             )}
             {coupons.map(c => {
               const canAct = ["generated", "unused"].includes(c.status) && !c.active;
               const canDeact = ["generated", "unused"].includes(c.status) && c.active;
+              const serial = c.visible_serial || c.coupon_code;
+              const uid = c.hidden_secure_id || "—";
               return (
-                <TableRow key={c.id}>
-                  <TableCell className="font-mono font-semibold text-xs">{c.visible_serial || c.coupon_code}</TableCell>
+                <TableRow key={c.id} className={selectedIds.includes(c.id) ? "bg-amber-50/60" : ""}>
+                  <TableCell>
+                    <input type="checkbox"
+                           className="h-4 w-4 accent-amber-600"
+                           data-testid={`select-${c.id}`}
+                           checked={selectedIds.includes(c.id)}
+                           onChange={e => {
+                             setSelectedIds(prev => e.target.checked
+                               ? [...prev, c.id]
+                               : prev.filter(x => x !== c.id));
+                           }} />
+                  </TableCell>
+                  <TableCell className="font-mono font-semibold text-xs">{serial}</TableCell>
+                  <TableCell className="text-[10px] font-mono text-slate-500">
+                    {uid !== "—" ? (
+                      <button className="hover:text-slate-800 hover:underline decoration-dotted"
+                              title={`Click to copy: ${uid}`}
+                              onClick={() => {
+                                navigator.clipboard?.writeText(uid);
+                                toast.success("Unique ID copied");
+                              }}>
+                        {uid.slice(0, 8)}…{uid.slice(-4)}
+                      </button>
+                    ) : "—"}
+                  </TableCell>
+                  <TableCell>
+                    <button
+                      className="text-xs px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 flex items-center gap-1"
+                      onClick={() => setQrModal({ cid: c.id, serial })}
+                      data-testid={`qr-${c.id}`}>
+                      <ScanLine size={13} /> View
+                    </button>
+                  </TableCell>
                   <TableCell><StatusChip s={c.status} /></TableCell>
                   <TableCell>
                     {c.active
@@ -622,7 +704,6 @@ export function OwnerCouponBatchDetailPage() {
                       : <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 text-slate-700">INACTIVE</span>}
                   </TableCell>
                   <TableCell className="text-xs">{c.retailer_name || <span className="text-slate-400">—</span>}</TableCell>
-                  <TableCell className="text-xs">{c.distributor_name || <span className="text-slate-400">—</span>}</TableCell>
                   <TableCell className="text-xs text-slate-500">{c.claim_timestamp ? niceDate(c.claim_timestamp) : "—"}</TableCell>
                   <TableCell className="text-right">
                     {canAct && (
@@ -649,36 +730,159 @@ export function OwnerCouponBatchDetailPage() {
       {/* Activate Range dialog */}
       <ActivateRangeDialog open={rangeOpen} onClose={() => setRangeOpen(false)}
                             batch={batch} onDone={load} />
+
+      {/* QR view modal */}
+      <CouponQrModal modal={qrModal} onClose={() => setQrModal(null)} />
+    </div>
+  );
+}
+
+function CouponQrModal({ modal, onClose }) {
+  const [data, setData] = useState(null);
+  const [imgUrl, setImgUrl] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!modal) { setData(null); setImgUrl(null); return; }
+    let alive = true;
+    setBusy(true);
+    (async () => {
+      try {
+        const [d, url] = await Promise.all([
+          dms.cpnCouponQrPayload(modal.cid),
+          dms.cpnCouponQrImageBlob(modal.cid, 8),
+        ]);
+        if (alive) { setData(d); setImgUrl(url); }
+      } catch (e) {
+        toast.error(e?.response?.data?.detail || "Failed to load QR");
+        if (alive) onClose();
+      } finally { if (alive) setBusy(false); }
+    })();
+    return () => {
+      alive = false;
+      if (imgUrl) URL.revokeObjectURL(imgUrl);
+    };
+  }, [modal]);
+
+  if (!modal) return null;
+
+  return (
+    <Dialog open={!!modal} onOpenChange={o => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="font-mono">{modal.serial}</DialogTitle>
+        </DialogHeader>
+        {busy && <div className="py-10 text-center text-slate-500 text-sm">Generating QR…</div>}
+        {data && (
+          <div className="space-y-3">
+            <div className="flex justify-center">
+              {imgUrl ? (
+                <img src={imgUrl} alt="Coupon QR" className="border rounded shadow-sm" width={280} height={280} />
+              ) : (
+                <div className="w-[280px] h-[280px] bg-slate-100 animate-pulse rounded" />
+              )}
+            </div>
+            <div className="text-center text-xs text-slate-500">
+              {data.coupon_type === "cash" ? `CASH ₹${data.coupon_value}` : `${data.coupon_value} POINTS`}
+              {" · "}<span className="font-semibold">{data.status}</span>
+              {" · "}<span className={data.active ? "text-emerald-700 font-semibold" : "text-slate-500"}>
+                {data.active ? "ACTIVE" : "INACTIVE"}
+              </span>
+            </div>
+            <div className="border-t border-slate-100 pt-3 space-y-2">
+              <FieldCopy label="Visible Serial (public)" value={data.visible_serial} />
+              <FieldCopy label={`Unique ID / Hidden Secure ID (UUID v4)`}
+                          value={data.hidden_secure_id || "—"} mono />
+              <FieldCopy label={`Encrypted QR Payload (${data.qr_version})`}
+                          value={data.qr_payload} mono truncate />
+            </div>
+            <p className="text-[11px] text-slate-500 leading-relaxed">
+              <b>Note:</b> The QR embeds an AES-256-GCM encrypted payload + HMAC-SHA256 signature.
+              Only Owner &amp; Owner-Accountant see the Unique ID. Printing press
+              gets only the QR + serial + type + value.
+            </p>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function FieldCopy({ label, value, mono = false, truncate = false }) {
+  return (
+    <div>
+      <div className="text-[10px] uppercase text-slate-500 font-semibold tracking-wide">{label}</div>
+      <div className="flex items-center gap-2">
+        <code className={`flex-1 text-xs bg-slate-50 border border-slate-200 rounded px-2 py-1 ${mono ? "font-mono" : ""} ${truncate ? "truncate" : "break-all"}`}>
+          {value}
+        </code>
+        <button className="text-[10px] px-2 py-1 rounded border border-slate-200 hover:bg-slate-50 text-slate-600"
+                onClick={() => { navigator.clipboard?.writeText(value); toast.success("Copied"); }}>
+          Copy
+        </button>
+      </div>
     </div>
   );
 }
 
 function ActivateRangeDialog({ open, onClose, batch, onDone }) {
+  const [mode, setMode] = useState("serial");   // "serial" or "number"
+  const [fromS, setFromS] = useState("");
+  const [toS, setToS] = useState("");
   const [fromN, setFromN] = useState("");
   const [toN, setToN] = useState("");
   const [busy, setBusy] = useState(false);
+
   useEffect(() => {
-    if (open) {
-      setFromN(batch?.serial_start ?? 1);
-      setToN(batch?.serial_end ?? "");
+    if (open && batch) {
+      const pad = batch.serial_pad || 3;
+      const p = batch.prefix || "";
+      const start = batch.serial_start ?? 1;
+      const end = batch.serial_end ?? start;
+      setFromS(`${p}${String(start).padStart(pad, "0")}`);
+      setToS(`${p}${String(end).padStart(pad, "0")}`);
+      setFromN(start);
+      setToN(end);
+      setMode("serial");
     }
   }, [open, batch]);
+
   const preview = useMemo(() => {
     if (!batch?.prefix) return null;
     const pad = batch.serial_pad || 3;
-    const fs = `${batch.prefix}${String(fromN || batch.serial_start || 1).padStart(pad, "0")}`;
-    const ts = `${batch.prefix}${String(toN || batch.serial_end || fromN).padStart(pad, "0")}`;
-    return { fs, ts };
-  }, [batch, fromN, toN]);
+    const norm = (v) => {
+      const s = String(v || "").trim().toUpperCase();
+      if (!s) return "";
+      if (s.startsWith(batch.prefix)) {
+        const num = s.slice(batch.prefix.length).replace(/^0+/, "") || "0";
+        return /^\d+$/.test(num) ? `${batch.prefix}${num.padStart(pad, "0")}` : s;
+      }
+      if (/^\d+$/.test(s)) return `${batch.prefix}${s.padStart(pad, "0")}`;
+      return s;
+    };
+    if (mode === "serial") return { fs: norm(fromS), ts: norm(toS) };
+    return {
+      fs: `${batch.prefix}${String(fromN || 0).padStart(pad, "0")}`,
+      ts: `${batch.prefix}${String(toN || 0).padStart(pad, "0")}`,
+    };
+  }, [batch, fromS, toS, fromN, toN, mode]);
 
   const submit = async () => {
-    const f = Number(fromN), t = Number(toN);
-    if (!f || !t) { toast.error("From and To required"); return; }
     setBusy(true);
     try {
-      const r = await dms.cpnActivateRange({
-        batch_id: batch.id, from_number: f, to_number: t,
-      });
+      const body = { batch_id: batch.id };
+      if (mode === "serial") {
+        if (!fromS || !toS) { toast.error("From and To serial required"); setBusy(false); return; }
+        body.from_serial = fromS; body.to_serial = toS;
+      } else {
+        const f = Number(fromN), t = Number(toN);
+        if (!f || !t) { toast.error("From and To number required"); setBusy(false); return; }
+        body.from_number = f; body.to_number = t;
+      }
+      const r = await dms.cpnActivateRange(body);
       toast.success(`Activated ${r.activated} of ${r.matched} in range ${r.from_serial} – ${r.to_serial}`);
       onDone?.(); onClose();
     } catch (e) {
@@ -691,22 +895,48 @@ function ActivateRangeDialog({ open, onClose, batch, onDone }) {
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>Activate Coupon Range</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>From #</Label>
-              <Input type="number" value={fromN} onChange={e => setFromN(e.target.value)} data-testid="range-from" />
-            </div>
-            <div>
-              <Label>To #</Label>
-              <Input type="number" value={toN} onChange={e => setToN(e.target.value)} data-testid="range-to" />
-            </div>
+          <div>
+            <Label>Input Mode</Label>
+            <Select value={mode} onValueChange={setMode}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="serial">By Serial (e.g. ABC1 to ABC50)</SelectItem>
+                <SelectItem value="number">By Number Only (1 to 50)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-          {preview && (
+          {mode === "serial" ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>From Serial</Label>
+                <Input value={fromS} onChange={e => setFromS(e.target.value.toUpperCase())}
+                       placeholder={`${batch?.prefix || "ABC"}1`} data-testid="range-from-serial" />
+              </div>
+              <div>
+                <Label>To Serial</Label>
+                <Input value={toS} onChange={e => setToS(e.target.value.toUpperCase())}
+                       placeholder={`${batch?.prefix || "ABC"}50`} data-testid="range-to-serial" />
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>From #</Label>
+                <Input type="number" value={fromN} onChange={e => setFromN(e.target.value)} data-testid="range-from" />
+              </div>
+              <div>
+                <Label>To #</Label>
+                <Input type="number" value={toN} onChange={e => setToN(e.target.value)} data-testid="range-to" />
+              </div>
+            </div>
+          )}
+          {preview && preview.fs && preview.ts && (
             <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded p-2 font-mono">
-              Range: <b>{preview.fs}</b> … <b>{preview.ts}</b>
+              Will activate: <b>{preview.fs}</b> … <b>{preview.ts}</b>
             </div>
           )}
           <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-900">
+            You can type <b>ABC1</b> or <b>ABC001</b> — system will auto-pad based on batch config.
             Only coupons currently <b>generated</b> or <b>unused-inactive</b> will be activated.
             Claimed / redeemed / cancelled coupons are protected and skipped.
           </div>
