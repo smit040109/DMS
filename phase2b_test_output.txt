@@ -1,5 +1,5 @@
 🚀 GO OIL DMS — Phase 2B Backend Testing
-Base URL: https://print-coupon-manager.preview.emergentagent.com/api
+Base URL: https://sales-ops-hub-30.preview.emergentagent.com/api
 
 ================================================================================
   LOGIN ALL ROLES

@@ -8,7 +8,7 @@ import json
 from typing import Dict, Any
 
 # Base URL
-BASE_URL = "https://print-coupon-manager.preview.emergentagent.com/api"
+BASE_URL = "https://sales-ops-hub-30.preview.emergentagent.com/api"
 
 # All 11 demo accounts (password: GoOil@2026)
 ALL_ACCOUNTS = [
