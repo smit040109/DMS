@@ -263,6 +263,24 @@ async def login(request: Request, response: Response, body: LoginIn):
         )
     except Exception:
         pass
+    # access tracking (IP / device / GPS / timestamp) — best-effort, non-blocking
+    try:
+        _ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() \
+            or (request.client.host if request.client else None)
+        await _raw_db.dms_access_logs.insert_one({
+            "id": f"acc-{uuid.uuid4().hex[:12]}",
+            "event": "login",
+            "user_id": user["id"], "email": user.get("email"), "role": user.get("role"),
+            "tenant_id": tid,
+            "ip_address": _ip,
+            "device_id": request.headers.get("x-device-id"),
+            "gps_lat": request.headers.get("x-gps-lat"),
+            "gps_lng": request.headers.get("x-gps-lng"),
+            "user_agent": request.headers.get("user-agent"),
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
+    except Exception:
+        pass
     token = create_access_token(user["id"], user["email"], user["role"], tenant_id=tid)
     response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
     user.pop("password_hash", None); user.pop("_id", None)

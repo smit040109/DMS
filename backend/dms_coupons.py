@@ -1442,6 +1442,312 @@ def build_coupons_router(db, get_current_user, notify=None):
         ).sort("name", 1).to_list(2000)
         return {"data": retailers, "count": len(retailers)}
 
+    # ═════════════════════════════════════════════════════════════════════════
+    # BOX MANAGEMENT — production boxes link coupon ranges → distributor
+    #   Flow: Generate → Print → Production → Create Box →
+    #         Assign coupon range to Box → Assign Box to Distributor
+    # ═════════════════════════════════════════════════════════════════════════
+    async def _next_box_number() -> Tuple[str, int]:
+        counter = await db.dms_v2_meta.find_one_and_update(
+            {"key": "box_counter"}, {"$inc": {"value": 1}},
+            upsert=True, return_document=True)
+        n = int((counter or {}).get("value", 1))
+        return f"BOX{n:06d}", n
+
+    async def _distributor(did: Optional[str]) -> Dict[str, Any]:
+        if not did:
+            return {}
+        return _clean(await db.dms_distributors.find_one({"id": did})) or {}
+
+    @router.post("/boxes")
+    async def create_box(body: Dict[str, Any] = Body(default_factory=dict),
+                         user: dict = Depends(owner_or_accountant)):
+        """Create a production box (auto BOX000001). Optionally assign a
+        distributor at creation. Coupons are attached later via assign-coupons."""
+        box_number, box_no = await _next_box_number()
+        did = (body.get("distributor_id") or "").strip() or None
+        dist = await _distributor(did)
+        doc = {
+            "id": _nid("box"),
+            "box_number": box_number,
+            "box_no": box_no,
+            "distributor_id": did,
+            "distributor_name": dist.get("name"),
+            "coupon_count": 0,
+            "serial_from": None,
+            "serial_to": None,
+            "notes": (body.get("notes") or "").strip(),
+            "status": "assigned" if did else "created",
+            "created_by": user["id"],
+            "created_by_name": user.get("name"),
+            "created_at": _now(),
+            "assigned_at": _now() if did else None,
+            "updated_at": _now(),
+        }
+        await db.dms_v2_boxes.insert_one(doc)
+        await _audit(user, "box.created", "box", doc["id"],
+                     {"box_number": box_number, "distributor_id": did})
+        return {"ok": True, "box": _clean(doc)}
+
+    @router.get("/boxes")
+    async def list_boxes(distributor_id: Optional[str] = Query(None),
+                        status: Optional[str] = Query(None),
+                        user: dict = Depends(get_current_user)):
+        q: Dict[str, Any] = {}
+        # distributor can only see their own boxes
+        if user.get("role") in ("distributor", "distributor_accountant"):
+            q["distributor_id"] = user.get("distributor_id") or user.get("id")
+        elif distributor_id:
+            q["distributor_id"] = distributor_id
+        if status:
+            q["status"] = status
+        docs = await db.dms_v2_boxes.find(q, {"_id": 0}).sort("box_no", -1).to_list(5000)
+        return {"data": docs, "count": len(docs)}
+
+    @router.get("/boxes/{bid}")
+    async def get_box(bid: str, user: dict = Depends(get_current_user)):
+        box = _clean(await db.dms_v2_boxes.find_one({"id": bid}))
+        if not box:
+            raise HTTPException(404, "Box not found")
+        coupons = await db.dms_v2_coupons.find(
+            {"box_id": bid}, {"_id": 0, "visible_serial": 1, "coupon_type": 1,
+                              "coupon_value": 1, "status": 1, "active": 1}
+        ).sort("visible_serial", 1).to_list(100_000)
+        return {"box": box, "coupons": coupons, "coupon_count": len(coupons)}
+
+    @router.post("/boxes/{bid}/assign-coupons")
+    async def box_assign_coupons(bid: str, body: Dict[str, Any] = Body(...),
+                                user: dict = Depends(owner_or_accountant)):
+        """Attach an ACTIVE coupon range (or explicit ids) to a box.
+        Body: {batch_id, from_serial, to_serial} OR {coupon_ids:[...]}"""
+        box = _clean(await db.dms_v2_boxes.find_one({"id": bid}))
+        if not box:
+            raise HTTPException(404, "Box not found")
+
+        q: Dict[str, Any] = {}
+        if body.get("coupon_ids"):
+            q = {"id": {"$in": list(body["coupon_ids"])}}
+        else:
+            fs, ts = body.get("from_serial"), body.get("to_serial")
+            if not (fs and ts):
+                raise HTTPException(400, "Provide coupon_ids OR from_serial+to_serial")
+            q = {"visible_serial": {"$gte": str(fs), "$lte": str(ts)}}
+            if body.get("batch_id"):
+                q["batch_id"] = body["batch_id"]
+
+        coupons = await db.dms_v2_coupons.find(q, {"_id": 0}).to_list(200_000)
+        if not coupons:
+            raise HTTPException(400, "No coupons matched the selection")
+
+        # only ACTIVE, not-yet-boxed coupons can be assigned
+        eligible = [c for c in coupons if c.get("active")
+                    and not (c.get("box_id") and c.get("box_id") != bid)]
+        if not eligible:
+            raise HTTPException(400,
+                "No eligible coupons — they must be ACTIVE and not already in another box")
+
+        ids = [c["id"] for c in eligible]
+        set_fields: Dict[str, Any] = {
+            "box_id": bid, "box_number": box["box_number"],
+            "assigned_via": "box", "updated_at": _now(),
+        }
+        # if box already has a distributor, propagate it to the coupons
+        if box.get("distributor_id"):
+            set_fields["assigned_distributor_id"] = box["distributor_id"]
+            set_fields["assigned_distributor_name"] = box.get("distributor_name")
+            set_fields["assigned_on"] = _now()
+        await db.dms_v2_coupons.update_many({"id": {"$in": ids}}, {"$set": set_fields})
+
+        serials = sorted(c["visible_serial"] for c in eligible)
+        total = await db.dms_v2_coupons.count_documents({"box_id": bid})
+        await db.dms_v2_boxes.update_one({"id": bid}, {"$set": {
+            "coupon_count": total,
+            "serial_from": serials[0], "serial_to": serials[-1],
+            "updated_at": _now(),
+        }})
+        await _audit(user, "box.coupons_assigned", "box", bid,
+                     {"box_number": box["box_number"], "assigned": len(ids),
+                      "from": serials[0], "to": serials[-1]})
+        return {"ok": True, "assigned": len(ids), "box_coupon_count": total,
+                "serial_from": serials[0], "serial_to": serials[-1]}
+
+    @router.post("/boxes/{bid}/assign-distributor")
+    async def box_assign_distributor(bid: str, body: Dict[str, Any] = Body(...),
+                                    user: dict = Depends(owner_or_accountant)):
+        """Assign the box (and therefore all its coupons) to a distributor."""
+        box = _clean(await db.dms_v2_boxes.find_one({"id": bid}))
+        if not box:
+            raise HTTPException(404, "Box not found")
+        did = (body.get("distributor_id") or "").strip()
+        if not did:
+            raise HTTPException(400, "distributor_id is required")
+        dist = await _distributor(did)
+        if not dist:
+            raise HTTPException(404, "Distributor not found")
+        await db.dms_v2_boxes.update_one({"id": bid}, {"$set": {
+            "distributor_id": did, "distributor_name": dist.get("name"),
+            "status": "assigned", "assigned_at": _now(), "updated_at": _now(),
+        }})
+        res = await db.dms_v2_coupons.update_many({"box_id": bid}, {"$set": {
+            "assigned_distributor_id": did,
+            "assigned_distributor_name": dist.get("name"),
+            "assigned_on": _now(), "updated_at": _now(),
+        }})
+        await _audit(user, "box.distributor_assigned", "box", bid,
+                     {"box_number": box["box_number"], "distributor_id": did,
+                      "coupons_updated": res.modified_count})
+        return {"ok": True, "distributor_id": did,
+                "distributor_name": dist.get("name"),
+                "coupons_updated": res.modified_count}
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # RETAILER SCAN PERMISSION — owner toggle (Role Permissions)
+    # ═════════════════════════════════════════════════════════════════════════
+    @router.get("/scan-permission")
+    async def get_scan_permission(user: dict = Depends(get_current_user)):
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+        return {"retailer_scan_enabled": bool(s.get("retailer_scan_enabled", False))}
+
+    @router.put("/scan-permission")
+    async def set_scan_permission(body: Dict[str, Any] = Body(...),
+                                 user: dict = Depends(owner_only)):
+        enabled = bool(body.get("enabled"))
+        await db.dms_settings.update_one(
+            {"id": "global"},
+            {"$set": {"retailer_scan_enabled": enabled, "updated_at": _now()}},
+            upsert=True)
+        await _audit(user, "settings.retailer_scan_permission", "settings", "global",
+                     {"enabled": enabled})
+        return {"ok": True, "retailer_scan_enabled": enabled}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # READ-ONLY scan validator (shared by scan preview + retailer scan)
+    # Returns (coupon, fraud_reason, box_number, effective_dist). Never mutates,
+    # never logs fraud — callers decide what to do.
+    # ─────────────────────────────────────────────────────────────────────────
+    async def _scan_resolve(qr: Optional[str], code_in: Optional[str],
+                            retailer: Dict[str, Any], distributor_id: str):
+        version = _detect_qr_version(qr) if qr else ("v1" if code_in else "unknown")
+        code = None
+        v2_inner = None
+        if qr:
+            if version == "v2":
+                try:
+                    v2_inner = _parse_qr_v2_only(qr)
+                    code = str(v2_inner.get("s") or "").upper().strip()
+                except QrParseError as e:
+                    return None, f"invalid_qr:{e.reason}", None, None
+            elif version == "v1":
+                parsed = _parse_qr(qr)
+                if not parsed:
+                    return None, "modified_payload", None, None
+                code = parsed[0]
+            else:
+                return None, "online_generator_suspected", None, None
+        else:
+            code = (code_in or "").strip().upper()
+            if not code:
+                return None, "no_code", None, None
+
+        cp = None
+        if v2_inner and v2_inner.get("h"):
+            cp = _clean(await db.dms_v2_coupons.find_one({"hidden_secure_id": v2_inner["h"]}))
+        if not cp:
+            cp = _clean(await db.dms_v2_coupons.find_one({"visible_serial": code}))
+        if not cp:
+            cp = _clean(await db.dms_v2_coupons.find_one({"coupon_code": code}))
+        if not cp:
+            return None, "invalid_code", None, None
+
+        batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": cp["batch_id"]}))
+        if not batch:
+            return cp, "invalid_code", None, None
+        if not batch.get("active") or batch.get("closed_at"):
+            return cp, "inactive_batch", None, None
+        if cp.get("expires_at") and cp["expires_at"] < _now():
+            return cp, "expired", None, None
+        if cp["status"] in ("claimed", "redemption_pending", "redeemed"):
+            return cp, "already_claimed", None, None
+        if cp["status"] in ("cancelled", "expired"):
+            return cp, cp["status"], None, None
+        if cp["status"] != "unused" or not cp.get("active"):
+            return cp, "coupon_inactive", None, None
+
+        # BOX → distributor validation
+        box_number = None
+        effective_dist = None
+        if cp.get("box_id"):
+            box = _clean(await db.dms_v2_boxes.find_one({"id": cp["box_id"]}))
+            if box:
+                box_number = box.get("box_number")
+                effective_dist = box.get("distributor_id")
+                if not effective_dist:
+                    return cp, "box_not_assigned_to_distributor", box_number, None
+        if not effective_dist:
+            effective_dist = cp.get("assigned_distributor_id") or cp.get("distributor_id")
+        if not effective_dist:
+            return cp, "not_assigned", box_number, None
+        if effective_dist != distributor_id:
+            return cp, "wrong_distributor", box_number, effective_dist
+        return cp, None, box_number, effective_dist
+
+    def _scan_preview_body(user, retailer, distributor, cp, fraud_reason,
+                           box_number, sales_officer_name):
+        val = cp.get("coupon_value") if cp else None
+        ctype = cp.get("coupon_type") if cp else None
+        return {
+            "logged_in_user": user.get("name") or user.get("email"),
+            "user_role": user.get("role"),
+            "sales_officer": sales_officer_name,
+            "distributor_name": distributor.get("name") if distributor else None,
+            "retailer_name": retailer.get("name") if retailer else None,
+            "box_number": box_number,
+            "coupon_serial": (cp.get("visible_serial") or cp.get("coupon_code")) if cp else None,
+            "coupon_type": ctype,
+            "coupon_value": val,
+            "reward_points": val if ctype == "reward" else None,
+            "fraud": bool(fraud_reason),
+            "fraud_reason": fraud_reason,
+        }
+
+    @router.post("/scan/preview")
+    async def scan_preview(request: Request, body: Dict[str, Any] = Body(...),
+                           user: dict = Depends(salesperson_only)):
+        """Read-only validation for the scan screen. Returns all display fields
+        + fraud status/reason. Does NOT claim, credit or log — that happens on
+        the actual /scan submit."""
+        retailer_id = (body.get("retailer_id") or "").strip()
+        if not retailer_id:
+            raise HTTPException(400, "retailer_id is required")
+        meta = _client_meta(request, body)
+        retailer = _clean(await db.dms_retailers.find_one({"id": retailer_id}))
+        if not retailer:
+            raise HTTPException(404, "Retailer not found")
+        distributor_id = retailer.get("distributor_id")
+        distributor = _clean(await db.dms_distributors.find_one({"id": distributor_id})) or {}
+
+        fraud_reason = None
+        cp = None
+        box_number = None
+        # SO must be assigned to this distributor
+        allowed = await db.dms_sp_assignments.find_one({
+            "salesperson_id": user["id"], "distributor_id": distributor_id})
+        if not allowed:
+            fraud_reason = "so_not_assigned_to_distributor"
+        else:
+            cp, fraud_reason, box_number, _ = await _scan_resolve(
+                body.get("qr_payload"), body.get("coupon_code"), retailer, distributor_id)
+
+        preview = _scan_preview_body(user, retailer, distributor, cp, fraud_reason,
+                                     box_number, user.get("name"))
+        preview.update({"ip_address": meta.get("ip_address"),
+                        "gps_lat": meta.get("gps_lat"),
+                        "gps_lng": meta.get("gps_lng"),
+                        "device_id": meta.get("device_id"),
+                        "timestamp": _now()})
+        return {"ok": not preview["fraud"], "fraud": preview["fraud"],
+                "fraud_reason": fraud_reason, "preview": preview}
+
     @router.post("/scan")
     async def scan_coupon(request: Request,
                           body: Dict[str, Any] = Body(...),
@@ -1613,6 +1919,40 @@ def build_coupons_router(db, get_current_user, notify=None):
                              request=request, body=body)
             raise HTTPException(400, "Coupon is inactive")
 
+        # ── BOX-BASED ASSIGNMENT & DISTRIBUTOR FRAUD VALIDATION ─────────────
+        # Real manufacturing flow: coupon → box → distributor. A coupon is
+        # legitimately redeemable only if it is assigned to a box AND that box is
+        # assigned to THIS retailer's distributor. Legacy coupons assigned directly
+        # via order dispatch (assigned_distributor_id, no box) keep working.
+        box_doc = None
+        box_number = None
+        effective_dist = None
+        if cp.get("box_id"):
+            box_doc = _clean(await db.dms_v2_boxes.find_one({"id": cp["box_id"]}))
+        if box_doc:
+            box_number = box_doc.get("box_number")
+            effective_dist = box_doc.get("distributor_id")
+            if not effective_dist:
+                await _log_fraud("box_not_assigned_to_distributor", code, user,
+                                 retailer_id, distributor_id, request=request, body=body,
+                                 extra={"box_number": box_number})
+                raise HTTPException(400, f"Coupon's box {box_number} is not assigned to a distributor")
+        else:
+            # no box → fall back to legacy dispatch assignment (if any)
+            effective_dist = cp.get("assigned_distributor_id") or cp.get("distributor_id")
+            if not effective_dist:
+                await _log_fraud("not_assigned", code, user, retailer_id, distributor_id,
+                                 request=request, body=body)
+                raise HTTPException(400, "Coupon is not assigned to any box/distributor yet")
+        if effective_dist != distributor_id:
+            await _log_fraud("wrong_distributor", code, user, retailer_id, distributor_id,
+                             request=request, body=body,
+                             extra={"coupon_distributor": effective_dist,
+                                    "scanned_distributor": distributor_id,
+                                    "box_number": box_number})
+            raise HTTPException(400,
+                "Coupon does not belong to this retailer's distributor (possible fraud)")
+
         # ── v1 legacy cryptographic checks (only if v1 path) ───────────────
         if version == "v1":
             expected_sig_v1 = _sign(batch["hmac_secret"], cp["coupon_code"],
@@ -1643,6 +1983,8 @@ def build_coupons_router(db, get_current_user, notify=None):
                 "retailer_name": retailer.get("name"),
                 "distributor_id": distributor_id,
                 "distributor_name": distributor.get("name"),
+                "scan_box_id": (box_doc or {}).get("id"),
+                "scan_box_number": box_number,
                 "updated_at": _now(),
             }},
         )
@@ -1706,12 +2048,15 @@ def build_coupons_router(db, get_current_user, notify=None):
         return {
             "ok": True,
             "coupon_code": cp["coupon_code"],
+            "visible_serial": cp.get("visible_serial"),
             "coupon_type": cp["coupon_type"],
             "coupon_value": cp["coupon_value"],
+            "box_number": box_number,
             "wallet_type": wallet_type,
             "new_balance": new_bal,
             "retailer_name": retailer.get("name"),
             "distributor_name": distributor.get("name"),
+            "fraud": False,
             "message": (f"₹{cp['coupon_value']:g} credited to {retailer.get('name')}'s Cash Wallet"
                         if wallet_type == "cash"
                         else f"{cp['coupon_value']:g} points credited to {retailer.get('name')}'s Reward Wallet"),
@@ -1780,6 +2125,94 @@ def build_coupons_router(db, get_current_user, notify=None):
         docs = await db.dms_v2_redemption_requests.find({"retailer_id": ret["id"]}, {"_id": 0})\
             .sort("created_at", -1).to_list(500)
         return {"data": docs, "count": len(docs)}
+
+    # ── RETAILER SELF-SCAN (only when owner has enabled the permission) ───────
+    async def _require_retailer_scan_enabled():
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+        if not bool(s.get("retailer_scan_enabled", False)):
+            raise HTTPException(403, "Retailer scanning is disabled by the owner")
+
+    @router.post("/retailer/scan/preview")
+    async def retailer_scan_preview(request: Request, body: Dict[str, Any] = Body(...),
+                                    user: dict = Depends(get_current_user)):
+        await _require_retailer_scan_enabled()
+        ret = await _my_retailer(user)
+        distributor_id = ret.get("distributor_id")
+        distributor = _clean(await db.dms_distributors.find_one({"id": distributor_id})) or {}
+        meta = _client_meta(request, body)
+        cp, fraud_reason, box_number, _ = await _scan_resolve(
+            body.get("qr_payload"), body.get("coupon_code"), ret, distributor_id)
+        preview = _scan_preview_body(user, ret, distributor, cp, fraud_reason,
+                                     box_number, None)
+        preview.update({"ip_address": meta.get("ip_address"),
+                        "gps_lat": meta.get("gps_lat"), "gps_lng": meta.get("gps_lng"),
+                        "device_id": meta.get("device_id"), "timestamp": _now()})
+        return {"ok": not preview["fraud"], "fraud": preview["fraud"],
+                "fraud_reason": fraud_reason, "preview": preview}
+
+    @router.post("/retailer/scan")
+    async def retailer_scan_submit(request: Request, body: Dict[str, Any] = Body(...),
+                                   user: dict = Depends(get_current_user)):
+        await _require_retailer_scan_enabled()
+        ret = await _my_retailer(user)
+        distributor_id = ret.get("distributor_id")
+        if not distributor_id:
+            raise HTTPException(400, "Your retailer profile has no distributor assigned")
+        distributor = _clean(await db.dms_distributors.find_one({"id": distributor_id})) or {}
+        meta = _client_meta(request, body)
+
+        cp, fraud_reason, box_number, _ = await _scan_resolve(
+            body.get("qr_payload"), body.get("coupon_code"), ret, distributor_id)
+        if fraud_reason:
+            await _log_fraud(fraud_reason, (cp or {}).get("visible_serial") or "unknown",
+                             user, ret["id"], distributor_id, request=request, body=body,
+                             extra={"box_number": box_number, "channel": "retailer_self_scan"})
+            raise HTTPException(400, f"Coupon rejected — {fraud_reason.replace('_', ' ')}")
+
+        upd = await db.dms_v2_coupons.update_one(
+            {"id": cp["id"], "status": "unused"},
+            {"$set": {
+                "status": "claimed",
+                "claimed_by_user_id": user["id"],
+                "claimed_by_user_name": user.get("name") or user.get("email"),
+                "claim_timestamp": _now(),
+                "claim_ip": meta.get("ip_address"),
+                "claim_gps_lat": meta.get("gps_lat"),
+                "claim_gps_lng": meta.get("gps_lng"),
+                "claim_device_id": meta.get("device_id"),
+                "retailer_id": ret["id"], "retailer_name": ret.get("name"),
+                "distributor_id": distributor_id, "distributor_name": distributor.get("name"),
+                "scan_box_number": box_number, "scan_channel": "retailer_self_scan",
+                "updated_at": _now(),
+            }})
+        if upd.modified_count != 1:
+            raise HTTPException(400, "Coupon has just been claimed by another scan")
+
+        wallet_type = "cash" if cp["coupon_type"] == "cash" else "reward"
+        await _ensure_wallet(ret["id"], wallet_type)
+        tx_id = _nid("wtx")
+        await db.dms_v2_wallet_transactions.insert_one({
+            "id": tx_id, "retailer_id": ret["id"], "distributor_id": distributor_id,
+            "wallet_type": wallet_type, "kind": "credit_coupon",
+            "amount": _round(cp["coupon_value"]), "coupon_id": cp["id"],
+            "coupon_code": cp["coupon_code"], "batch_id": cp["batch_id"],
+            "created_by": user["id"], "created_by_name": user.get("name"),
+            "created_by_role": user.get("role"), "at": _now(),
+        })
+        await db.dms_v2_coupons.update_one({"id": cp["id"]},
+            {"$set": {"wallet_transaction_id": tx_id, "updated_at": _now()}})
+        await _audit(user, "coupon.claimed", "coupon", cp["id"],
+                     {"coupon_code": cp["coupon_code"], "retailer_id": ret["id"],
+                      "channel": "retailer_self_scan", "box_number": box_number,
+                      "wallet_transaction_id": tx_id})
+        new_bal = await _wallet_balance(ret["id"], wallet_type)
+        return {"ok": True, "fraud": False, "box_number": box_number,
+                "coupon_serial": cp.get("visible_serial"),
+                "coupon_type": cp["coupon_type"], "coupon_value": cp["coupon_value"],
+                "wallet_type": wallet_type, "new_balance": new_bal,
+                "message": (f"₹{cp['coupon_value']:g} credited to your Cash Wallet"
+                            if wallet_type == "cash"
+                            else f"{cp['coupon_value']:g} points credited to your Reward Wallet")}
 
     # ─────────────────────────────────────────────────────────────────────────
     # REDEMPTIONS — Cash & Reward
