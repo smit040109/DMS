@@ -1,0 +1,18 @@
+{
+  "diameter_mm": 35.0,
+  "value": {
+    "cx": 0.5,
+    "cy": 0.515,
+    "max_w": 0.6,
+    "max_h": 0.17
+  },
+  "qr_box": {
+    "x0": 0.255,
+    "y0": 0.355,
+    "x1": 0.745,
+    "y1": 0.815
+  },
+  "qr_frac": 0.8,
+  "serial_in_box": true,
+  "note": "Fractions of coupon image W/H. Front=value side, Back=QR side."
+}

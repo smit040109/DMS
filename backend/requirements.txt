@@ -36,3 +36,4 @@ wrapt>=1.16.0
 et_xmlfile>=1.1.0
 qrcode[pil]==7.4.2
 pypng==0.20220715.0
+Pillow>=10.0.0
