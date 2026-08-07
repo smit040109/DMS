@@ -79,3 +79,11 @@ All money in **INR**, 10 demo users (password `Demo@2026`), mobile-responsive te
 - dist1@dms.com, dist2@dms.com (Distributors), distacct@dms.com (Distributor Accountant)
 - retailer1@dms.com, retailer2@dms.com (Retailers)
 - sales@dms.com (Salesperson), tl@dms.com (Team Leader), rm@dms.com (Regional Manager)
+
+## Update — Artwork-based Coupon Print Engine (official CDR/PDF template)
+- Owner's approved CorelDRAW artwork (exported to PDF) is used VERBATIM as the master print template.
+- Only dynamic fields are injected: Coupon Value (FRONT), secure v2 QR + Visible Serial (BACK). Artwork never redrawn.
+- Assets: backend/assets/coupon_template/{coupon_front.png, coupon_back.png, fonts/, geometry.json, master_source.pdf}.
+- Print spec: 12x18 inch paper, 35mm round die-cut, 77/sheet (7x11), auto sheet calc, FRONT+BACK (back mirrored for duplex), mixed values on one sheet.
+- Endpoints: GET /api/dms/coupons/batches/{bid}/export-pdf?side=front|back|both ; POST /api/dms/coupons/print-mixed {batch_ids|coupon_ids|items,side}.
+- QR stays secure v2 (GOOIL2|ciphertext|signature) — no UUID/secret/signature/db-ids exposed. Backend tested 24/24 pass.
