@@ -104,6 +104,16 @@ def build_dms_router(db, get_current_user):
         return {"ok": True}
 
     # =========================================================================
+    # Short sequential document numbers (INV-0001, DC-0001, ...)
+    # =========================================================================
+    async def _next_no(counter_key: str, prefix: str, width: int = 4) -> str:
+        await db.dms_counters.update_one({"id": counter_key}, {"$inc": {"seq": 1}}, upsert=True)
+        doc = await db.dms_counters.find_one({"id": counter_key}, {"_id": 0, "seq": 1})
+        n = int((doc or {}).get("seq", 1))
+        return f"{prefix}-{n:0{width}d}"
+
+
+    # =========================================================================
     # CATEGORIES (product types)
     # =========================================================================
     @router.get("/categories")
@@ -807,10 +817,10 @@ def build_dms_router(db, get_current_user):
         for e in entries:
             did = e["distributor_id"]
             s = summary.setdefault(did, {"distributor_id": did, "billed": 0.0, "paid": 0.0, "outstanding": 0.0})
-            if e["kind"] == "invoice":
+            if e["kind"] in ("invoice", "debit_note"):
                 s["billed"] += e["amount"]
                 s["outstanding"] += e["amount"]
-            elif e["kind"] in ("payment", "coupon_credit"):
+            elif e["kind"] in ("payment", "coupon_credit", "credit_note"):
                 s["paid"] += e["amount"]
                 s["outstanding"] -= e["amount"]
         # enrich with dist names
@@ -1036,6 +1046,18 @@ def build_dms_router(db, get_current_user):
         elif distributor_id:
             q["distributor_id"] = distributor_id
         docs = await db.dms_retailers.find(q, {"_id": 0}).sort("name", 1).to_list(1000)
+        # enrich with login access status (from linked user account)
+        uids = [d.get("user_id") for d in docs if d.get("user_id")]
+        umap = {}
+        if uids:
+            async for u in db.users.find({"id": {"$in": uids}}, {"_id": 0, "id": 1, "login_enabled": 1}):
+                umap[u["id"]] = u
+        for d in docs:
+            has_login = bool(d.get("user_id") or d.get("email"))
+            d["has_login"] = has_login
+            u = umap.get(d.get("user_id") or "")
+            # default enabled unless explicitly disabled on the user account
+            d["login_enabled"] = (u.get("login_enabled") is not False) if u else (d.get("login_enabled") is not False)
         return {"data": docs, "count": len(docs)}
 
     @router.post("/retailers")
@@ -1117,6 +1139,21 @@ def build_dms_router(db, get_current_user):
         if r.matched_count == 0:
             raise HTTPException(status_code=404, detail="Retailer not found")
         return {"ok": True}
+
+    @router.put("/retailers/{rid}/login-access")
+    async def set_retailer_login_access(rid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        """Owner toggles a retailer's login access ON/OFF (Item 3)."""
+        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not retailer:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        enabled = bool(body.get("enabled", True))
+        await db.dms_retailers.update_one({"id": rid}, {"$set": {"login_enabled": enabled, "updated_at": _now()}})
+        # mirror on the linked retailer user account (login lookup reads this)
+        if retailer.get("user_id"):
+            await db.users.update_one({"id": retailer["user_id"]}, {"$set": {"login_enabled": enabled}})
+        elif retailer.get("email"):
+            await db.users.update_one({"email": retailer["email"].lower(), "role": "retailer"}, {"$set": {"login_enabled": enabled}})
+        return {"ok": True, "login_enabled": enabled}
 
     # ── retailer visibility (distributor controls) ──
     @router.get("/retailers/{rid}/visibility")
@@ -1400,74 +1437,49 @@ def build_dms_router(db, get_current_user):
                 doc["placed_by_name"] = pu.get("name")
         return doc
 
-    @router.post("/secondary-orders/{oid}/dispatch")
-    async def dispatch_secondary(oid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
-        """Body: {items: [{product_id, qty_boxes_dispatched, qty_pcs_dispatched}], complete: bool}"""
+    @router.post("/secondary-orders/{oid}/invoice")
+    async def generate_invoice_secondary(oid: str, body: Dict[str, Any] = Body(default={}), user: dict = Depends(get_current_user)):
+        """Step 1 of the retailer-order flow: generate the Invoice (short number INV-0001).
+        Body (optional): {items: [{product_id, qty_boxes, qty_pcs}]} — quantities to invoice.
+        If omitted, the full ordered quantity is invoiced. No stock movement here."""
         role = user.get("role")
-        if role not in ("distributor", "owner", "super_admin"):
+        if role not in ("distributor", "distributor_accountant", "owner", "super_admin"):
             raise HTTPException(status_code=403, detail="Forbidden")
         order = await db.dms_secondary_orders.find_one({"id": oid}, {"_id": 0})
         if not order:
             raise HTTPException(status_code=404, detail="Order not found")
-        if role == "distributor" and user.get("distributor_id") != order["distributor_id"]:
+        if role in ("distributor", "distributor_accountant") and user.get("distributor_id") != order["distributor_id"]:
             raise HTTPException(status_code=403, detail="Forbidden")
-        if order["status"] in ("dispatched", "completed"):
-            raise HTTPException(status_code=400, detail="Already dispatched")
+        if order.get("status") != "pending":
+            raise HTTPException(status_code=400, detail=f"Invoice can only be generated for a pending order (current: {order.get('status')})")
         did = order["distributor_id"]; rid = order["retailer_id"]
-        items = body.get("items") or []
-        item_map = {it["product_id"]: it for it in items}
-        # Stop-sale-on-negative pre-check for distributor stock
-        if await _stop_sale_enabled():
-            for it in order["items"]:
-                di = item_map.get(it["product_id"], {})
-                db_qty = int(di.get("qty_boxes_dispatched", 0))
-                dp_qty = int(di.get("qty_pcs_dispatched", 0)) if order["mode"] == "box_pcs" else 0
-                if db_qty <= 0 and dp_qty <= 0:
-                    continue
-                inv = await db.dms_distributor_inventory.find_one({"distributor_id": did, "product_id": it["product_id"]}, {"_id": 0, "qty_boxes": 1})
-                avail = int((inv or {}).get("qty_boxes", 0) or 0)
-                need_boxes = db_qty + (1 if (dp_qty > 0 and (dp_qty % max(it["box_qty"], 1)) > 0) else 0) + (dp_qty // max(it["box_qty"], 1))
-                if need_boxes > avail:
-                    raise HTTPException(status_code=400, detail=f"Insufficient distributor stock for {it.get('product_name', it['product_id'])}: available {avail} boxes, need {need_boxes}. Reduce dispatch qty or receive more stock.")
-        # apply
+        req_items = body.get("items") or []
+        item_map = {it["product_id"]: it for it in req_items}
         billed_items = []
-        subtotal = 0.0
-        gst_total = 0.0
+        subtotal = 0.0; gst_total = 0.0
         for it in order["items"]:
-            di = item_map.get(it["product_id"], {})
-            db_qty = int(di.get("qty_boxes_dispatched", 0))
-            dp_qty = int(di.get("qty_pcs_dispatched", 0)) if order["mode"] == "box_pcs" else 0
-            db_qty = min(db_qty, it["qty_boxes_ordered"])
-            dp_qty = min(dp_qty, it["qty_pcs_ordered"])
-            it["qty_boxes_dispatched"] = db_qty
-            it["qty_pcs_dispatched"] = dp_qty
-            # decrement distributor inventory
-            total_pcs = db_qty * it["box_qty"] + dp_qty
-            if total_pcs > 0:
-                inv = await db.dms_distributor_inventory.find_one({"distributor_id": did, "product_id": it["product_id"]})
-                if inv:
-                    boxes_to_deduct = db_qty + (dp_qty // max(it["box_qty"], 1))
-                    remaining_pcs = dp_qty % max(it["box_qty"], 1)
-                    # Simplified: deduct boxes; treat pcs as fractional; for simplicity we deduct ceil
-                    new_qty = max(0, int(inv.get("qty_boxes", 0)) - db_qty - (1 if remaining_pcs > 0 else 0))
-                    await db.dms_distributor_inventory.update_one({"id": inv["id"]}, {"$set": {"qty_boxes": new_qty, "updated_at": _now()}})
-                    await db.dms_stock_ledger.insert_one({
-                        "id": _nid("sl"), "scope": "distributor", "distributor_id": did,
-                        "product_id": it["product_id"], "delta_boxes": -(db_qty + (1 if remaining_pcs > 0 else 0)),
-                        "reason": "secondary_dispatch", "reference": order["order_no"], "at": _now(),
-                    })
-            line_sub = _round(it["box_price"] * db_qty + it["pcs_price"] * dp_qty)
+            if req_items:
+                di = item_map.get(it["product_id"], {})
+                inv_boxes = int(di.get("qty_boxes", 0))
+                inv_pcs = int(di.get("qty_pcs", 0)) if order["mode"] == "box_pcs" else 0
+            else:
+                inv_boxes = int(it["qty_boxes_ordered"])
+                inv_pcs = int(it["qty_pcs_ordered"]) if order["mode"] == "box_pcs" else 0
+            inv_boxes = min(inv_boxes, it["qty_boxes_ordered"])
+            inv_pcs = min(inv_pcs, it["qty_pcs_ordered"])
+            it["qty_boxes_invoiced"] = inv_boxes
+            it["qty_pcs_invoiced"] = inv_pcs
+            line_sub = _round(it["box_price"] * inv_boxes + it["pcs_price"] * inv_pcs)
             line_gst = _round(line_sub * (it["gst_pct"] / 100.0))
             subtotal += line_sub; gst_total += line_gst
             billed_items.append({
                 **it,
-                "dispatched_qty_boxes": db_qty,
-                "dispatched_qty_pcs": dp_qty,
+                "invoiced_qty_boxes": inv_boxes, "invoiced_qty_pcs": inv_pcs,
                 "line_subtotal": line_sub, "line_gst": line_gst, "line_total": _round(line_sub + line_gst),
             })
-            # pending qty
-            pending_boxes = it["qty_boxes_ordered"] - db_qty
-            pending_pcs = it["qty_pcs_ordered"] - dp_qty
+            # pending qty (ordered - invoiced)
+            pending_boxes = it["qty_boxes_ordered"] - inv_boxes
+            pending_pcs = it["qty_pcs_ordered"] - inv_pcs
             if pending_boxes > 0 or pending_pcs > 0:
                 await db.dms_retailer_pending.update_one(
                     {"retailer_id": rid, "distributor_id": did, "product_id": it["product_id"]},
@@ -1479,10 +1491,10 @@ def build_dms_router(db, get_current_user):
                     }},
                     upsert=True,
                 )
-        # bill
         total = _round(subtotal + gst_total)
+        invoice_no = await _next_no("retailer_invoice", "INV", 4)
         bill = {
-            "id": _nid("rb"), "bill_no": f"RB-{datetime.now().strftime('%y%m%d%H%M%S')}",
+            "id": _nid("rb"), "bill_no": invoice_no,
             "order_id": oid, "order_no": order["order_no"],
             "retailer_id": rid, "distributor_id": did,
             "items": billed_items, "subtotal": _round(subtotal), "gst_total": _round(gst_total), "total": total,
@@ -1492,26 +1504,119 @@ def build_dms_router(db, get_current_user):
         await db.dms_retailer_ledger.insert_one({
             "id": _nid("rle"),
             "distributor_id": did, "retailer_id": rid,
-            "kind": "invoice", "reference_id": bill["id"], "reference_no": bill["bill_no"],
-            "amount": total, "description": f"Bill for {order['order_no']}", "at": _now(),
+            "kind": "invoice", "reference_id": bill["id"], "reference_no": invoice_no,
+            "amount": total, "description": f"Invoice {invoice_no} for {order['order_no']}", "at": _now(),
         })
-        # compute fulfillment
+        await db.dms_secondary_orders.update_one(
+            {"id": oid},
+            {"$set": {"items": order["items"], "status": "invoiced",
+                      "bill_id": bill["id"], "invoice_no": invoice_no, "invoiced_at": _now(), "updated_at": _now()}},
+        )
+        r_user = await db.users.find_one({"retailer_id": rid, "role": "retailer"}, {"_id": 0, "id": 1})
+        if r_user:
+            await notify(r_user["id"], "order_invoiced", f"Invoice {invoice_no} generated",
+                         f"Order {order['order_no']} \u2022 \u20b9{total:,.0f}",
+                         f"/dms/retailer/my-orders/{oid}")
+        return {"ok": True, "bill_id": bill["id"], "invoice_no": invoice_no, "total": total, "status": "invoiced"}
+
+    @router.post("/secondary-orders/{oid}/dispatch")
+    async def dispatch_secondary(oid: str, body: Dict[str, Any] = Body(default={}), user: dict = Depends(get_current_user)):
+        """Step 2: Dispatch an invoiced order. Decrements distributor stock and
+        auto-generates a Delivery Challan (short number DC-0001)."""
+        role = user.get("role")
+        if role not in ("distributor", "distributor_accountant", "owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        order = await db.dms_secondary_orders.find_one({"id": oid}, {"_id": 0})
+        if not order:
+            raise HTTPException(status_code=404, detail="Order not found")
+        if role in ("distributor", "distributor_accountant") and user.get("distributor_id") != order["distributor_id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        if order["status"] in ("dispatched", "completed"):
+            raise HTTPException(status_code=400, detail="Already dispatched")
+        if order["status"] != "invoiced":
+            raise HTTPException(status_code=400, detail="Generate the Invoice before dispatching this order")
+        did = order["distributor_id"]; rid = order["retailer_id"]
+        # Stop-sale-on-negative pre-check for distributor stock (using invoiced quantities)
+        if await _stop_sale_enabled():
+            for it in order["items"]:
+                db_qty = int(it.get("qty_boxes_invoiced", 0))
+                dp_qty = int(it.get("qty_pcs_invoiced", 0)) if order["mode"] == "box_pcs" else 0
+                if db_qty <= 0 and dp_qty <= 0:
+                    continue
+                inv = await db.dms_distributor_inventory.find_one({"distributor_id": did, "product_id": it["product_id"]}, {"_id": 0, "qty_boxes": 1})
+                avail = int((inv or {}).get("qty_boxes", 0) or 0)
+                need_boxes = db_qty + (1 if (dp_qty > 0 and (dp_qty % max(it["box_qty"], 1)) > 0) else 0) + (dp_qty // max(it["box_qty"], 1))
+                if need_boxes > avail:
+                    raise HTTPException(status_code=400, detail=f"Insufficient distributor stock for {it.get('product_name', it['product_id'])}: available {avail} boxes, need {need_boxes}. Reduce dispatch qty or receive more stock.")
+        # apply — dispatch the invoiced quantities and decrement stock
+        challan_items = []
+        for it in order["items"]:
+            db_qty = int(it.get("qty_boxes_invoiced", 0))
+            dp_qty = int(it.get("qty_pcs_invoiced", 0)) if order["mode"] == "box_pcs" else 0
+            it["qty_boxes_dispatched"] = db_qty
+            it["qty_pcs_dispatched"] = dp_qty
+            total_pcs = db_qty * it["box_qty"] + dp_qty
+            if total_pcs > 0:
+                inv = await db.dms_distributor_inventory.find_one({"distributor_id": did, "product_id": it["product_id"]})
+                if inv:
+                    remaining_pcs = dp_qty % max(it["box_qty"], 1)
+                    new_qty = max(0, int(inv.get("qty_boxes", 0)) - db_qty - (1 if remaining_pcs > 0 else 0))
+                    await db.dms_distributor_inventory.update_one({"id": inv["id"]}, {"$set": {"qty_boxes": new_qty, "updated_at": _now()}})
+                    await db.dms_stock_ledger.insert_one({
+                        "id": _nid("sl"), "scope": "distributor", "distributor_id": did,
+                        "product_id": it["product_id"], "delta_boxes": -(db_qty + (1 if remaining_pcs > 0 else 0)),
+                        "reason": "secondary_dispatch", "reference": order["order_no"], "at": _now(),
+                    })
+            challan_items.append({
+                "product_id": it["product_id"], "product_name": it["product_name"], "sku_code": it["sku_code"],
+                "qty_boxes": db_qty, "qty_pcs": dp_qty,
+            })
+        # fulfillment
         ord_total_pcs = sum(it["qty_boxes_ordered"] * it["box_qty"] + it["qty_pcs_ordered"] for it in order["items"])
         disp_total_pcs = sum(it["qty_boxes_dispatched"] * it["box_qty"] + it["qty_pcs_dispatched"] for it in order["items"])
         pct = int(round((disp_total_pcs / ord_total_pcs) * 100)) if ord_total_pcs > 0 else 0
-        new_status = "dispatched"
+        # auto-generate Delivery Challan
+        challan_no = await _next_no("delivery_challan", "DC", 4)
+        challan = {
+            "id": _nid("dc"), "challan_no": challan_no,
+            "order_id": oid, "order_no": order["order_no"],
+            "invoice_id": order.get("bill_id"), "invoice_no": order.get("invoice_no"),
+            "retailer_id": rid, "distributor_id": did,
+            "items": challan_items, "created_at": _now(), "created_by": user["id"],
+        }
+        await db.dms_delivery_challans.insert_one(challan)
         await db.dms_secondary_orders.update_one(
             {"id": oid},
-            {"$set": {"items": order["items"], "fulfillment_pct": pct, "status": new_status,
-                      "bill_id": bill["id"], "dispatched_at": _now(), "updated_at": _now()}},
+            {"$set": {"items": order["items"], "fulfillment_pct": pct, "status": "dispatched",
+                      "challan_id": challan["id"], "challan_no": challan_no,
+                      "dispatched_at": _now(), "updated_at": _now()}},
         )
-        # notify retailer
         r_user = await db.users.find_one({"retailer_id": rid, "role": "retailer"}, {"_id": 0, "id": 1})
         if r_user:
             await notify(r_user["id"], "order_dispatched", f"Order {order['order_no']} dispatched",
-                         f"Bill {bill['bill_no']} \u2022 \u20b9{total:,.0f}",
+                         f"Challan {challan_no} \u2022 Invoice {order.get('invoice_no', '')}",
                          f"/dms/retailer/my-orders/{oid}")
-        return {"ok": True, "bill_id": bill["id"], "fulfillment_pct": pct, "status": new_status}
+        return {"ok": True, "bill_id": order.get("bill_id"), "invoice_no": order.get("invoice_no"),
+                "challan_id": challan["id"], "challan_no": challan_no, "fulfillment_pct": pct, "status": "dispatched"}
+
+    @router.get("/secondary-orders/{oid}/challan")
+    async def get_order_challan(oid: str, user: dict = Depends(get_current_user)):
+        c = await db.dms_delivery_challans.find_one({"order_id": oid}, {"_id": 0}, sort=[("created_at", -1)])
+        if not c:
+            raise HTTPException(status_code=404, detail="No delivery challan for this order")
+        return c
+
+    @router.get("/print/challan/{challan_id}")
+    async def print_challan(challan_id: str, user: dict = Depends(get_current_user)):
+        c = await db.dms_delivery_challans.find_one({"id": challan_id}, {"_id": 0})
+        if not c:
+            raise HTTPException(status_code=404, detail="Challan not found")
+        r = await db.dms_retailers.find_one({"id": c.get("retailer_id")}, {"_id": 0})
+        d = await db.dms_distributors.find_one({"id": c.get("distributor_id")}, {"_id": 0})
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0}) or {}
+        c["retailer"] = r; c["distributor"] = d
+        c["company_name"] = s.get("company_name") or "GO OIL Lubricants"
+        return c
 
     # ── Cancel / Edit secondary order (Phase 1 additions) ──
     @router.post("/secondary-orders/{oid}/cancel")
@@ -1657,9 +1762,9 @@ def build_dms_router(db, get_current_user):
         for e in entries:
             rid = e["retailer_id"]
             s = summary.setdefault(rid, {"retailer_id": rid, "billed": 0.0, "paid": 0.0, "outstanding": 0.0})
-            if e["kind"] == "invoice":
+            if e["kind"] in ("invoice", "debit_note"):
                 s["billed"] += e["amount"]; s["outstanding"] += e["amount"]
-            elif e["kind"] in ("payment", "coupon_credit"):
+            elif e["kind"] in ("payment", "coupon_credit", "credit_note"):
                 s["paid"] += e["amount"]; s["outstanding"] -= e["amount"]
         rids = list(summary.keys())
         rnames = {r["id"]: r["name"] async for r in db.dms_retailers.find({"id": {"$in": rids}}, {"_id": 0, "id": 1, "name": 1})}
@@ -1748,16 +1853,11 @@ def build_dms_router(db, get_current_user):
 
     @router.post("/assignments/sp-distributors")
     async def assign_sp_dist(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
-        if user["role"] not in ("team_leader", "owner", "super_admin"):
-            raise HTTPException(status_code=403, detail="Only team leader / owner can assign salespersons")
+        if user["role"] not in ("owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Only owner can assign salespersons to distributors")
         spid = body.get("salesperson_id"); did = body.get("distributor_id")
         if not spid or not did:
             raise HTTPException(status_code=400, detail="salesperson_id + distributor_id required")
-        # TL can only assign their own distributors
-        if user["role"] == "team_leader":
-            tl_dist = await db.dms_tl_assignments.find_one({"team_leader_id": user["id"], "distributor_id": did})
-            if not tl_dist:
-                raise HTTPException(status_code=403, detail="This distributor is not assigned to your team")
         await db.dms_sp_assignments.update_one(
             {"salesperson_id": spid, "distributor_id": did},
             {"$set": {"salesperson_id": spid, "distributor_id": did, "assigned_by": user["id"], "at": _now()}},
@@ -1767,7 +1867,7 @@ def build_dms_router(db, get_current_user):
 
     @router.delete("/assignments/sp-distributors")
     async def unassign_sp_dist(salesperson_id: str, distributor_id: str, user: dict = Depends(get_current_user)):
-        if user["role"] not in ("team_leader", "owner", "super_admin"):
+        if user["role"] not in ("owner", "super_admin"):
             raise HTTPException(status_code=403, detail="Forbidden")
         await db.dms_sp_assignments.delete_one({"salesperson_id": salesperson_id, "distributor_id": distributor_id})
         return {"ok": True}
@@ -1821,6 +1921,13 @@ def build_dms_router(db, get_current_user):
         existing = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today, "out_at": None})
         if existing:
             return {"ok": True, "already": True, "punch": _clean(existing)}
+        # If already punched out today, block re-punch unless Owner has granted a reopen
+        closed = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today, "out_at": {"$ne": None}})
+        if closed:
+            grant = await db.dms_punch_reopen.find_one({"salesperson_id": user["id"], "date": today, "consumed": False})
+            if not grant:
+                raise HTTPException(status_code=400, detail="You have already punched out today. Please ask the Owner to allow Punch In again.")
+            await db.dms_punch_reopen.update_one({"id": grant["id"]}, {"$set": {"consumed": True, "consumed_at": _now()}})
         doc = {
             "id": _nid("pn"), "salesperson_id": user["id"], "date": today,
             "in_at": _now(), "out_at": None,
@@ -1846,8 +1953,17 @@ def build_dms_router(db, get_current_user):
     @router.get("/punch/today")
     async def punch_today(user: dict = Depends(get_current_user)):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        p = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today}, {"_id": 0})
-        return {"punch": p}
+        punches = await db.dms_punch.find({"salesperson_id": user["id"], "date": today}, {"_id": 0}).sort("in_at", -1).to_list(50)
+        latest = punches[0] if punches else None
+        open_exists = any(not p.get("out_at") for p in punches)
+        grant = await db.dms_punch_reopen.find_one({"salesperson_id": user["id"], "date": today, "consumed": False})
+        can_punch_in = (len(punches) == 0) or (not open_exists and grant is not None)
+        return {
+            "punch": latest,
+            "punched_in": open_exists,
+            "can_punch_in": can_punch_in,
+            "reopen_granted": grant is not None,
+        }
 
     @router.get("/punch/history")
     async def punch_history(salesperson_id: Optional[str] = None, user: dict = Depends(get_current_user)):
@@ -1856,6 +1972,78 @@ def build_dms_router(db, get_current_user):
             target = user["id"]
         docs = await db.dms_punch.find({"salesperson_id": target}, {"_id": 0}).sort("in_at", -1).to_list(60)
         return {"data": docs}
+
+    # ── Owner: allow Punch-In again for a salesperson (no request workflow) ──
+    @router.post("/owner/punch/reopen/{sp_id}")
+    async def owner_reopen_punch(sp_id: str, user: dict = Depends(owner_only)):
+        sp = await db.users.find_one({"id": sp_id, "role": "salesperson"}, {"_id": 0, "password_hash": 0})
+        if not sp:
+            raise HTTPException(status_code=404, detail="Salesperson not found")
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        # remove any stale unconsumed grant then create a fresh one
+        await db.dms_punch_reopen.delete_many({"salesperson_id": sp_id, "date": today, "consumed": False})
+        doc = {
+            "id": _nid("rop"), "salesperson_id": sp_id, "date": today,
+            "granted_by": user["id"], "granted_at": _now(), "consumed": False,
+        }
+        await db.dms_punch_reopen.insert_one(doc)
+        await notify(sp_id, "punch_reopened", "Punch In re-enabled",
+                     "The Owner has allowed you to Punch In again for today.", "/dms")
+        return {"ok": True}
+
+    # ── Unified Attendance (role-aware) ──
+    async def _attendance_rows(sp_ids: List[str], days: int = 30):
+        """Build attendance rows for given user ids (salespersons/TLs) over last N days."""
+        rows = []
+        if not sp_ids:
+            return rows
+        umap = {}
+        async for u in db.users.find({"id": {"$in": sp_ids}}, {"_id": 0, "password_hash": 0}):
+            umap[u["id"]] = u
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        punches = await db.dms_punch.find({"salesperson_id": {"$in": sp_ids}}, {"_id": 0}).sort("in_at", -1).to_list(3000)
+        for p in punches:
+            u = umap.get(p["salesperson_id"], {})
+            grant = None
+            if p["date"] == today and p.get("out_at"):
+                grant = await db.dms_punch_reopen.find_one({"salesperson_id": p["salesperson_id"], "date": today, "consumed": False})
+            rows.append({
+                "punch_id": p.get("id"),
+                "user_id": p["salesperson_id"],
+                "name": u.get("name", "—"),
+                "role": u.get("role"),
+                "date": p.get("date"),
+                "in_at": p.get("in_at"),
+                "out_at": p.get("out_at"),
+                "gps_in": p.get("gps_in"),
+                "gps_out": p.get("gps_out"),
+                "is_today": p["date"] == today,
+                "reopen_granted": grant is not None,
+                "can_reopen": (p["date"] == today and bool(p.get("out_at")) and grant is None),
+            })
+        return rows
+
+    @router.get("/attendance")
+    async def attendance(user: dict = Depends(get_current_user)):
+        role = user.get("role")
+        ids: List[str] = []
+        if role == "salesperson":
+            ids = [user["id"]]
+        elif role == "team_leader":
+            dids = [a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0, "distributor_id": 1})]
+            sp_ids = list({a["salesperson_id"] async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0, "salesperson_id": 1})})
+            ids = [user["id"]] + sp_ids
+        elif role == "regional_manager":
+            tlids = [a["team_leader_id"] async for a in db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0, "team_leader_id": 1})]
+            dids = list({a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "distributor_id": 1})})
+            sp_ids = list({a["salesperson_id"] async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0, "salesperson_id": 1})})
+            ids = [user["id"]] + tlids + sp_ids
+        elif role in ("owner", "super_admin", "owner_accountant"):
+            ids = [u["id"] async for u in db.users.find({"role": {"$in": ["salesperson", "team_leader", "regional_manager"]}}, {"_id": 0, "id": 1})]
+        else:
+            raise HTTPException(status_code=403, detail="Attendance not available for this role")
+        rows = await _attendance_rows(ids)
+        return {"data": rows}
 
     # =========================================================================
     # DASHBOARDS — sales team roles
@@ -2043,6 +2231,13 @@ def build_dms_router(db, get_current_user):
             d = await db.dms_distributors.find_one({"id": o.get("distributor_id")}, {"_id": 0, "name": 1})
             o["retailer_name"] = (r or {}).get("name")
             o["distributor_name"] = (d or {}).get("name")
+            # "Placed By" — salesperson (or whoever placed the order)
+            if o.get("placed_by"):
+                pb = await db.users.find_one({"id": o.get("placed_by")}, {"_id": 0, "name": 1, "role": 1})
+                o["placed_by_name"] = (pb or {}).get("name")
+                o["placed_by_role"] = (pb or {}).get("role")
+            else:
+                o["placed_by_name"] = o.get("placed_by_name")
         return {"data": docs, "count": len(docs)}
 
     # -------- TL: Retailers ---------
@@ -2388,6 +2583,35 @@ def build_dms_router(db, get_current_user):
         out_sp = [{"id": sid, "name": await _name(sid), "sales": _round(v)} for sid, v in by_sp.items()]
         for lst in (out_dist, out_tl, out_sp): lst.sort(key=lambda r: r["sales"], reverse=True)
         return {"by_distributor": out_dist, "by_team_leader": out_tl, "by_salesperson": out_sp}
+
+    # --------- RM: My Retailers (all retailers under RM's TLs & SPs) ---------
+    @router.get("/rm/retailers")
+    async def rm_retailers(user: dict = Depends(regional_manager_only)):
+        tlids = [a["team_leader_id"] async for a in db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0, "team_leader_id": 1})]
+        dids = list({a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "distributor_id": 1})})
+        dist_map = {}
+        async for d in db.dms_distributors.find({"id": {"$in": dids}}, {"_id": 0, "id": 1, "name": 1}):
+            dist_map[d["id"]] = d.get("name")
+        rows = []
+        async for r in db.dms_retailers.find({"distributor_id": {"$in": dids}, "active": True}, {"_id": 0}):
+            billed = 0.0; paid = 0.0
+            async for e in db.dms_retailer_ledger.find({"retailer_id": r["id"]}, {"_id": 0}):
+                if e.get("kind") == "invoice": billed += e.get("amount", 0)
+                elif e.get("kind") in ("payment", "coupon_credit"): paid += e.get("amount", 0)
+            last = await db.dms_secondary_orders.find_one({"retailer_id": r["id"]}, {"_id": 0}, sort=[("created_at", -1)])
+            onboard = await db.users.find_one({"id": r.get("onboarded_by")}, {"_id": 0, "name": 1}) if r.get("onboarded_by") else None
+            rows.append({
+                "id": r["id"], "name": r.get("name"), "phone": r.get("phone"),
+                "address": r.get("address"), "region": r.get("region"),
+                "distributor_id": r.get("distributor_id"),
+                "distributor_name": dist_map.get(r.get("distributor_id")),
+                "onboarded_by_name": (onboard or {}).get("name"),
+                "gps_lat": r.get("gps_lat"), "gps_lng": r.get("gps_lng"),
+                "outstanding": _round(billed - paid),
+                "last_order_at": (last or {}).get("created_at"),
+            })
+        rows.sort(key=lambda x: (x.get("distributor_name") or "", x.get("name") or ""))
+        return {"data": rows}
 
 
     @router.get("/dashboard/retailer")
@@ -2840,7 +3064,7 @@ def build_dms_router(db, get_current_user):
     # PRODUCTS — Excel Import / Export (Owner)
     # =========================================================================
     @router.get("/owner/products/export")
-    async def export_products(user: dict = Depends(owner_only)):
+    async def export_products(user: dict = Depends(owner_or_accountant)):
         from openpyxl import Workbook
         from io import BytesIO
         from fastapi.responses import Response
@@ -2875,7 +3099,7 @@ def build_dms_router(db, get_current_user):
         )
 
     @router.post("/owner/products/import")
-    async def import_products(file: UploadFile = File(...), user: dict = Depends(owner_only)):
+    async def import_products(file: UploadFile = File(...), user: dict = Depends(owner_or_accountant)):
         from openpyxl import load_workbook
         from io import BytesIO
         raw = await file.read()
@@ -3140,7 +3364,15 @@ def build_dms_router(db, get_current_user):
         if role == "retailer":
             raise HTTPException(status_code=403, detail="Forbidden")
         q: Dict[str, Any] = {}
-        if role not in _exp_all_visible_roles():
+        if role in _exp_all_visible_roles():
+            pass  # owner/accountant/super_admin see all
+        elif role == "regional_manager":
+            # RSM sees own expenses + expenses of salespersons reporting to them
+            tlids = [a["team_leader_id"] async for a in db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0, "team_leader_id": 1})]
+            dids = list({a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "distributor_id": 1})})
+            sp_ids = list({a["salesperson_id"] async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0, "salesperson_id": 1})})
+            q["created_by"] = {"$in": [user["id"]] + sp_ids}
+        else:
             q["created_by"] = user["id"]
         if start:
             q["date"] = q.get("date", {}); q["date"]["$gte"] = start
@@ -3180,6 +3412,11 @@ def build_dms_router(db, get_current_user):
         # Enforce FY lock on backdated new entries
         await _check_fy_lock(date, "expense")
         seq = await db.dms_expenses.count_documents({}) + 1
+        # Salesperson expenses go through approval flow (RSM → Owner). No status/receipt on submit.
+        if role == "salesperson":
+            status = "submitted"
+        else:
+            status = body.get("status") or "Approved"
         doc = {
             "id": _nid("exp"),
             "expense_no": body.get("expense_no") or f"EXP-{80000 + seq}",
@@ -3188,13 +3425,24 @@ def build_dms_router(db, get_current_user):
             "date": date,
             "description": str(body.get("description") or "").strip(),
             "vendor": str(body.get("vendor") or "").strip(),
-            "receipt_url": str(body.get("receipt_url") or "").strip() or None,
-            "status": body.get("status") or "Approved",
+            "receipt_url": (str(body.get("receipt_url") or "").strip() or None) if role != "salesperson" else None,
+            "status": status,
             "created_by": user["id"],
             "created_by_role": role,
             "created_at": _now(),
         }
         await db.dms_expenses.insert_one(doc)
+        # Notify RSM(s) responsible for this salesperson
+        if role == "salesperson":
+            try:
+                dids = [a["distributor_id"] async for a in db.dms_sp_assignments.find({"salesperson_id": user["id"]}, {"_id": 0, "distributor_id": 1})]
+                tlids = list({a["team_leader_id"] async for a in db.dms_tl_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0, "team_leader_id": 1})})
+                rm_ids = list({a["regional_manager_id"] async for a in db.dms_rm_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "regional_manager_id": 1})})
+                for rid in rm_ids:
+                    await notify(rid, "expense_submitted", "Expense pending review",
+                                 f"{user.get('name','A salesperson')} submitted an expense of ₹{_round(amount)} for review.", "/dms")
+            except Exception:
+                pass
         return _clean(doc)
 
     @router.put("/expenses/{eid}")
@@ -3228,6 +3476,60 @@ def build_dms_router(db, get_current_user):
             upd["date"] = new_date
         upd["updated_at"] = _now()
         upd["updated_by"] = user["id"]
+        await db.dms_expenses.update_one({"id": eid}, {"$set": upd})
+        doc.update(upd)
+        return _clean(doc)
+
+    @router.post("/expenses/{eid}/action")
+    async def expense_action(eid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        """Approval workflow for salesperson expenses.
+        RSM: approve (→ pending owner) or reject (→ rejected) a 'submitted' expense.
+        Owner/Accountant: approve (→ approved) or reject (→ rejected) an 'rsm_approved' expense.
+        """
+        role = user.get("role")
+        action = str(body.get("action") or "").lower()
+        note = str(body.get("note") or "").strip()
+        if action not in ("approve", "reject"):
+            raise HTTPException(status_code=400, detail="action must be 'approve' or 'reject'")
+        doc = await db.dms_expenses.find_one({"id": eid}, {"_id": 0})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Expense not found")
+        status = doc.get("status")
+        upd: Dict[str, Any] = {"updated_at": _now(), "updated_by": user["id"]}
+        if role == "regional_manager":
+            if status != "submitted":
+                raise HTTPException(status_code=400, detail="This expense is not pending RSM review")
+            # verify this SP reports to this RSM
+            tlids = [a["team_leader_id"] async for a in db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0, "team_leader_id": 1})]
+            dids = list({a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": {"$in": tlids}}, {"_id": 0, "distributor_id": 1})})
+            sp_ids = list({a["salesperson_id"] async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0, "salesperson_id": 1})})
+            if doc.get("created_by") not in sp_ids:
+                raise HTTPException(status_code=403, detail="This salesperson does not report to you")
+            if action == "approve":
+                upd["status"] = "rsm_approved"
+                upd["rsm_action"] = {"by": user["id"], "at": _now(), "note": note}
+                # notify owners for final approval
+                async for o in db.users.find({"role": "owner"}, {"_id": 0, "id": 1}):
+                    await notify(o["id"], "expense_rsm_approved", "Expense pending final approval",
+                                 f"An expense of ₹{doc.get('amount')} was approved by RSM and needs your approval.", "/dms")
+            else:
+                upd["status"] = "rejected"
+                upd["rsm_action"] = {"by": user["id"], "at": _now(), "note": note, "rejected": True}
+            await notify(doc.get("created_by"), "expense_update", f"Expense {upd['status'].replace('_',' ')}",
+                         f"Your expense of ₹{doc.get('amount')} was {'approved by RSM' if action=='approve' else 'rejected by RSM'}.", "/dms")
+        elif role in ("owner", "super_admin", "owner_accountant"):
+            if status != "rsm_approved":
+                raise HTTPException(status_code=400, detail="This expense is not pending Owner approval")
+            if action == "approve":
+                upd["status"] = "approved"
+                upd["owner_action"] = {"by": user["id"], "at": _now(), "note": note}
+            else:
+                upd["status"] = "rejected"
+                upd["owner_action"] = {"by": user["id"], "at": _now(), "note": note, "rejected": True}
+            await notify(doc.get("created_by"), "expense_update", f"Expense {upd['status']}",
+                         f"Your expense of ₹{doc.get('amount')} was {'approved' if action=='approve' else 'rejected'} by the Owner.", "/dms")
+        else:
+            raise HTTPException(status_code=403, detail="Not allowed to action expenses")
         await db.dms_expenses.update_one({"id": eid}, {"$set": upd})
         doc.update(upd)
         return _clean(doc)
@@ -4215,7 +4517,7 @@ def build_dms_router(db, get_current_user):
 
     # -- Parties Export --
     @router.get("/parties/export")
-    async def export_parties(user: dict = Depends(owner_only)):
+    async def export_parties(user: dict = Depends(owner_or_accountant)):
         from openpyxl import Workbook
         wb = Workbook()
         # Distributors sheet
@@ -4239,7 +4541,7 @@ def build_dms_router(db, get_current_user):
 
     # -- Parties Import --
     @router.post("/parties/import")
-    async def import_parties(file: UploadFile = File(...), user: dict = Depends(owner_only)):
+    async def import_parties(file: UploadFile = File(...), user: dict = Depends(owner_or_accountant)):
         """Two sheets: 'Distributors' and 'Retailers'. See export for column layout."""
         from openpyxl import load_workbook
         from io import BytesIO
@@ -4341,7 +4643,7 @@ def build_dms_router(db, get_current_user):
 
     # -- Sale Bills Export (both primary e-bills and secondary retailer bills) --
     @router.get("/sale-bills/export")
-    async def export_sale_bills(user: dict = Depends(owner_only), start: Optional[str] = None, end: Optional[str] = None):
+    async def export_sale_bills(user: dict = Depends(owner_or_accountant), start: Optional[str] = None, end: Optional[str] = None):
         from openpyxl import Workbook
         wb = Workbook()
         # Primary e-bills sheet
@@ -4370,7 +4672,7 @@ def build_dms_router(db, get_current_user):
 
     # -- Payments Export --
     @router.get("/payments/export")
-    async def export_payments(user: dict = Depends(owner_only), start: Optional[str] = None, end: Optional[str] = None):
+    async def export_payments(user: dict = Depends(owner_or_accountant), start: Optional[str] = None, end: Optional[str] = None):
         from openpyxl import Workbook
         wb = Workbook()
         # Primary Payments (kind=payment in dms_primary_ledger)
@@ -4396,6 +4698,155 @@ def build_dms_router(db, get_current_user):
             for col_letter in ["A", "B", "C", "D", "E", "F"]:
                 w.column_dimensions[col_letter].width = 20
         return _xlsx_response(wb, "payments")
+
+    # -- Import Templates --
+    @router.get("/sale-bills/import-template")
+    async def sale_bills_import_template(user: dict = Depends(owner_or_accountant)):
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active; ws.title = "SaleBills"
+        ws.append(["bill_no", "date", "distributor_email", "retailer_email", "subtotal", "gst_total", "total"])
+        ws.append(["INV-1001", datetime.now().strftime("%Y-%m-%d"), "distributor1@gooil.com", "retailer1@gooil.com", 1000, 180, 1180])
+        for c in ["A", "B", "C", "D", "E", "F", "G"]:
+            ws.column_dimensions[c].width = 22
+        return _xlsx_response(wb, "sale_bills_template")
+
+    @router.get("/payments/import-template")
+    async def payments_import_template(user: dict = Depends(owner_or_accountant)):
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active; ws.title = "Payments"
+        ws.append(["type", "date", "distributor_email", "retailer_email", "amount", "method", "reference", "description"])
+        ws.append(["secondary", datetime.now().strftime("%Y-%m-%d"), "distributor1@gooil.com", "retailer1@gooil.com", 500, "cash", "PMT-1001", "On account"])
+        ws.append(["primary", datetime.now().strftime("%Y-%m-%d"), "distributor1@gooil.com", "", 5000, "bank_transfer", "PMT-1002", "Against invoices"])
+        for c in ["A", "B", "C", "D", "E", "F", "G", "H"]:
+            ws.column_dimensions[c].width = 20
+        return _xlsx_response(wb, "payments_template")
+
+    # -- Sale Bills Import --
+    @router.post("/sale-bills/import")
+    async def import_sale_bills(file: UploadFile = File(...), user: dict = Depends(owner_or_accountant)):
+        """Import historical retailer sale bills. Sheet 'SaleBills' with columns:
+        bill_no, date, distributor_email, retailer_email, subtotal, gst_total, total.
+        Creates a retailer bill + a retailer-ledger invoice entry (idempotent by bill_no)."""
+        from openpyxl import load_workbook
+        from io import BytesIO
+        raw = await file.read()
+        try:
+            wb = load_workbook(BytesIO(raw), data_only=True)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Cannot read xlsx: {e}")
+        ws = wb["SaleBills"] if "SaleBills" in wb.sheetnames else wb.active
+        header = [str(h or "").strip().lower() for h in next(ws.iter_rows(min_row=1, max_row=1, values_only=True), [])]
+        col = {h: i for i, h in enumerate(header)}
+        d_by_email = {d.get("email", "").lower(): d async for d in db.dms_distributors.find({}, {"_id": 0, "id": 1, "email": 1})}
+        r_by_email = {r.get("email", "").lower(): r async for r in db.dms_retailers.find({}, {"_id": 0, "id": 1, "email": 1, "distributor_id": 1})}
+        summary = {"created": 0, "updated": 0, "skipped": 0, "errors": []}
+        for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not row or all(v is None or v == "" for v in row):
+                continue
+            try:
+                def _g(k):
+                    idx = col.get(k, -1)
+                    return row[idx] if 0 <= idx < len(row) else None
+                bill_no = str(_g("bill_no") or "").strip()
+                d_email = str(_g("distributor_email") or "").strip().lower()
+                r_email = str(_g("retailer_email") or "").strip().lower()
+                d = d_by_email.get(d_email); r = r_by_email.get(r_email)
+                if not d or not r:
+                    summary["skipped"] += 1; summary["errors"].append(f"Row {i}: unknown distributor/retailer email"); continue
+                if not bill_no:
+                    bill_no = await _next_no("retailer_invoice", "INV", 4)
+                subtotal = float(_g("subtotal") or 0)
+                gst_total = float(_g("gst_total") or 0)
+                total = float(_g("total") or (subtotal + gst_total))
+                date = str(_g("date") or _now()[:10])[:10]
+                existing = await db.dms_retailer_bills.find_one({"bill_no": bill_no}, {"_id": 0, "id": 1})
+                if existing:
+                    summary["skipped"] += 1; summary["errors"].append(f"Row {i}: bill_no '{bill_no}' already exists"); continue
+                bill = {
+                    "id": _nid("rb"), "bill_no": bill_no, "order_no": None, "order_id": None,
+                    "retailer_id": r["id"], "distributor_id": d["id"],
+                    "items": [], "subtotal": _round(subtotal), "gst_total": _round(gst_total),
+                    "total": _round(total), "status": "issued", "imported": True,
+                    "created_at": date + "T00:00:00",
+                }
+                await db.dms_retailer_bills.insert_one(bill)
+                await db.dms_retailer_ledger.insert_one({
+                    "id": _nid("rle"), "distributor_id": d["id"], "retailer_id": r["id"],
+                    "kind": "invoice", "reference_id": bill["id"], "reference_no": bill_no,
+                    "amount": _round(total), "description": f"Imported sale bill {bill_no}", "at": date + "T00:00:00",
+                })
+                summary["created"] += 1
+            except Exception as e:
+                summary["skipped"] += 1; summary["errors"].append(f"Row {i}: {e}")
+        return summary
+
+    # -- Payments Import --
+    @router.post("/payments/import")
+    async def import_payments(file: UploadFile = File(...), user: dict = Depends(owner_or_accountant)):
+        """Import payments. Sheet 'Payments' with columns:
+        type(primary/secondary), date, distributor_email, retailer_email, amount, method, reference, description.
+        Posts to primary or retailer ledger as kind=payment (idempotent by reference within party)."""
+        from openpyxl import load_workbook
+        from io import BytesIO
+        raw = await file.read()
+        try:
+            wb = load_workbook(BytesIO(raw), data_only=True)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Cannot read xlsx: {e}")
+        ws = wb["Payments"] if "Payments" in wb.sheetnames else wb.active
+        header = [str(h or "").strip().lower() for h in next(ws.iter_rows(min_row=1, max_row=1, values_only=True), [])]
+        col = {h: i for i, h in enumerate(header)}
+        d_by_email = {d.get("email", "").lower(): d async for d in db.dms_distributors.find({}, {"_id": 0, "id": 1, "email": 1})}
+        r_by_email = {r.get("email", "").lower(): r async for r in db.dms_retailers.find({}, {"_id": 0, "id": 1, "email": 1, "distributor_id": 1})}
+        summary = {"created": 0, "skipped": 0, "errors": []}
+        for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+            if not row or all(v is None or v == "" for v in row):
+                continue
+            try:
+                def _g(k):
+                    idx = col.get(k, -1)
+                    return row[idx] if 0 <= idx < len(row) else None
+                ptype = str(_g("type") or "").strip().lower()
+                d_email = str(_g("distributor_email") or "").strip().lower()
+                r_email = str(_g("retailer_email") or "").strip().lower()
+                amount = _round(float(_g("amount") or 0))
+                if amount <= 0:
+                    summary["skipped"] += 1; summary["errors"].append(f"Row {i}: amount must be > 0"); continue
+                method = str(_g("method") or "cash").strip()
+                reference = str(_g("reference") or "").strip()
+                desc = str(_g("description") or "Imported payment").strip()
+                date = str(_g("date") or _now()[:10])[:10]
+                d = d_by_email.get(d_email)
+                if not ptype:
+                    ptype = "secondary" if r_email else "primary"
+                if ptype == "secondary":
+                    r = r_by_email.get(r_email)
+                    if not r:
+                        summary["skipped"] += 1; summary["errors"].append(f"Row {i}: unknown retailer email"); continue
+                    if reference and await db.dms_retailer_ledger.find_one({"retailer_id": r["id"], "reference_no": reference, "kind": "payment"}, {"_id": 0, "id": 1}):
+                        summary["skipped"] += 1; summary["errors"].append(f"Row {i}: reference '{reference}' already exists"); continue
+                    await db.dms_retailer_ledger.insert_one({
+                        "id": _nid("rle"), "distributor_id": (d or {}).get("id") or r.get("distributor_id"), "retailer_id": r["id"],
+                        "kind": "payment", "reference_no": reference or f"PMT-{i}", "amount": amount,
+                        "method": method, "description": desc, "at": date + "T00:00:00", "imported": True,
+                    })
+                    summary["created"] += 1
+                else:  # primary
+                    if not d:
+                        summary["skipped"] += 1; summary["errors"].append(f"Row {i}: unknown distributor email"); continue
+                    if reference and await db.dms_primary_ledger.find_one({"distributor_id": d["id"], "reference_no": reference, "kind": "payment"}, {"_id": 0, "id": 1}):
+                        summary["skipped"] += 1; summary["errors"].append(f"Row {i}: reference '{reference}' already exists"); continue
+                    await db.dms_primary_ledger.insert_one({
+                        "id": _nid("ple"), "distributor_id": d["id"],
+                        "kind": "payment", "reference_no": reference or f"PMT-{i}", "amount": amount,
+                        "method": method, "description": desc, "at": date + "T00:00:00", "imported": True,
+                    })
+                    summary["created"] += 1
+            except Exception as e:
+                summary["skipped"] += 1; summary["errors"].append(f"Row {i}: {e}")
+        return summary
 
     # =========================================================================
     # PHASE 2C — Direct +Add Sales invoice (no sales order required)
@@ -4574,6 +5025,9 @@ def build_dms_router(db, get_current_user):
         doc_type = str(body.get("type") or "").strip().lower()
         if doc_type not in DOC_TYPES:
             raise HTTPException(status_code=400, detail=f"type must be one of {sorted(DOC_TYPES)}")
+        # Delivery Challan is now auto-generated during the Dispatch flow — not created manually.
+        if doc_type == "delivery_challan":
+            raise HTTPException(status_code=400, detail="Delivery Challan is generated automatically after Dispatch. It cannot be created here.")
         date = str(body.get("date") or _now()[:10]).strip()
         try:
             datetime.strptime(date, "%Y-%m-%d")
@@ -4631,6 +5085,50 @@ def build_dms_router(db, get_current_user):
         }
         await db.dms_documents.insert_one(doc)
         doc.pop("_id", None)
+
+        # ── Side-effects (Item 9) ──────────────────────────────────────────
+        dist_id = doc["distributor_id"]
+        # Sale Return → adjust distributor inventory + stock ledger
+        if doc_type == "sale_return" and dist_id:
+            # retailer returns to distributor → stock increases (+)
+            # distributor returns to company → stock decreases (-)
+            sign = 1 if party_type == "retailer" else -1
+            for it in norm_items:
+                pid = it.get("product_id")
+                qty_boxes = int(round(float(it.get("qty") or 0)))
+                if not pid or qty_boxes <= 0:
+                    continue
+                inv = await db.dms_distributor_inventory.find_one({"distributor_id": dist_id, "product_id": pid})
+                if inv:
+                    new_qty = max(0, int(inv.get("qty_boxes", 0)) + sign * qty_boxes)
+                    await db.dms_distributor_inventory.update_one({"id": inv["id"]}, {"$set": {"qty_boxes": new_qty, "updated_at": _now()}})
+                elif sign > 0:
+                    prod = await db.dms_products.find_one({"id": pid}, {"_id": 0, "name": 1, "sku_code": 1})
+                    await db.dms_distributor_inventory.insert_one({
+                        "id": _nid("dinv"), "distributor_id": dist_id, "product_id": pid,
+                        "product_name": (prod or {}).get("name"), "sku_code": (prod or {}).get("sku_code"),
+                        "qty_boxes": qty_boxes, "updated_at": _now(),
+                    })
+                await db.dms_stock_ledger.insert_one({
+                    "id": _nid("sl"), "scope": "distributor", "distributor_id": dist_id,
+                    "product_id": pid, "delta_boxes": sign * qty_boxes,
+                    "reason": ("sale_return_from_retailer" if sign > 0 else "sale_return_to_company"),
+                    "reference": doc_no, "at": _now(),
+                })
+        # Credit Note / Debit Note → auto post to respective party ledger
+        if doc_type in ("credit_note", "debit_note") and total > 0:
+            if party_type == "retailer":
+                await db.dms_retailer_ledger.insert_one({
+                    "id": _nid("rle"), "distributor_id": dist_id, "retailer_id": party_id,
+                    "kind": doc_type, "reference_id": doc["id"], "reference_no": doc_no,
+                    "amount": total, "description": f"{DOC_LABELS[doc_type]} {doc_no}", "at": _now(),
+                })
+            else:  # distributor party → primary ledger
+                await db.dms_primary_ledger.insert_one({
+                    "id": _nid("ple"), "distributor_id": party_id,
+                    "kind": doc_type, "reference_id": doc["id"], "reference_no": doc_no,
+                    "amount": total, "description": f"{DOC_LABELS[doc_type]} {doc_no}", "at": _now(),
+                })
         return _clean(doc)
 
     @router.get("/documents/{did}")

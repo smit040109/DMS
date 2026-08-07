@@ -651,6 +651,7 @@ function ChartsPanel({ reportId, rows, columns }) {
 // ---------- Filter input builder ----------
 function FilterInput({ type, value, onChange, distributors, retailers, products, categories }) {
   const label = FILTER_LABELS[type] || type;
+  const [pq, setPq] = React.useState("");
   if (["date_from", "date_to", "as_on_date", "date"].includes(type)) {
     return (
       <div>
@@ -694,19 +695,33 @@ function FilterInput({ type, value, onChange, distributors, retailers, products,
     );
   }
   if (type === "party_id") {
+    const term = pq.trim().toLowerCase();
+    const dList = (distributors || []).filter(d => !term || (d.name || "").toLowerCase().includes(term));
+    const rList = (retailers || []).filter(r => !term || (r.name || "").toLowerCase().includes(term));
     return (
       <div>
         <Label>{label}</Label>
         <Select value={value || "all"} onValueChange={(v) => onChange(v === "all" ? "" : v)}>
           <SelectTrigger data-testid="filter-party"><SelectValue placeholder="All parties" /></SelectTrigger>
           <SelectContent>
+            <div className="px-2 py-2 sticky top-0 bg-white z-10 border-b">
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" />
+                <Input value={pq} onChange={(e) => setPq(e.target.value)} placeholder="Search party…"
+                  className="pl-7 h-8 text-sm" data-testid="party-search"
+                  onKeyDown={(e) => e.stopPropagation()} />
+              </div>
+            </div>
             <SelectItem value="all">All parties</SelectItem>
-            {(distributors || []).map(d => (
+            {dList.map(d => (
               <SelectItem key={d.id} value={d.id}>{d.name} (Distributor)</SelectItem>
             ))}
-            {(retailers || []).map(r => (
+            {rList.map(r => (
               <SelectItem key={r.id} value={r.id}>{r.name} (Retailer)</SelectItem>
             ))}
+            {dList.length === 0 && rList.length === 0 && (
+              <div className="px-3 py-2 text-xs text-slate-400">No parties match “{pq}”</div>
+            )}
           </SelectContent>
         </Select>
       </div>

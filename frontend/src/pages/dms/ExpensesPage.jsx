@@ -21,6 +21,35 @@ export function ExpensesPage() {
   const { user } = useAuth();
   const role = user?.role;
   const canDelete = ["owner", "owner_accountant", "super_admin"].includes(role);
+  const isSalesperson = role === "salesperson";
+  const isRsm = role === "regional_manager";
+  const isOwnerSide = ["owner", "owner_accountant", "super_admin"].includes(role);
+
+  const STATUS_META = {
+    submitted: { label: "Pending RSM Review", cls: "bg-amber-100 text-amber-700" },
+    rsm_approved: { label: "Pending Owner Approval", cls: "bg-sky-100 text-sky-700" },
+    approved: { label: "Approved", cls: "bg-emerald-100 text-emerald-700" },
+    Approved: { label: "Approved", cls: "bg-emerald-100 text-emerald-700" },
+    rejected: { label: "Rejected", cls: "bg-rose-100 text-rose-700" },
+    Pending: { label: "Pending", cls: "bg-amber-100 text-amber-700" },
+    Reimbursed: { label: "Reimbursed", cls: "bg-slate-100 text-slate-600" },
+  };
+  const statusBadge = (s) => {
+    const m = STATUS_META[s] || { label: s || "—", cls: "bg-slate-100 text-slate-600" };
+    return <span className={`text-[11px] px-2 py-0.5 rounded-full ${m.cls}`}>{m.label}</span>;
+  };
+
+  const doAction = async (e, action) => {
+    let note = "";
+    if (action === "reject") {
+      note = window.prompt("Reason for rejection (optional):") || "";
+    }
+    try {
+      await dms.expenseAction(e.id, action, note);
+      toast.success(action === "approve" ? "Expense approved" : "Expense rejected");
+      load();
+    } catch (err) { toast.error(err?.response?.data?.detail || "Failed"); }
+  };
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -178,11 +207,25 @@ export function ExpensesPage() {
                 <TableCell className="text-slate-600">{e.vendor || "—"}</TableCell>
                 <TableCell className="text-xs text-slate-500 max-w-xs truncate">{e.description || "—"}</TableCell>
                 <TableCell className="text-xs">{e.created_by_name || "—"}<div className="text-[10px] text-slate-400">{e.created_by_role || ""}</div></TableCell>
-                <TableCell><span className={`text-[11px] px-2 py-0.5 rounded-full ${e.status === "Approved" ? "bg-emerald-100 text-emerald-700" : e.status === "Pending" ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{e.status}</span></TableCell>
+                <TableCell>{statusBadge(e.status)}</TableCell>
                 <TableCell className="text-right font-semibold">{inr(e.amount)}</TableCell>
                 <TableCell className="text-right">
-                  <div className="flex gap-1 justify-end">
-                    <Button size="sm" variant="outline" onClick={() => openEdit(e)} data-testid={`exp-edit-${e.id}`}><Edit size={12} /></Button>
+                  <div className="flex gap-1 justify-end flex-wrap">
+                    {isRsm && e.status === "submitted" && (
+                      <>
+                        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 px-2" onClick={() => doAction(e, "approve")} data-testid={`exp-approve-${e.id}`}>Approve</Button>
+                        <Button size="sm" variant="outline" className="text-rose-700 border-rose-200 hover:bg-rose-50 h-7 px-2" onClick={() => doAction(e, "reject")} data-testid={`exp-reject-${e.id}`}>Reject</Button>
+                      </>
+                    )}
+                    {isOwnerSide && e.status === "rsm_approved" && (
+                      <>
+                        <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white h-7 px-2" onClick={() => doAction(e, "approve")} data-testid={`exp-approve-${e.id}`}>Approve</Button>
+                        <Button size="sm" variant="outline" className="text-rose-700 border-rose-200 hover:bg-rose-50 h-7 px-2" onClick={() => doAction(e, "reject")} data-testid={`exp-reject-${e.id}`}>Reject</Button>
+                      </>
+                    )}
+                    {!(isSalesperson && ["rsm_approved", "approved", "rejected"].includes(e.status)) && (
+                      <Button size="sm" variant="outline" onClick={() => openEdit(e)} data-testid={`exp-edit-${e.id}`}><Edit size={12} /></Button>
+                    )}
                     {canDelete && <Button size="sm" variant="outline" className="text-rose-700 border-rose-200 hover:bg-rose-50" onClick={() => doDelete(e)} data-testid={`exp-del-${e.id}`}><Trash2 size={12} /></Button>}
                   </div>
                 </TableCell>
@@ -215,17 +258,19 @@ export function ExpensesPage() {
                   <Input type="number" step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="pl-8" data-testid="exp-form-amount" />
                 </div>
               </div>
-              <div>
-                <Label>Status</Label>
-                <Select value={form.status} onValueChange={v => setForm({ ...form, status: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Approved">Approved</SelectItem>
-                    <SelectItem value="Pending">Pending</SelectItem>
-                    <SelectItem value="Reimbursed">Reimbursed</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+              {!isSalesperson && (
+                <div>
+                  <Label>Status</Label>
+                  <Select value={form.status} onValueChange={v => setForm({ ...form, status: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Approved">Approved</SelectItem>
+                      <SelectItem value="Pending">Pending</SelectItem>
+                      <SelectItem value="Reimbursed">Reimbursed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
             <div>
               <Label>Vendor</Label>
@@ -235,10 +280,17 @@ export function ExpensesPage() {
               <Label>Description</Label>
               <Textarea rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} data-testid="exp-form-desc" />
             </div>
-            <div>
-              <Label>Receipt URL (optional)</Label>
-              <Input value={form.receipt_url} onChange={e => setForm({ ...form, receipt_url: e.target.value })} placeholder="https://…" />
-            </div>
+            {!isSalesperson && (
+              <div>
+                <Label>Receipt URL (optional)</Label>
+                <Input value={form.receipt_url} onChange={e => setForm({ ...form, receipt_url: e.target.value })} placeholder="https://…" />
+              </div>
+            )}
+            {isSalesperson && (
+              <div className="text-xs text-slate-500 bg-slate-50 rounded-lg p-2.5">
+                Your expense will be sent to your Regional Manager for review, then to the Owner for final approval.
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpenForm(false)}>Cancel</Button>

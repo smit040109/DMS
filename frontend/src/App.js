@@ -21,12 +21,12 @@ import {
 import {
   SpDistributorsPage, SpRetailersPage, SpNewRetailerPage, SpNewOrderPage,
   SpOrdersPage, SpCollectPaymentPage,
-  TlDistributorsPage, TlAssignmentsPage,
+  TlDistributorsPage,
 } from "@/pages/dms/SalesTeamPages";
 import { SuperAdminUsersPage } from "@/pages/dms/SuperAdminPages";
 import { OwnerUsersPage } from "@/pages/dms/OwnerUsersPage";
 import { LiveTrackingPage } from "@/pages/dms/LiveTrackingPage";
-import { TlDashboardPage, TlDistributorsMonitoringPage, TlSalespersonsPage, TlOrdersMonitoringPage, TlRetailersPage, TlAttendancePage } from "@/pages/dms/TeamLeaderPages";
+import { TlDashboardPage, TlDistributorsMonitoringPage, TlSalespersonsPage, TlOrdersMonitoringPage, TlRetailersPage } from "@/pages/dms/TeamLeaderPages";
 import { OwnerTlPerformancePage, OwnerDistributorSalesListPage, OwnerDistributorSalesDetailPage } from "@/pages/dms/OwnerInsightsPages";
 import { RmDashboardPage, RmTeamLeadersPage, RmRegionPerformancePage, RmDistributorsPage, RmSalespersonsPage } from "@/pages/dms/RegionalManagerPages";
 import {
@@ -48,6 +48,7 @@ import { ImportExportPage, DirectSalesPage, DocumentsPage } from "@/pages/dms/Ph
 import { ReportsHubPage, GenericReportPage } from "@/pages/dms/ReportsPages";
 import { PriceCircularsPage, PriceCircularDetailPage, NewPriceCircularPage, SettingsPage } from "@/pages/dms/PriceCircularPages";
 import { ExpensesPage } from "@/pages/dms/ExpensesPage";
+import { AttendancePage, RmRetailersPage, RetailerAccessPage } from "@/pages/dms/AttendancePages";
 import { BankAccountsPage, BankTransactionsPage, CashRegisterPage, ChequesPage, LoanAccountsPage } from "@/pages/dms/CashBankPages";
 import { GodownsPage, StockTransfersPage } from "@/pages/dms/WarehousePages";
 
@@ -141,12 +142,16 @@ function AppRoutes() {
       <Route path="/dms/team-leader/salespersons"  element={<DmsPage Component={TlSalespersonsPage} />} />
       <Route path="/dms/team-leader/orders"        element={<DmsPage Component={TlOrdersMonitoringPage} />} />
       <Route path="/dms/team-leader/retailers"     element={<DmsPage Component={TlRetailersPage} />} />
-      <Route path="/dms/team-leader/attendance"    element={<DmsPage Component={TlAttendancePage} />} />
+      <Route path="/dms/team-leader/attendance"    element={<DmsPage Component={AttendancePage} />} />
       <Route path="/dms/regional-manager/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
       <Route path="/dms/regional-manager/team-leaders"  element={<DmsPage Component={RmTeamLeadersPage} />} />
       <Route path="/dms/regional-manager/performance"   element={<DmsPage Component={RmRegionPerformancePage} />} />
       <Route path="/dms/regional-manager/distributors"  element={<DmsPage Component={RmDistributorsPage} />} />
       <Route path="/dms/regional-manager/salespersons"  element={<DmsPage Component={RmSalespersonsPage} />} />
+      <Route path="/dms/regional-manager/retailers"     element={<DmsPage Component={RmRetailersPage} />} />
+      <Route path="/dms/regional-manager/attendance"    element={<DmsPage Component={AttendancePage} />} />
+      <Route path="/dms/owner/attendance"               element={<DmsPage Component={AttendancePage} />} />
+      <Route path="/dms/owner/retailer-access"          element={<DmsPage Component={RetailerAccessPage} />} />      <Route path="/dms/salesperson/attendance"         element={<DmsPage Component={AttendancePage} />} />
 
       {/* Distributor */}
       <Route path="/dms/distributor/browse"           element={<DmsPage Component={DistributorBrowsePage} />} />
@@ -176,7 +181,6 @@ function AppRoutes() {
 
       {/* Team Leader */}
       <Route path="/dms/team-leader/distributors" element={<DmsPage Component={TlDistributorsMonitoringPage} />} />
-      <Route path="/dms/team-leader/assignments"  element={<DmsPage Component={TlAssignmentsPage} />} />
 
       {/* Super Admin */}
       <Route path="/dms/admin/users" element={<DmsPage Component={SuperAdminUsersPage} />} />

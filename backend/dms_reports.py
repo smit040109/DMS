@@ -207,7 +207,7 @@ REPORT_CATALOG: List[Dict[str, Any]] = [
     {"id": "sp_collection", "name": "Sales Person Wise Collection Report",
      "category": "sales_team",
      "description": "Cash + cheque collections per salesperson.",
-     "status": "live", "allowed_roles": _ADMIN_TL_RM,
+     "status": "live", "allowed_roles": _ADMIN_TL_RM + ["salesperson"],
      "filters": ["date_from", "date_to"]},
     {"id": "tl_rsm_team", "name": "TL/RSM Team Report", "category": "sales_team",
      "description": "Team-level performance for TL/RSM hierarchies.",
@@ -1074,14 +1074,15 @@ async def _run_party_statement(db, user, filters):
         if not _in_range(l.get("at"), df, dt):
             continue
         amt = float(l.get("amount", 0) or 0)
-        signed = amt if l.get("kind") == "invoice" else -amt
+        _is_debit = l.get("kind") in ("invoice", "debit_note")
+        signed = amt if _is_debit else -amt
         running += signed
         rows.append({"date": _fmt_date_short(l.get("at")),
                      "kind": l.get("kind", ""),
                      "reference": l.get("reference_no", ""),
                      "description": l.get("description", ""),
-                     "debit": amt if l.get("kind") == "invoice" else 0.0,
-                     "credit": amt if l.get("kind") != "invoice" else 0.0,
+                     "debit": amt if _is_debit else 0.0,
+                     "credit": amt if not _is_debit else 0.0,
                      "balance": round(running, 2)})
     if not rows:
         # Retailer ledger
@@ -1089,14 +1090,15 @@ async def _run_party_statement(db, user, filters):
             if not _in_range(l.get("at"), df, dt):
                 continue
             amt = float(l.get("amount", 0) or 0)
-            signed = amt if l.get("kind") == "invoice" else -amt
+            _is_debit = l.get("kind") in ("invoice", "debit_note")
+            signed = amt if _is_debit else -amt
             running += signed
             rows.append({"date": _fmt_date_short(l.get("at")),
                          "kind": l.get("kind", ""),
                          "reference": l.get("reference_no", ""),
                          "description": l.get("description", ""),
-                         "debit": amt if l.get("kind") == "invoice" else 0.0,
-                         "credit": amt if l.get("kind") != "invoice" else 0.0,
+                         "debit": amt if _is_debit else 0.0,
+                         "credit": amt if not _is_debit else 0.0,
                          "balance": round(running, 2)})
     # Lookup party name
     if party_id:
@@ -2193,7 +2195,10 @@ async def _run_sp_collection(db, user, filters):
     df = _parse_iso_date(filters.get("date_from"))
     dt = _end_of_day(_parse_iso_date(filters.get("date_to")))
     sps: Dict[str, Dict[str, Any]] = {}
-    async for u in db.users.find({"role": "salesperson"}, {"_id": 0, "id": 1, "name": 1}):
+    _uq = {"role": "salesperson"}
+    if user.get("role") == "salesperson":
+        _uq = {"role": "salesperson", "id": user["id"]}
+    async for u in db.users.find(_uq, {"_id": 0, "id": 1, "name": 1}):
         sps[u["id"]] = {"salesperson": u.get("name", ""), "cash": 0.0, "cheque": 0.0, "count": 0}
     async for l in db.dms_retailer_ledger.find({"kind": "payment"}, {"_id": 0}):
         if not _in_range(l.get("at"), df, dt):

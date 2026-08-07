@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Plus, ChevronRight, Store, Truck, Receipt, IndianRupee, MapPin, Printer } from "lucide-react";
+import { Plus, ChevronRight, Store, Truck, Receipt, IndianRupee, MapPin, Printer, FileText } from "lucide-react";
 import LocationDocumentsBlock from "./LocationDocumentsBlock";
 
 // Distributor: retailers list
@@ -177,14 +177,25 @@ export function DistSecondaryOrderDetailPage() {
   });
   useEffect(() => { load(); }, [id]);
   if (!order) return <div className="p-8 text-center text-slate-500">Loading…</div>;
-  const canDispatch = order.status === "pending";
-  const doDispatch = async () => {
-    if (!window.confirm("Dispatch this order? Bill will be generated and stock deducted.")) return;
+  const canInvoice = order.status === "pending";
+  const canDispatch = order.status === "invoiced";
+  const doInvoice = async () => {
+    if (!window.confirm("Generate Invoice for this order? An invoice number will be created.")) return;
     setBusy(true);
     try {
-      const items = order.items.map(it => ({ product_id: it.product_id, qty_boxes_dispatched: Number(dispatch[it.product_id]?.boxes || 0), qty_pcs_dispatched: Number(dispatch[it.product_id]?.pcs || 0) }));
-      await dms.dispatchSecondary(id, { items });
-      toast.success("Dispatched — bill generated");
+      const items = order.items.map(it => ({ product_id: it.product_id, qty_boxes: Number(dispatch[it.product_id]?.boxes || 0), qty_pcs: Number(dispatch[it.product_id]?.pcs || 0) }));
+      const r = await dms.generateInvoiceSecondary(id, { items });
+      toast.success(`Invoice ${r.invoice_no} generated`);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    setBusy(false);
+  };
+  const doDispatch = async () => {
+    if (!window.confirm("Dispatch this order? Stock will be deducted and a Delivery Challan generated.")) return;
+    setBusy(true);
+    try {
+      const r = await dms.dispatchSecondary(id, {});
+      toast.success(`Dispatched — Challan ${r.challan_no} generated`);
       load();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
     setBusy(false);
@@ -192,18 +203,36 @@ export function DistSecondaryOrderDetailPage() {
   return (
     <div>
       <PageHeader title={order.order_no} subtitle={`${order.retailer_name} • Placed ${niceDate(order.created_at)}`} back="/dms/distributor/retail-orders"
-        action={<div className="flex gap-2">
-          {order.bill_id && <Button variant="outline" onClick={() => window.open(`/dms/print/retailer-bill/${order.bill_id}`, "_blank")}><Printer size={14} className="mr-1" /> Print Bill</Button>}
+        action={<div className="flex gap-2 flex-wrap">
+          {order.bill_id && <Button variant="outline" onClick={() => window.open(`/dms/print/retailer-bill/${order.bill_id}`, "_blank")}><Printer size={14} className="mr-1" /> Print Invoice</Button>}
+          {order.challan_id && <Button variant="outline" onClick={() => window.open(`/dms/print/challan/${order.challan_id}`, "_blank")}><FileText size={14} className="mr-1" /> Print Challan</Button>}
+          {canInvoice && <Button onClick={doInvoice} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="invoice-btn"><Receipt size={14} className="mr-1" /> Generate Invoice</Button>}
           {canDispatch && <Button onClick={doDispatch} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="dispatch-btn"><Truck size={14} className="mr-1" /> Dispatch</Button>}
         </div>} />
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+      {/* Flow progress */}
+      <div className="flex items-center gap-2 mb-4 text-xs font-medium">
+        {["pending", "invoiced", "dispatched"].map((st, i) => {
+          const order_seq = { pending: 0, invoiced: 1, dispatched: 2 };
+          const cur = order_seq[order.status] ?? 0;
+          const label = ["Order Placed", "Invoice Generated", "Dispatched + Challan"][i];
+          const done = i <= cur;
+          return (
+            <React.Fragment key={st}>
+              {i > 0 && <div className={`h-0.5 w-6 ${i <= cur ? "bg-emerald-500" : "bg-slate-200"}`} />}
+              <span className={`px-2.5 py-1 rounded-full ${done ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-400"}`}>{label}</span>
+            </React.Fragment>
+          );
+        })}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-4">
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Status</div><div className="mt-1"><span className={`text-sm px-2.5 py-1 rounded-full border ${statusPill(order.status)}`}>{order.status.replace(/_/g, " ")}</span></div></Card>
-        <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Selling Mode</div><div className="mt-1 font-semibold">{order.mode === "box_pcs" ? "Box + PCS" : "Box only"}</div></Card>
+        <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Invoice No</div><div className="mt-1 font-semibold">{order.invoice_no || "—"}</div></Card>
+        <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Challan No</div><div className="mt-1 font-semibold">{order.challan_no || "—"}</div></Card>
         <Card className="p-4"><div className="text-xs text-slate-500 uppercase tracking-wider">Order Value</div><div className="mt-1 font-bold text-lg">{inr(order.total)}</div></Card>
       </div>
       <Card>
-        <div className="p-4 border-b border-slate-100 font-semibold">Items — set dispatch quantities</div>
-        <Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Ordered</TableHead><TableHead>Dispatching</TableHead><TableHead>Line Total</TableHead></TableRow></TableHeader><TableBody>
+        <div className="p-4 border-b border-slate-100 font-semibold">{canInvoice ? "Items — set invoice quantities" : "Items"}</div>
+        <Table><TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Ordered</TableHead><TableHead>{canInvoice ? "Invoicing" : "Invoiced / Dispatched"}</TableHead><TableHead>Line Total</TableHead></TableRow></TableHeader><TableBody>
           {order.items.map(it => {
             const d = dispatch[it.product_id] || { boxes: 0, pcs: 0 };
             return (
@@ -211,7 +240,7 @@ export function DistSecondaryOrderDetailPage() {
                 <TableCell><div className="font-medium">{it.product_name}</div>{it.carried_pending && <span className="text-[10px] uppercase bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded">Pending Carry-forward</span>}</TableCell>
                 <TableCell>{it.qty_boxes_ordered} boxes {it.qty_pcs_ordered > 0 && `+ ${it.qty_pcs_ordered} pcs`}</TableCell>
                 <TableCell>
-                  {canDispatch ? (
+                  {canInvoice ? (
                     <div className="flex items-center gap-2">
                       <Input type="number" min={0} max={it.qty_boxes_ordered} value={d.boxes} onChange={e => setDispatch({ ...dispatch, [it.product_id]: { ...d, boxes: e.target.value } })} className="w-20" />
                       <span className="text-xs text-slate-500">bx</span>
@@ -221,7 +250,9 @@ export function DistSecondaryOrderDetailPage() {
                       </>}
                     </div>
                   ) : (
-                    <span className="font-semibold">{it.qty_boxes_dispatched} boxes {it.qty_pcs_dispatched > 0 && `+ ${it.qty_pcs_dispatched} pcs`}</span>
+                    <span className="font-semibold">
+                      {(it.qty_boxes_dispatched ?? it.qty_boxes_invoiced ?? 0)} boxes {(it.qty_pcs_dispatched ?? it.qty_pcs_invoiced ?? 0) > 0 && `+ ${(it.qty_pcs_dispatched ?? it.qty_pcs_invoiced)} pcs`}
+                    </span>
                   )}
                 </TableCell>
                 <TableCell className="font-medium">{inr(it.line_total)}</TableCell>

@@ -246,6 +246,9 @@ async def login(request: Request, response: Response, body: LoginIn):
     if not user or not verify_password(body.password, user.get("password_hash", "")):
         logger.warning(f"Failed login for {email} from {request.client.host if request.client else '?'}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    # Owner-controlled retailer login access (Item 3): block only when explicitly disabled
+    if user.get("role") == "retailer" and user.get("login_enabled") is False:
+        raise HTTPException(status_code=403, detail="Login access has been disabled by the owner. Please contact your distributor/owner.")
     # Suspended tenant guard
     tid = user.get("tenant_id")
     if tid:

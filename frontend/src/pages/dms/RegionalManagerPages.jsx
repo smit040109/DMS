@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { dms, inr, niceDate } from "./api";
 import { PageHeader } from "./OwnerPages";
 import { Card } from "@/components/ui/card";
@@ -10,24 +11,27 @@ import { Trophy, TrendingUp, ShoppingCart, Percent, Handshake, Users, Store, Ale
 // ============================================================================
 export function RmDashboardPage() {
   const [k, setK] = useState(null);
+  const navigate = useNavigate();
   useEffect(() => { dms.rmDashboard().then(d => setK(d.kpis)).catch(() => {}); }, []);
+  const RM = "/dms/regional-manager";
   const cards = [
-    { label: "Team Leaders",     value: k?.team_leaders ?? "—",           icon: Users,     tint: "bg-purple-50 text-purple-700" },
-    { label: "Distributors",     value: k?.distributors ?? "—",           icon: Handshake, tint: "bg-[#faf6e6] text-[#a67c00]" },
-    { label: "Retailers",        value: k?.retailers ?? "—",              icon: Store,     tint: "bg-amber-50 text-amber-700" },
-    { label: "Salespersons",     value: k?.salespersons ?? "—",           icon: Users,     tint: "bg-fuchsia-50 text-fuchsia-700" },
-    { label: "Today's Sales",    value: k ? inr(k.today_sales) : "—",     icon: TrendingUp,tint: "bg-emerald-50 text-emerald-700" },
-    { label: "Monthly Sales",    value: k ? inr(k.monthly_sales) : "—",   icon: TrendingUp,tint: "bg-[#faf6e6] text-[#a67c00]" },
-    { label: "Outstanding",      value: k ? inr(k.outstanding) : "—",     icon: IndianRupee,tint: "bg-rose-50 text-rose-700" },
-    { label: "Revenue",          value: k ? inr(k.revenue) : "—",         icon: IndianRupee,tint: "bg-indigo-50 text-indigo-700" },
-    { label: "Fulfillment %",    value: k ? `${k.fulfillment_pct}%` : "—",icon: Percent,   tint: "bg-blue-50 text-blue-700" },
+    { label: "Team Leaders",     value: k?.team_leaders ?? "—",           icon: Users,     tint: "bg-purple-50 text-purple-700", to: `${RM}/team-leaders` },
+    { label: "Distributors",     value: k?.distributors ?? "—",           icon: Handshake, tint: "bg-[#faf6e6] text-[#a67c00]", to: `${RM}/distributors` },
+    { label: "Retailers",        value: k?.retailers ?? "—",              icon: Store,     tint: "bg-amber-50 text-amber-700", to: `${RM}/retailers` },
+    { label: "Salespersons",     value: k?.salespersons ?? "—",           icon: Users,     tint: "bg-fuchsia-50 text-fuchsia-700", to: `${RM}/salespersons` },
+    { label: "Today's Sales",    value: k ? inr(k.today_sales) : "—",     icon: TrendingUp,tint: "bg-emerald-50 text-emerald-700", to: `${RM}/performance` },
+    { label: "Monthly Sales",    value: k ? inr(k.monthly_sales) : "—",   icon: TrendingUp,tint: "bg-[#faf6e6] text-[#a67c00]", to: `${RM}/performance` },
+    { label: "Outstanding",      value: k ? inr(k.outstanding) : "—",     icon: IndianRupee,tint: "bg-rose-50 text-rose-700", to: `${RM}/distributors` },
+    { label: "Revenue",          value: k ? inr(k.revenue) : "—",         icon: IndianRupee,tint: "bg-indigo-50 text-indigo-700", to: `${RM}/performance` },
+    { label: "Fulfillment %",    value: k ? `${k.fulfillment_pct}%` : "—",icon: Percent,   tint: "bg-blue-50 text-blue-700", to: `${RM}/performance` },
   ];
   return (
     <div>
-      <PageHeader title="Regional Manager Dashboard" subtitle="Overview of your region's performance" />
+      <PageHeader title="Regional Manager Dashboard" subtitle="Overview of your region's performance — tap any card to drill in" />
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         {cards.map(c => (
-          <Card key={c.label} className="p-4">
+          <Card key={c.label} onClick={() => navigate(c.to)} data-testid={`rm-kpi-${c.label.replace(/[^a-z]/gi, "").toLowerCase()}`}
+            className="p-4 cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all">
             <div className={`inline-flex h-9 w-9 rounded-lg items-center justify-center mb-2 ${c.tint}`}><c.icon size={18} /></div>
             <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">{c.label}</div>
             <div className="text-xl font-bold text-slate-900 mt-1">{c.value}</div>
@@ -90,24 +94,29 @@ export function RmTeamLeadersPage() {
 // ============================================================================
 export function RmRegionPerformancePage() {
   const [d, setD] = useState({ by_distributor: [], by_team_leader: [], by_salesperson: [] });
+  const navigate = useNavigate();
   useEffect(() => { dms.rmRegionPerformance().then(setD).catch(() => {}); }, []);
+  const RM = "/dms/regional-manager";
   return (
     <div>
-      <PageHeader title="Region Performance" subtitle="Distributor-wise, Team Leader-wise, and Salesperson-wise sales" />
+      <PageHeader title="Region Performance" subtitle="Distributor-wise, Team Leader-wise, and Salesperson-wise sales — tap a card for details" />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <BarBlock title="By Distributor" rows={d.by_distributor} />
-        <BarBlock title="By Team Leader" rows={d.by_team_leader} />
-        <BarBlock title="By Salesperson" rows={d.by_salesperson} />
+        <BarBlock title="By Distributor" rows={d.by_distributor} onOpen={() => navigate(`${RM}/distributors`)} testid="perf-distributors" />
+        <BarBlock title="By Team Leader" rows={d.by_team_leader} onOpen={() => navigate(`${RM}/team-leaders`)} testid="perf-teamleaders" />
+        <BarBlock title="By Salesperson" rows={d.by_salesperson} onOpen={() => navigate(`${RM}/salespersons`)} testid="perf-salespersons" />
       </div>
     </div>
   );
 }
 
-function BarBlock({ title, rows }) {
+function BarBlock({ title, rows, onOpen, testid }) {
   const max = Math.max(1, ...rows.map(r => r.sales));
   return (
-    <Card>
-      <div className="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900">{title}</div>
+    <Card onClick={onOpen} data-testid={testid} className={onOpen ? "cursor-pointer hover:shadow-md transition-shadow" : ""}>
+      <div className="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900 flex items-center justify-between">
+        {title}
+        {onOpen && <span className="text-xs text-[#a67c00] font-medium">View details →</span>}
+      </div>
       <div className="p-4 space-y-3">
         {rows.length === 0 && <div className="text-center py-6 text-sm text-slate-400">No data yet</div>}
         {rows.map(r => (

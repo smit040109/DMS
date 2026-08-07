@@ -71,6 +71,8 @@ export const dms = {
   listSecondaryOrders: (status) => api.get("/dms/secondary-orders", { params: status ? { status } : {} }).then(r => r.data),
   getSecondaryOrder: (id) => api.get(`/dms/secondary-orders/${id}`).then(r => r.data),
   dispatchSecondary: (oid, body) => api.post(`/dms/secondary-orders/${oid}/dispatch`, body).then(r => r.data),
+  generateInvoiceSecondary: (oid, body = {}) => api.post(`/dms/secondary-orders/${oid}/invoice`, body).then(r => r.data),
+  getOrderChallan: (oid) => api.get(`/dms/secondary-orders/${oid}/challan`).then(r => r.data),
   // Phase 1 additions:
   cancelSecondaryOrder: (oid, reason) => api.post(`/dms/secondary-orders/${oid}/cancel`, { reason }).then(r => r.data),
   updateSecondaryOrder: (oid, body) => api.put(`/dms/secondary-orders/${oid}`, body).then(r => r.data),
@@ -96,6 +98,13 @@ export const dms = {
   punchIn: (body) => api.post("/dms/punch/in", body).then(r => r.data),
   punchOut: (body) => api.post("/dms/punch/out", body).then(r => r.data),
   punchToday: () => api.get("/dms/punch/today").then(r => r.data),
+
+  // attendance (role-aware) + owner reopen + retailer login toggle
+  attendance: () => api.get("/dms/attendance").then(r => r.data),
+  reopenPunch: (spId) => api.post(`/dms/owner/punch/reopen/${spId}`).then(r => r.data),
+  setRetailerLoginAccess: (rid, enabled) => api.put(`/dms/retailers/${rid}/login-access`, { enabled }).then(r => r.data),
+  expenseAction: (id, action, note = "") => api.post(`/dms/expenses/${id}/action`, { action, note }).then(r => r.data),
+  rmRetailers: () => api.get("/dms/rm/retailers").then(r => r.data),
 
   // dashboards
   ownerDashboard: () => api.get("/dms/dashboard/owner").then(r => r.data),
@@ -317,6 +326,17 @@ export const dms = {
     const fd = new FormData(); fd.append("file", file);
     return api.post("/dms/owner/products/import", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
   },
+  // Item 10: Sale Bill Import + Payment Import + templates
+  importSaleBills: (file) => {
+    const fd = new FormData(); fd.append("file", file);
+    return api.post("/dms/sale-bills/import", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
+  },
+  importPayments: (file) => {
+    const fd = new FormData(); fd.append("file", file);
+    return api.post("/dms/payments/import", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
+  },
+  saleBillsTemplate: () => api.get("/dms/sale-bills/import-template", { responseType: "blob" }).then(r => r.data),
+  paymentsTemplate: () => api.get("/dms/payments/import-template", { responseType: "blob" }).then(r => r.data),
 
   // Phase 2C: Direct Sales
   createDirectSale: (b) => api.post("/dms/direct-sales", b).then(r => r.data),

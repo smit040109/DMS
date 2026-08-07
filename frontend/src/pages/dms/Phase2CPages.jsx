@@ -32,6 +32,8 @@ export function ImportExportPage() {
   const [importResult, setImportResult] = useState(null);
   const partiesRef = useRef(null);
   const productsRef = useRef(null);
+  const saleBillsRef = useRef(null);
+  const paymentsRef = useRef(null);
 
   const doExport = async (label, fn, filename) => {
     setBusy(label);
@@ -56,7 +58,7 @@ export function ImportExportPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Import / Export" subtitle="Bulk data operations — parties + items importable; sale bills + payments export only" />
+      <PageHeader title="Import / Export" subtitle="Bulk data operations — Parties, Items, Sale Bills & Payments (import + export)" />
 
       <div className="grid md:grid-cols-2 gap-4">
         {/* Import Parties */}
@@ -64,17 +66,17 @@ export function ImportExportPage() {
           <div className="flex items-center gap-3 mb-3">
             <Upload className="w-6 h-6 text-emerald-600" />
             <div>
-              <div className="font-semibold">Import Parties</div>
+              <div className="font-semibold">Parties (Import / Export)</div>
               <div className="text-xs text-slate-500">Distributors + Retailers via multi-sheet XLSX</div>
             </div>
           </div>
           <input ref={partiesRef} type="file" accept=".xlsx" className="text-sm mb-3 block" data-testid="import-parties-file" />
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button size="sm" onClick={() => doImport("Parties Import", dms.importParties, partiesRef.current?.files?.[0])} disabled={busy === "Parties Import"} className="bg-emerald-600 hover:bg-emerald-700">
-              <Upload className="w-4 h-4 mr-1" />{busy === "Parties Import" ? "Uploading..." : "Upload"}
+              <Upload className="w-4 h-4 mr-1" />{busy === "Parties Import" ? "Uploading..." : "Import"}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => doExport("Parties Export", dms.exportParties, "parties")}>
-              <Download className="w-4 h-4 mr-1" />Download Template
+            <Button size="sm" variant="outline" onClick={() => doExport("Parties Export", dms.exportParties, "parties")} data-testid="export-parties-btn">
+              <Download className="w-4 h-4 mr-1" />Export
             </Button>
           </div>
         </Card>
@@ -84,47 +86,65 @@ export function ImportExportPage() {
           <div className="flex items-center gap-3 mb-3">
             <Upload className="w-6 h-6 text-emerald-600" />
             <div>
-              <div className="font-semibold">Import Items (Products)</div>
+              <div className="font-semibold">Items / Products (Import / Export)</div>
               <div className="text-xs text-slate-500">Products with pricing via XLSX</div>
             </div>
           </div>
           <input ref={productsRef} type="file" accept=".xlsx" className="text-sm mb-3 block" data-testid="import-products-file" />
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button size="sm" onClick={() => doImport("Items Import", dms.importProducts, productsRef.current?.files?.[0])} disabled={busy === "Items Import"} className="bg-emerald-600 hover:bg-emerald-700">
-              <Upload className="w-4 h-4 mr-1" />{busy === "Items Import" ? "Uploading..." : "Upload"}
+              <Upload className="w-4 h-4 mr-1" />{busy === "Items Import" ? "Uploading..." : "Import"}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => doExport("Items Export", dms.exportProducts, "items")}>
-              <Download className="w-4 h-4 mr-1" />Download Template
+            <Button size="sm" variant="outline" onClick={() => doExport("Items Export", dms.exportProducts, "items")} data-testid="export-items-btn">
+              <Download className="w-4 h-4 mr-1" />Export
             </Button>
           </div>
         </Card>
 
-        {/* Export Sale Bills */}
+        {/* Sale Bills Import + Export */}
         <Card className="p-5 border-amber-200">
           <div className="flex items-center gap-3 mb-3">
-            <Download className="w-6 h-6 text-amber-600" />
+            <FileText className="w-6 h-6 text-amber-600" />
             <div>
-              <div className="font-semibold">Sale Bills (Export Only)</div>
-              <div className="text-xs text-slate-500">Primary e-bills + retailer bills</div>
+              <div className="font-semibold">Sale Bills (Import / Export)</div>
+              <div className="text-xs text-slate-500">Retailer sale bills — posts to ledger on import</div>
             </div>
           </div>
-          <Button size="sm" onClick={() => doExport("Sale Bills Export", dms.exportSaleBills, "sale_bills")} className="bg-amber-600 hover:bg-amber-700">
-            <Download className="w-4 h-4 mr-1" />Download All Sale Bills
-          </Button>
+          <input ref={saleBillsRef} type="file" accept=".xlsx" className="text-sm mb-3 block" data-testid="import-salebills-file" />
+          <div className="flex gap-2 flex-wrap">
+            <Button size="sm" onClick={() => doImport("Sale Bills Import", dms.importSaleBills, saleBillsRef.current?.files?.[0])} disabled={busy === "Sale Bills Import"} className="bg-amber-600 hover:bg-amber-700">
+              <Upload className="w-4 h-4 mr-1" />{busy === "Sale Bills Import" ? "Uploading..." : "Import"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => doExport("Sale Bills Template", dms.saleBillsTemplate, "sale_bills_template")} data-testid="salebills-template-btn">
+              <Download className="w-4 h-4 mr-1" />Template
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => doExport("Sale Bills Export", dms.exportSaleBills, "sale_bills")}>
+              <Download className="w-4 h-4 mr-1" />Export
+            </Button>
+          </div>
         </Card>
 
-        {/* Export Payments */}
+        {/* Payments Import + Export */}
         <Card className="p-5 border-amber-200">
           <div className="flex items-center gap-3 mb-3">
-            <Download className="w-6 h-6 text-amber-600" />
+            <FileText className="w-6 h-6 text-amber-600" />
             <div>
-              <div className="font-semibold">Payments (Export Only)</div>
-              <div className="text-xs text-slate-500">Primary + Secondary payments ledger</div>
+              <div className="font-semibold">Payments (Import / Export)</div>
+              <div className="text-xs text-slate-500">Primary + Secondary payments</div>
             </div>
           </div>
-          <Button size="sm" onClick={() => doExport("Payments Export", dms.exportPayments, "payments")} className="bg-amber-600 hover:bg-amber-700">
-            <Download className="w-4 h-4 mr-1" />Download All Payments
-          </Button>
+          <input ref={paymentsRef} type="file" accept=".xlsx" className="text-sm mb-3 block" data-testid="import-payments-file" />
+          <div className="flex gap-2 flex-wrap">
+            <Button size="sm" onClick={() => doImport("Payments Import", dms.importPayments, paymentsRef.current?.files?.[0])} disabled={busy === "Payments Import"} className="bg-amber-600 hover:bg-amber-700">
+              <Upload className="w-4 h-4 mr-1" />{busy === "Payments Import" ? "Uploading..." : "Import"}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => doExport("Payments Template", dms.paymentsTemplate, "payments_template")} data-testid="payments-template-btn">
+              <Download className="w-4 h-4 mr-1" />Template
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => doExport("Payments Export", dms.exportPayments, "payments")}>
+              <Download className="w-4 h-4 mr-1" />Export
+            </Button>
+          </div>
         </Card>
       </div>
 
@@ -285,6 +305,8 @@ const DOC_TYPES = [
   { value: "credit_note", label: "Credit Note", prefix: "CN" },
   { value: "debit_note", label: "Debit Note", prefix: "DN" },
 ];
+// Delivery Challan is auto-generated from the Dispatch flow — not creatable here.
+const DOC_CREATE_TYPES = DOC_TYPES.filter(t => t.value !== "delivery_challan");
 
 export function DocumentsPage() {
   const { user } = useAuth();
@@ -353,7 +375,7 @@ export function DocumentsPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Documents" subtitle="Estimate • Delivery Challan • Sale Return • Credit / Debit Note (MVP — no stock/ledger changes)"
+      <PageHeader title="Documents" subtitle="Estimate • Sale Return (updates stock) • Credit / Debit Note (posts to ledger)"
         action={<Button onClick={() => { setForm({ type: "estimate", date: today(), party_type: "retailer", party_id: "", items: [{ description: "", product_id: "", qty: 1, rate: 0 }], gst_pct: 0, notes: "" }); setOpen(true); }} className="bg-amber-600 hover:bg-amber-700"><Plus className="w-4 h-4 mr-2" />New Document</Button>} />
 
       <Card className="p-3">
@@ -400,7 +422,7 @@ export function DocumentsPage() {
               <div><Label>Type*</Label>
                 <Select value={form.type} onValueChange={v => setForm({ ...form, type: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>{DOC_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
+                  <SelectContent>{DOC_CREATE_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}</SelectContent>
                 </Select></div>
               <div><Label>Date*</Label><Input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
               <div><Label>Party Type*</Label>
@@ -414,6 +436,16 @@ export function DocumentsPage() {
                   <SelectContent>{parties.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
                 </Select></div>
             </div>
+            {form.type === "sale_return" && (
+              <div className="text-xs text-slate-600 bg-amber-50 border border-amber-200 rounded p-2.5">
+                <b>Stock effect:</b> Return from a <b>Retailer</b> → your stock <b>increases</b>. Return to <b>Company</b> (party = your distributor) → your stock <b>decreases</b>. Enter product-linked items with quantities in boxes.
+              </div>
+            )}
+            {(form.type === "credit_note" || form.type === "debit_note") && (
+              <div className="text-xs text-slate-600 bg-violet-50 border border-violet-200 rounded p-2.5">
+                This {form.type === "credit_note" ? "Credit Note" : "Debit Note"} will be posted automatically to the selected party&apos;s ledger.
+              </div>
+            )}
 
             <div className="border rounded p-3 bg-slate-50">
               <div className="flex items-center justify-between mb-2">
