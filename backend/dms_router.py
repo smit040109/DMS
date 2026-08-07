@@ -5066,6 +5066,10 @@ def build_dms_router(db, get_current_user):
         gst_pct = float(body.get("gst_pct") or 0)
         gst_total = _round(subtotal * gst_pct / 100)
         total = _round(subtotal + gst_total)
+        # allow a lump-sum amount (e.g. Credit/Debit notes without line items)
+        if total <= 0 and body.get("amount"):
+            total = _round(float(body.get("amount")))
+            subtotal = total
         # doc_no
         cnt = await db.dms_documents.count_documents({"type": doc_type})
         doc_no = str(body.get("doc_no") or f"{DOC_PREFIX[doc_type]}-{datetime.now().strftime('%y%m%d')}-{cnt + 1:04d}").strip()
