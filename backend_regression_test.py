@@ -9,7 +9,7 @@ import time
 from typing import Dict, Any, List, Optional
 
 # Configuration from frontend/.env
-BASE_URL = "https://sales-ops-hub-30.preview.emergentagent.com/api"
+BASE_URL = "https://print-ready-coupons.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 TEST_USERS = [

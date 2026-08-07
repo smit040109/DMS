@@ -10,7 +10,7 @@ from datetime import datetime, date
 import time
 
 # Configuration
-BASE_URL = "https://sales-ops-hub-30.preview.emergentagent.com/api"
+BASE_URL = "https://print-ready-coupons.preview.emergentagent.com/api"
 PASSWORD = "GoOil@2026"
 
 # Test credentials
