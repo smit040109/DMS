@@ -6295,11 +6295,11 @@ agent_communication:
 
   - task: "Box Management + Retailer Scan Permission UI (frontend)"
     implemented: true
-    working: false
+    working: true
     file: "frontend/src/pages/dms/CouponsV2.jsx, frontend/src/pages/dms/DmsShell.jsx"
     stuck_count: 0
     priority: "high"
-    needs_retesting: true
+    needs_retesting: false
     status_history:
       - working: false
         agent: "testing"
@@ -6386,6 +6386,84 @@ agent_communication:
           - Bug #1: BLOCKING - Owner cannot create boxes via UI (must use API directly)
           - Bug #2: BLOCKING - Retailer cannot access Scan Coupon via sidebar (must use direct URL)
           - Both bugs prevent the requested test scenarios from completing successfully
+
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ RE-TEST COMPLETE — BOTH CRITICAL BUGS FIXED (100% PASS)
+          
+          Comprehensive re-testing completed after bug fixes. Both previously-failing flows now working perfectly.
+          
+          **TEST 1: OWNER BOX MANAGEMENT — ✅ PASSED (100%)**
+          ✅ Login as owner@gooil.com successful
+          ✅ Navigate to Box Management page (/dms/owner/boxes) successful
+          ✅ **CRITICAL FIX VERIFIED: Create Box button (data-testid="box-create-btn") is NOW VISIBLE**
+             - Previously failed due to prop mismatch: `actions={` vs `action={`
+             - Fix applied in CouponsV2.jsx line 3079: changed to `action={`
+             - Button now renders correctly in page header
+          ✅ Click Create Box button → dialog opens successfully
+          ✅ Click confirm (data-testid="create-box-confirm") → box created
+          ✅ Success toast appeared: "Box BOX000001 created"
+          ✅ New box row appears in table: BOX000001 with status "assigned"
+          ✅ Assign Distributor dropdown (data-testid="box-assign-dist-*") found
+          ✅ Selected "Anil Distributor — Delhi" from dropdown
+          ✅ Success toast appeared: "BOX000001 → distributor assigned (0 coupons)"
+          ✅ Distributor column updated from "Not assigned" to "Anil Distributor — Delhi"
+          
+          **TEST 2: RETAILER SCAN PERMISSION GATING — ✅ PASSED (100%)**
+          
+          **Part A: Permission ON (Scan Coupon visible)**
+          ✅ Owner enabled Retailer Scan Permission (toggle shows "ON" / "Disable")
+          ✅ Full logout performed (cleared localStorage + sessionStorage)
+          ✅ Login as retailer1@gooil.com successful
+          ✅ **CRITICAL FIX VERIFIED: Retailer sidebar shows ONLY retailer menu items**
+             - Previously showed ALL owner menu items (Product Master, Distributors, etc.)
+             - Now correctly shows: Dashboard, Browse & Order, My Orders, Scan Coupon, My Wallet
+             - NO owner menu items visible (Product Master, Distributors, Primary Orders, Owner Inventory, Primary Ledger, User Management, Box Management)
+             - Role-based sidebar filtering now working correctly
+          ✅ Role label at bottom of sidebar correctly shows "Retailer" (not "Owner")
+          ✅ "Scan Coupon" menu item VISIBLE in sidebar (permission is ON)
+          ✅ Click "Scan Coupon" → navigated to /dms/retailer/scan
+          ✅ Scan page inputs found (data-testid="ret-code-input", "ret-code-scan")
+          ✅ Typed invalid coupon code "ZZZZZ999" → clicked Validate
+          ✅ Fraud detection working: Shows "Fraud: invalid code" with reason "invalid code"
+          
+          **Part B: Permission OFF (Scan Coupon hidden)**
+          ✅ Full logout performed
+          ✅ Login as owner@gooil.com successful
+          ✅ Navigate to Box Management → clicked Disable to turn permission OFF
+          ✅ Success toast appeared: "Retailer scanning DISABLED"
+          ✅ Toggle now shows "OFF" / "Enable" (permission disabled)
+          ✅ Backend API confirmed: retailer_scan_enabled=false
+          ✅ Full logout performed
+          ✅ Login as retailer1@gooil.com successful (permission OFF)
+          ✅ Sidebar shows: Dashboard, Browse & Order, My Orders, My Wallet
+          ✅ "Scan Coupon" menu item NOT VISIBLE in sidebar (permission gating working)
+          ✅ Role label correctly shows "Retailer"
+          
+          🎯 CRITICAL FIXES VERIFIED:
+          1. **Bug #1 FIXED**: Create Box button now visible (prop name corrected: actions → action)
+          2. **Bug #2 FIXED**: Retailer sidebar now shows correct menu items (role filtering working)
+          
+          📊 TEST COVERAGE:
+          - TEST 1 (Owner Box Management): 10/10 steps passed (100%)
+          - TEST 2 (Retailer Scan Permission): 14/14 steps passed (100%)
+          - Total: 24/24 test steps passed (100%)
+          
+          📸 SCREENSHOTS CAPTURED:
+          - test1_box_created_and_assigned.png: Box Management with new box and distributor assigned
+          - test2_retailer_scan_with_permission.png: Retailer scan page with fraud detection
+          - test2_permission_disabled.png: Box Management with permission OFF
+          - test2_retailer_sidebar_permission_off.png: Retailer sidebar without Scan Coupon
+          
+          🔧 FIXES APPLIED BY MAIN AGENT:
+          1. CouponsV2.jsx line 3079: Changed `actions={` to `action={` (PageHeader prop fix)
+          2. DmsShell.jsx: Role-based sidebar filtering now working correctly (retailer sees only retailer items)
+          
+          NO CRITICAL ISSUES FOUND.
+          Both previously-failing flows are now working perfectly.
+          All test scenarios completed successfully with 100% pass rate.
+
 
 
 agent_communication:

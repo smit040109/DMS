@@ -3076,7 +3076,7 @@ export function OwnerBoxesPage() {
     <div>
       <PageHeader title="Box Management"
         subtitle="Create production boxes, attach an active coupon range, then assign the box to a distributor."
-        actions={
+        action={
           <Button className={GOLD_BTN} onClick={() => setCreateOpen(true)} data-testid="box-create-btn">
             <Plus size={16} className="mr-1" /> Create Box
           </Button>
