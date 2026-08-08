@@ -202,6 +202,19 @@ export const dms = {
   // Sales Officer (salesperson) scan
   cpnSoRetailers: () => api.get("/dms/coupons/so/retailers").then(r => r.data),
   cpnScan: (body) => api.post("/dms/coupons/scan", body).then(r => r.data),
+  cpnScanPreview: (body) => api.post("/dms/coupons/scan/preview", body).then(r => r.data),
+  // Box management
+  cpnCreateBox: (body = {}) => api.post("/dms/coupons/boxes", body).then(r => r.data),
+  cpnListBoxes: (params = {}) => api.get("/dms/coupons/boxes", { params }).then(r => r.data),
+  cpnGetBox: (bid) => api.get(`/dms/coupons/boxes/${bid}`).then(r => r.data),
+  cpnBoxAssignCoupons: (bid, body) => api.post(`/dms/coupons/boxes/${bid}/assign-coupons`, body).then(r => r.data),
+  cpnBoxAssignDistributor: (bid, body) => api.post(`/dms/coupons/boxes/${bid}/assign-distributor`, body).then(r => r.data),
+  // Retailer scan permission
+  cpnGetScanPermission: () => api.get("/dms/coupons/scan-permission").then(r => r.data),
+  cpnSetScanPermission: (enabled) => api.put("/dms/coupons/scan-permission", { enabled }).then(r => r.data),
+  // Retailer self-scan
+  cpnRetailerScanPreview: (body) => api.post("/dms/coupons/retailer/scan/preview", body).then(r => r.data),
+  cpnRetailerScan: (body) => api.post("/dms/coupons/retailer/scan", body).then(r => r.data),
   // Retailer wallet
   cpnRetailerWallet: () => api.get("/dms/coupons/retailer/wallet").then(r => r.data),
   cpnRetailerTransactions: (wallet_type) => api.get("/dms/coupons/retailer/transactions", { params: wallet_type ? { wallet_type } : {} }).then(r => r.data),

@@ -1457,6 +1457,16 @@ function ConfirmRow({ k, v }) {
   );
 }
 
+function PreviewKV({ k, v }) {
+  return (
+    <div className="flex items-center justify-between border-b border-slate-100 py-1">
+      <span className="text-slate-500 text-xs">{k}</span>
+      <span className="font-semibold text-slate-900 text-right">{v ?? "—"}</span>
+    </div>
+  );
+}
+
+
 // ═════════════════════════ OWNER: All Coupons list (across batches) ═════════
 export function OwnerCouponsListPage() {
   // Pre-populate filters from URL query string (?status=unused&type=cash)
@@ -2043,6 +2053,8 @@ export function SalesOfficerScanPage() {
   const [qrPayload, setQrPayload] = useState("");
   const [busy, setBusy] = useState(false);
   const [last, setLast] = useState(null);
+  const [preview, setPreview] = useState(null);   // scan preview (fraud + fields)
+  const [scanned, setScanned] = useState(null);    // {qr, code} used for preview
   const [search, setSearch] = useState("");
   const [gps, setGps] = useState(null);   // { lat, lng }
 
@@ -2087,30 +2099,52 @@ export function SalesOfficerScanPage() {
     );
   }, [retailers, search]);
 
-  const scan = async (payloadOverride) => {
+  const runPreview = async (payloadOverride) => {
     if (!selectedRid) { toast.error("Select a retailer first"); return; }
     const cCode = (code || "").trim().toUpperCase();
     const qr = (payloadOverride ?? qrPayload).trim();
     if (!qr && !cCode) { toast.error("Enter coupon code or paste QR"); return; }
-    setBusy(true); setLast(null);
+    setBusy(true); setLast(null); setPreview(null);
     try {
-      const r = await dms.cpnScan({
+      const r = await dms.cpnScanPreview({
         retailer_id: selectedRid,
         qr_payload: qr || undefined,
         coupon_code: cCode || undefined,
-        gps_lat: gps?.lat,
-        gps_lng: gps?.lng,
-        device_id: deviceId,
+        gps_lat: gps?.lat, gps_lng: gps?.lng, device_id: deviceId,
       });
-      setLast({ ok: true, ...r });
-      toast.success(r.message);
-      setCode(""); setQrPayload("");
+      setScanned({ qr: qr || undefined, code: cCode || undefined });
+      setPreview(r.preview || {});
+      if (r.fraud) toast.error(`Fraud: ${(r.fraud_reason || "").replace(/_/g, " ")}`);
     } catch (e) {
-      const msg = e?.response?.data?.detail || "Scan failed";
+      const msg = e?.response?.data?.detail || "Validation failed";
+      setPreview(null);
       setLast({ ok: false, message: msg });
       toast.error(msg);
     } finally { setBusy(false); }
   };
+
+  const confirmSubmit = async () => {
+    if (!preview || preview.fraud || !scanned) return;
+    setBusy(true);
+    try {
+      const r = await dms.cpnScan({
+        retailer_id: selectedRid,
+        qr_payload: scanned.qr, coupon_code: scanned.code,
+        gps_lat: gps?.lat, gps_lng: gps?.lng, device_id: deviceId,
+      });
+      setLast({ ok: true, ...r });
+      setPreview(null); setScanned(null);
+      toast.success(r.message);
+      setCode(""); setQrPayload("");
+    } catch (e) {
+      const msg = e?.response?.data?.detail || "Submit failed";
+      setLast({ ok: false, message: msg });
+      setPreview(null);
+      toast.error(msg);
+    } finally { setBusy(false); }
+  };
+
+  const resetPreview = () => { setPreview(null); setScanned(null); };
 
   return (
     <div>
@@ -2175,12 +2209,12 @@ export function SalesOfficerScanPage() {
           <Label>QR Payload (paste from scanner)</Label>
           <div className="flex gap-2 mt-1 mb-3">
             <Input value={qrPayload} onChange={e => setQrPayload(e.target.value)}
-                   placeholder="GOOIL:XXXX-XXXX-XXXX-XXXX:token:signature"
-                   onKeyDown={e => e.key === "Enter" && scan()}
+                   placeholder="GOOIL2:xxxxx (paste from scanner)"
+                   onKeyDown={e => e.key === "Enter" && runPreview()}
                    data-testid="so-qr-input" />
             <Button className={GOLD_BTN} disabled={busy || !selectedRid || !qrPayload.trim()}
-                    onClick={() => scan()} data-testid="so-qr-scan">
-              {busy ? "…" : "Scan"}
+                    onClick={() => runPreview()} data-testid="so-qr-scan">
+              {busy ? "…" : "Validate"}
             </Button>
           </div>
 
@@ -2193,17 +2227,57 @@ export function SalesOfficerScanPage() {
           <Label>Coupon Code</Label>
           <div className="flex gap-2 mt-1">
             <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())}
-                   placeholder="XXXX-XXXX-XXXX-XXXX"
-                   onKeyDown={e => e.key === "Enter" && scan()}
+                   placeholder="ABCDE001"
+                   onKeyDown={e => e.key === "Enter" && runPreview()}
                    data-testid="so-code-input" className="font-mono" />
             <Button className={GOLD_BTN} disabled={busy || !selectedRid || !code.trim()}
-                    onClick={() => scan()} data-testid="so-code-scan">
-              Scan
+                    onClick={() => runPreview()} data-testid="so-code-scan">
+              Validate
             </Button>
           </div>
           <p className="text-[11px] text-slate-500 mt-1">
-            Manual entry skips signature check. QR path is the secure default.
+            Validate shows all details + fraud check first. Wallet is credited only after you press Submit.
           </p>
+
+          {/* PREVIEW → confirm before submit */}
+          {preview && (
+            <div className={`mt-4 p-4 rounded-lg border ${preview.fraud ? "bg-rose-50 border-rose-300" : "bg-amber-50 border-amber-300"}`}
+                 data-testid="so-preview">
+              <div className="flex items-center gap-2 mb-2">
+                {preview.fraud
+                  ? <ShieldAlert size={20} className="text-rose-600" />
+                  : <ScanLine size={20} className="text-[#a67c00]" />}
+                <h4 className="font-bold text-slate-900">Confirm before submit</h4>
+                <span className={`ml-auto text-xs font-bold px-2 py-0.5 rounded ${preview.fraud ? "bg-rose-600 text-white" : "bg-emerald-600 text-white"}`}>
+                  FRAUD: {preview.fraud ? "YES" : "NO"}
+                </span>
+              </div>
+              {preview.fraud && (
+                <div className="mb-2 text-sm text-rose-700 font-semibold">
+                  Reason: {(preview.fraud_reason || "").replace(/_/g, " ")}
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                <PreviewKV k="Logged-in User" v={preview.logged_in_user} />
+                <PreviewKV k="Role" v={preview.user_role} />
+                <PreviewKV k="Sales Officer" v={preview.sales_officer} />
+                <PreviewKV k="Distributor" v={preview.distributor_name} />
+                <PreviewKV k="Retailer" v={preview.retailer_name} />
+                <PreviewKV k="Box Number" v={preview.box_number || "—"} />
+                <PreviewKV k="Coupon Serial" v={preview.coupon_serial} />
+                <PreviewKV k="Coupon Type" v={preview.coupon_type} />
+                <PreviewKV k="Coupon Value" v={preview.coupon_type === "cash" ? `₹${preview.coupon_value}` : preview.coupon_value} />
+                <PreviewKV k="Reward Points" v={preview.reward_points ?? "—"} />
+              </div>
+              <div className="flex gap-2 mt-3">
+                <Button className={GOLD_BTN} disabled={busy || preview.fraud}
+                        onClick={confirmSubmit} data-testid="so-submit">
+                  {busy ? "Submitting…" : "Submit & Credit Wallet"}
+                </Button>
+                <Button variant="outline" onClick={resetPreview} disabled={busy}>Cancel</Button>
+              </div>
+            </div>
+          )}
 
           {last && (
             <div className={`mt-4 p-4 rounded-lg border ${last.ok ? "bg-emerald-50 border-emerald-300" : "bg-rose-50 border-rose-300"}`}
@@ -2731,3 +2805,238 @@ export function OwnerFraudDashboardPage() {
     </div>
   );
 }
+
+// ═════════════════════════ OWNER: Box Management ════════════════════════════
+// Flow: Generate → Print → Production → Create Box → Assign coupon range to Box
+//       → Assign Box to Distributor. Distributor assignment is on the BOX.
+export function OwnerBoxesPage() {
+  const [boxes, setBoxes] = useState([]);
+  const [distributors, setDistributors] = useState([]);
+  const [batches, setBatches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [assignBox, setAssignBox] = useState(null);   // box for assign-coupons dialog
+  const [perm, setPerm] = useState(null);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      dms.cpnListBoxes(),
+      dms.listDistributors(),
+      dms.cpnListBatches(),
+      dms.cpnGetScanPermission().catch(() => ({ retailer_scan_enabled: false })),
+    ]).then(([b, d, bt, p]) => {
+      setBoxes(b.data || []);
+      setDistributors(Array.isArray(d) ? d : (d.data || []));
+      setBatches((bt.data || bt || []));
+      setPerm(!!p.retailer_scan_enabled);
+    }).catch(() => toast.error("Failed to load boxes"))
+      .finally(() => setLoading(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const createBox = async (distributor_id) => {
+    try {
+      const r = await dms.cpnCreateBox(distributor_id ? { distributor_id } : {});
+      toast.success(`Box ${r.box.box_number} created`);
+      setCreateOpen(false); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Create failed"); }
+  };
+
+  const assignDistributor = async (box, distributor_id) => {
+    if (!distributor_id) return;
+    try {
+      const r = await dms.cpnBoxAssignDistributor(box.id, { distributor_id });
+      toast.success(`${box.box_number} → distributor assigned (${r.coupons_updated} coupons)`);
+      load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Assign failed"); }
+  };
+
+  const togglePerm = async () => {
+    try {
+      const r = await dms.cpnSetScanPermission(!perm);
+      setPerm(r.retailer_scan_enabled);
+      toast.success(`Retailer scanning ${r.retailer_scan_enabled ? "ENABLED" : "DISABLED"}`);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+  };
+
+  return (
+    <div>
+      <PageHeader title="Box Management"
+        subtitle="Create production boxes, attach an active coupon range, then assign the box to a distributor."
+        actions={
+          <Button className={GOLD_BTN} onClick={() => setCreateOpen(true)} data-testid="box-create-btn">
+            <Plus size={16} className="mr-1" /> Create Box
+          </Button>
+        } />
+
+      {/* Retailer scan permission toggle */}
+      <Card className="p-4 mb-4 flex items-center gap-3">
+        <ScanLine className="text-[#a67c00]" size={20} />
+        <div className="flex-1">
+          <div className="font-bold text-slate-900">Retailer Scan Permission</div>
+          <div className="text-xs text-slate-500">
+            When ON, retailers see a Scan option in their app and can scan coupons themselves.
+          </div>
+        </div>
+        <span className={`text-xs font-bold px-2 py-0.5 rounded ${perm ? "bg-emerald-600 text-white" : "bg-slate-300 text-slate-700"}`}>
+          {perm === null ? "…" : perm ? "ON" : "OFF"}
+        </span>
+        <Button variant={perm ? "outline" : "default"} className={perm ? "" : GOLD_BTN}
+                onClick={togglePerm} data-testid="scan-perm-toggle">
+          {perm ? "Disable" : "Enable"}
+        </Button>
+      </Card>
+
+      <Card className="p-0 overflow-hidden">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Box #</TableHead>
+              <TableHead>Distributor</TableHead>
+              <TableHead>Coupons</TableHead>
+              <TableHead>Serial Range</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {loading && <TableRow><TableCell colSpan={6} className="text-center py-8 text-slate-400">Loading…</TableCell></TableRow>}
+            {!loading && boxes.length === 0 && (
+              <TableRow><TableCell colSpan={6} className="text-center py-8 text-slate-400">
+                No boxes yet. Click "Create Box" to start.
+              </TableCell></TableRow>
+            )}
+            {boxes.map(b => (
+              <TableRow key={b.id} data-testid={`box-row-${b.box_number}`}>
+                <TableCell className="font-mono font-bold text-slate-900">{b.box_number}</TableCell>
+                <TableCell>
+                  {b.distributor_name
+                    ? <span className="text-slate-800">{b.distributor_name}</span>
+                    : <span className="text-amber-600 text-xs">Not assigned</span>}
+                </TableCell>
+                <TableCell>{b.coupon_count || 0}</TableCell>
+                <TableCell className="font-mono text-xs">
+                  {b.serial_from ? `${b.serial_from} → ${b.serial_to}` : "—"}
+                </TableCell>
+                <TableCell>
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${b.status === "assigned" ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-600"}`}>
+                    {b.status}
+                  </span>
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex items-center gap-2 justify-end">
+                    <Button size="sm" variant="outline" onClick={() => setAssignBox(b)}
+                            data-testid={`box-assign-coupons-${b.box_number}`}>
+                      <PackageCheck size={14} className="mr-1" /> Assign Coupons
+                    </Button>
+                    <Select onValueChange={(v) => assignDistributor(b, v)}>
+                      <SelectTrigger className="w-[170px] h-9" data-testid={`box-assign-dist-${b.box_number}`}>
+                        <SelectValue placeholder={<span className="flex items-center gap-1"><Truck size={13} /> Assign Distributor</span>} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {distributors.map(d => (
+                          <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
+
+      <CreateBoxDialog open={createOpen} onClose={() => setCreateOpen(false)}
+                       distributors={distributors} onCreate={createBox} />
+      <AssignCouponsDialog box={assignBox} batches={batches}
+                           onClose={() => setAssignBox(null)}
+                           onDone={() => { setAssignBox(null); load(); }} />
+    </div>
+  );
+}
+
+function CreateBoxDialog({ open, onClose, distributors, onCreate }) {
+  const [did, setDid] = useState("");
+  useEffect(() => { if (open) setDid(""); }, [open]);
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Create Production Box</DialogTitle></DialogHeader>
+        <p className="text-sm text-slate-500">A unique box number (e.g. BOX000001) is generated automatically. You can assign the distributor now or later.</p>
+        <Label className="mt-2">Distributor (optional)</Label>
+        <Select value={did} onValueChange={setDid}>
+          <SelectTrigger data-testid="create-box-dist"><SelectValue placeholder="Assign later" /></SelectTrigger>
+          <SelectContent>
+            {distributors.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button className={GOLD_BTN} onClick={() => onCreate(did || null)} data-testid="create-box-confirm">Create Box</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function AssignCouponsDialog({ box, batches, onClose, onDone }) {
+  const [batchId, setBatchId] = useState("");
+  const [fromS, setFromS] = useState("");
+  const [toS, setToS] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (box) { setBatchId(""); setFromS(""); setToS(""); } }, [box]);
+
+  const submit = async () => {
+    if (!fromS.trim() || !toS.trim()) { toast.error("Enter From and To serial"); return; }
+    setBusy(true);
+    try {
+      const r = await dms.cpnBoxAssignCoupons(box.id, {
+        batch_id: batchId || undefined,
+        from_serial: fromS.trim().toUpperCase(),
+        to_serial: toS.trim().toUpperCase(),
+      });
+      toast.success(`${r.assigned} coupons assigned to ${box.box_number}`);
+      onDone();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Assign failed"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open={!!box} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>Assign Coupons → {box?.box_number}</DialogTitle></DialogHeader>
+        <p className="text-sm text-slate-500">Only <b>ACTIVE</b> coupons in the range are attached to this box.</p>
+        <Label className="mt-2">Batch (optional filter)</Label>
+        <Select value={batchId} onValueChange={setBatchId}>
+          <SelectTrigger data-testid="assign-batch"><SelectValue placeholder="Any batch" /></SelectTrigger>
+          <SelectContent>
+            {(batches || []).map(b => (
+              <SelectItem key={b.id} value={b.id}>{b.batch_label} · {b.coupon_type} · {b.count}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="grid grid-cols-2 gap-3 mt-2">
+          <div>
+            <Label>From Serial</Label>
+            <Input value={fromS} onChange={e => setFromS(e.target.value)} placeholder="ABCDE001"
+                   className="font-mono" data-testid="assign-from" />
+          </div>
+          <div>
+            <Label>To Serial</Label>
+            <Input value={toS} onChange={e => setToS(e.target.value)} placeholder="ABCDE020"
+                   className="font-mono" data-testid="assign-to" />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button className={GOLD_BTN} disabled={busy} onClick={submit} data-testid="assign-confirm">
+            {busy ? "Assigning…" : "Assign to Box"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
