@@ -34,7 +34,7 @@ import {
   Users, Store, Award, RefreshCw, PackageCheck, Printer, FileSpreadsheet,
   FileText, Wallet, Coins, Truck, Search, ArrowRight, ChevronLeft, ChevronRight,
   Play, PauseCircle, Copy, AlertTriangle, ClipboardList, Activity, TrendingUp,
-  Download, Share2, Eye, EyeOff, Lock, MessageCircle, Link2,
+  Download, Share2, Eye, EyeOff, Lock, MessageCircle, Link2, Clock,
 } from "lucide-react";
 
 // ═════════════════════════ shared bits ══════════════════════════════════════
@@ -3028,6 +3028,7 @@ export function OwnerBoxesPage() {
   const [loading, setLoading] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [assignBox, setAssignBox] = useState(null);   // box for assign-coupons dialog
+  const [historyBox, setHistoryBox] = useState(null); // box for scan-history dialog
   const [perm, setPerm] = useState(null);
 
   const load = useCallback(() => {
@@ -3070,6 +3071,13 @@ export function OwnerBoxesPage() {
       setPerm(r.retailer_scan_enabled);
       toast.success(`Retailer scanning ${r.retailer_scan_enabled ? "ENABLED" : "DISABLED"}`);
     } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+  };
+
+  const printLabel = async (box) => {
+    try {
+      toast.message(`Preparing label for ${box.box_number}…`);
+      await dms.cpnBoxLabelPdf(box.id);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Label generation failed"); }
   };
 
   return (
@@ -3137,7 +3145,15 @@ export function OwnerBoxesPage() {
                   </span>
                 </TableCell>
                 <TableCell className="text-right">
-                  <div className="flex items-center gap-2 justify-end">
+                  <div className="flex items-center gap-2 justify-end flex-wrap">
+                    <Button size="sm" variant="outline" onClick={() => setHistoryBox(b)}
+                            data-testid={`box-history-${b.box_number}`}>
+                      <Clock size={14} className="mr-1" /> History
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => printLabel(b)}
+                            data-testid={`box-label-${b.box_number}`}>
+                      <Printer size={14} className="mr-1" /> Label
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => setAssignBox(b)}
                             data-testid={`box-assign-coupons-${b.box_number}`}>
                       <PackageCheck size={14} className="mr-1" /> Assign Coupons
@@ -3165,7 +3181,83 @@ export function OwnerBoxesPage() {
       <AssignCouponsDialog box={assignBox} batches={batches}
                            onClose={() => setAssignBox(null)}
                            onDone={() => { setAssignBox(null); load(); }} />
+      <BoxScanHistoryDialog box={historyBox} onClose={() => setHistoryBox(null)} />
     </div>
+  );
+}
+
+function BoxScanHistoryDialog({ box, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    if (!box) { setData(null); return; }
+    setLoading(true);
+    dms.cpnBoxScanHistory(box.id)
+      .then(setData)
+      .catch(() => toast.error("Failed to load scan history"))
+      .finally(() => setLoading(false));
+  }, [box]);
+
+  const fmt = (s) => (s ? String(s).slice(0, 19).replace("T", " ") : "—");
+
+  return (
+    <Dialog open={!!box} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Scan History — {box?.box_number}</DialogTitle>
+        </DialogHeader>
+        {loading && <div className="py-8 text-center text-slate-400">Loading…</div>}
+        {!loading && data && (
+          <>
+            <div className="flex gap-3 mb-3 text-sm">
+              <span className="px-2 py-1 rounded bg-slate-100">Coupons: <b>{data.coupon_count}</b></span>
+              <span className="px-2 py-1 rounded bg-emerald-50 text-emerald-700">Claimed: <b>{data.claimed_count}</b></span>
+              <span className="px-2 py-1 rounded bg-amber-50 text-amber-700">Pending: <b>{data.pending_count}</b></span>
+              {data.box?.distributor_name && (
+                <span className="px-2 py-1 rounded bg-slate-100">Distributor: <b>{data.box.distributor_name}</b></span>
+              )}
+            </div>
+            <div className="max-h-[55vh] overflow-y-auto rounded border border-slate-100">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Serial</TableHead>
+                    <TableHead>Type / Value</TableHead>
+                    <TableHead>Retailer</TableHead>
+                    <TableHead>Claimed By</TableHead>
+                    <TableHead>When</TableHead>
+                    <TableHead>Where</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(data.data || []).length === 0 && (
+                    <TableRow><TableCell colSpan={6} className="text-center py-8 text-slate-400">
+                      No coupons from this box have been claimed yet.
+                    </TableCell></TableRow>
+                  )}
+                  {(data.data || []).map((c, i) => (
+                    <TableRow key={i} data-testid={`scan-hist-row-${i}`}>
+                      <TableCell className="font-mono text-xs font-bold">{c.visible_serial || c.coupon_code}</TableCell>
+                      <TableCell className="text-xs">
+                        {c.coupon_type === "cash" ? `Cash ₹${c.coupon_value}` : `${c.coupon_value} pts`}
+                      </TableCell>
+                      <TableCell className="text-xs">{c.retailer_name || "—"}</TableCell>
+                      <TableCell className="text-xs">{c.claimed_by_user_name || "—"}</TableCell>
+                      <TableCell className="text-xs">{fmt(c.claim_timestamp)}</TableCell>
+                      <TableCell className="text-[11px] text-slate-500">
+                        {c.claim_gps_lat != null && c.claim_gps_lng != null
+                          ? `${Number(c.claim_gps_lat).toFixed(4)}, ${Number(c.claim_gps_lng).toFixed(4)}`
+                          : (c.claim_ip || "—")}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

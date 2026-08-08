@@ -209,6 +209,14 @@ export const dms = {
   cpnGetBox: (bid) => api.get(`/dms/coupons/boxes/${bid}`).then(r => r.data),
   cpnBoxAssignCoupons: (bid, body) => api.post(`/dms/coupons/boxes/${bid}/assign-coupons`, body).then(r => r.data),
   cpnBoxAssignDistributor: (bid, body) => api.post(`/dms/coupons/boxes/${bid}/assign-distributor`, body).then(r => r.data),
+  cpnBoxStats: () => api.get("/dms/coupons/boxes/stats").then(r => r.data),
+  cpnBoxScanHistory: (bid) => api.get(`/dms/coupons/boxes/${bid}/scan-history`).then(r => r.data),
+  cpnBoxLabelPdf: async (bid) => {
+    const r = await api.get(`/dms/coupons/boxes/${bid}/label-pdf`, { responseType: "blob" });
+    const url = window.URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+    window.open(url, "_blank");
+    setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+  },
   // Retailer scan permission
   cpnGetScanPermission: () => api.get("/dms/coupons/scan-permission").then(r => r.data),
   cpnSetScanPermission: (enabled) => api.put("/dms/coupons/scan-permission", { enabled }).then(r => r.data),

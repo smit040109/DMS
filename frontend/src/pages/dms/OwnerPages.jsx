@@ -79,11 +79,13 @@ export function OwnerDashboardPage() {
   const [kpis, setKpis] = useState(null);
   const [recent, setRecent] = useState([]);
   const [finance, setFinance] = useState(null);
+  const [boxStats, setBoxStats] = useState(null);
   const nav = useNavigate();
   useEffect(() => {
     dms.ownerDashboard().then(d => setKpis(d.kpis)).catch(() => {});
     dms.listOrders().then(d => setRecent((d.data || []).slice(0, 5))).catch(() => {});
     dms.financeSnapshot().then(setFinance).catch(() => {});
+    dms.cpnBoxStats().then(setBoxStats).catch(() => {});
   }, []);
   const cards = [
     { label: "Distributors",         value: kpis?.distributors ?? "—",           icon: Handshake,    color: "teal",    to: "/dms/owner/distributors" },
@@ -143,6 +145,34 @@ export function OwnerDashboardPage() {
                           value={finance ? inr(finance.net_position) : "—"}
                           valueClass={finance && finance.net_position < 0 ? "text-rose-700" : "text-emerald-700"}
                           onClick={() => nav("/dms/owner/ledger")} />
+          </div>
+        </Card>
+      </div>
+
+      <div className="mt-6">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold text-slate-900">Coupon Boxes</h3>
+          <button onClick={() => nav("/dms/owner/boxes")} className="text-sm text-[#a67c00] hover:underline">Manage →</button>
+        </div>
+        <Card className="p-5 border-amber-200 cursor-pointer hover:shadow-md transition-all"
+              onClick={() => nav("/dms/owner/boxes")} data-testid="box-summary-card">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <div className="text-[11px] text-slate-500 uppercase tracking-wider">Boxes Created</div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">{boxStats ? boxStats.boxes_total : "—"}</div>
+            </div>
+            <div>
+              <div className="text-[11px] text-slate-500 uppercase tracking-wider">Assigned to Distributor</div>
+              <div className="mt-1 text-2xl font-bold text-emerald-700">{boxStats ? boxStats.boxes_assigned : "—"}</div>
+            </div>
+            <div>
+              <div className="text-[11px] text-slate-500 uppercase tracking-wider">Coupons in Boxes</div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">{boxStats ? boxStats.coupons_in_boxes : "—"}</div>
+            </div>
+            <div>
+              <div className="text-[11px] text-slate-500 uppercase tracking-wider">Coupons Claimed</div>
+              <div className="mt-1 text-2xl font-bold text-[#a67c00]">{boxStats ? boxStats.coupons_claimed : "—"}</div>
+            </div>
           </div>
         </Card>
       </div>

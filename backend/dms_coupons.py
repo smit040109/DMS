@@ -387,6 +387,36 @@ def build_coupons_router(db, get_current_user, notify=None):
             "at": _now(),
         })
 
+        # ── Fraud Alert → instant owner notification (best-effort) ───────────
+        # Written directly in the notification-bell schema (recipient_id +
+        # created_at) so it shows up immediately in every owner's bell.
+        try:
+            gps_lat = meta.get("gps_lat")
+            gps_lng = meta.get("gps_lng")
+            if gps_lat is not None and gps_lng is not None:
+                loc = f"GPS {gps_lat}, {gps_lng}"
+            elif meta.get("ip_address"):
+                loc = f"IP {meta.get('ip_address')}"
+            else:
+                loc = "location unknown"
+            actor = user.get("name") or user.get("email") or (user.get("role") or "user")
+            owners = await db.users.find({"role": "owner"}, {"_id": 0, "id": 1}).to_list(50)
+            for o in owners:
+                if not o.get("id"):
+                    continue
+                await db.dms_notifications.insert_one({
+                    "id": _nid("ntf"),
+                    "recipient_id": o["id"],
+                    "kind": "coupon_fraud",
+                    "title": f"Fraud alert: {reason.replace('_', ' ')}",
+                    "body": f"Coupon {coupon_code or '—'} · by {actor} · {loc}",
+                    "link": "/dms/owner/coupons/fraud",
+                    "read": False,
+                    "created_at": _now(),
+                })
+        except Exception:
+            pass
+
     # ── wallet balance derivation (never stored) ────────────────────────────
     async def _wallet_balance(retailer_id: str, wallet_type: str) -> float:
         """Balance = SUM(signed amount) across all wallet transactions."""
@@ -1504,6 +1534,27 @@ def build_coupons_router(db, get_current_user, notify=None):
         docs = await db.dms_v2_boxes.find(q, {"_id": 0}).sort("box_no", -1).to_list(5000)
         return {"data": docs, "count": len(docs)}
 
+    @router.get("/boxes/stats")
+    async def box_stats(user: dict = Depends(get_current_user)):
+        """Small summary for the owner dashboard card:
+        boxes created / assigned / coupons in boxes / coupons claimed."""
+        boxes_total = await db.dms_v2_boxes.count_documents({})
+        boxes_assigned = await db.dms_v2_boxes.count_documents(
+            {"distributor_id": {"$nin": [None, ""]}})
+        coupons_in_boxes = await db.dms_v2_coupons.count_documents(
+            {"box_id": {"$nin": [None, ""]}})
+        coupons_claimed = await db.dms_v2_coupons.count_documents({
+            "box_id": {"$nin": [None, ""]},
+            "status": {"$in": ["claimed", "redemption_pending", "redeemed"]},
+        })
+        return {
+            "boxes_total": boxes_total,
+            "boxes_assigned": boxes_assigned,
+            "boxes_unassigned": max(boxes_total - boxes_assigned, 0),
+            "coupons_in_boxes": coupons_in_boxes,
+            "coupons_claimed": coupons_claimed,
+        }
+
     @router.get("/boxes/{bid}")
     async def get_box(bid: str, user: dict = Depends(get_current_user)):
         box = _clean(await db.dms_v2_boxes.find_one({"id": bid}))
@@ -1599,6 +1650,94 @@ def build_coupons_router(db, get_current_user, notify=None):
         return {"ok": True, "distributor_id": did,
                 "distributor_name": dist.get("name"),
                 "coupons_updated": res.modified_count}
+
+    @router.get("/boxes/{bid}/scan-history")
+    async def box_scan_history(bid: str, user: dict = Depends(get_current_user)):
+        """Per-box scan history — which coupons were claimed, by whom and where."""
+        box = _clean(await db.dms_v2_boxes.find_one({"id": bid}))
+        if not box:
+            raise HTTPException(404, "Box not found")
+        if user.get("role") in ("distributor", "distributor_accountant"):
+            own = user.get("distributor_id") or user.get("id")
+            if box.get("distributor_id") != own:
+                raise HTTPException(403, "Not your box")
+        coupons = await db.dms_v2_coupons.find(
+            {"box_id": bid,
+             "status": {"$in": ["claimed", "redemption_pending", "redeemed"]}},
+            {"_id": 0, "visible_serial": 1, "coupon_code": 1, "coupon_type": 1,
+             "coupon_value": 1, "status": 1, "retailer_name": 1, "retailer_id": 1,
+             "claimed_by_user_name": 1, "claim_timestamp": 1, "claim_ip": 1,
+             "claim_gps_lat": 1, "claim_gps_lng": 1, "scan_channel": 1},
+        ).sort("claim_timestamp", -1).to_list(100_000)
+        total = int(box.get("coupon_count") or 0)
+        claimed = len(coupons)
+        return {
+            "box": {"id": box["id"], "box_number": box.get("box_number"),
+                    "distributor_name": box.get("distributor_name"),
+                    "serial_from": box.get("serial_from"),
+                    "serial_to": box.get("serial_to")},
+            "coupon_count": total, "claimed_count": claimed,
+            "pending_count": max(total - claimed, 0), "data": coupons,
+        }
+
+    @router.get("/boxes/{bid}/label-pdf")
+    async def box_label_pdf(bid: str, user: dict = Depends(owner_or_accountant)):
+        """Printable production-floor label/sticker for a box:
+        big Box Number + coupon serial range + distributor + Code128 barcode."""
+        box = _clean(await db.dms_v2_boxes.find_one({"id": bid}))
+        if not box:
+            raise HTTPException(404, "Box not found")
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import mm
+        from reportlab.pdfgen import canvas as pdfcanvas
+        from reportlab.lib.colors import HexColor, black, white
+
+        buf = BytesIO()
+        W, H = A4
+        c = pdfcanvas.Canvas(buf, pagesize=A4)
+        gold = HexColor("#a67c00")
+        c.setStrokeColor(gold); c.setLineWidth(3)
+        c.rect(15 * mm, 15 * mm, W - 30 * mm, H - 30 * mm)
+        c.setFillColor(gold)
+        c.rect(15 * mm, H - 45 * mm, W - 30 * mm, 30 * mm, fill=1, stroke=0)
+        c.setFillColor(white)
+        c.setFont("Helvetica-Bold", 24)
+        c.drawCentredString(W / 2, H - 34 * mm, "GO OIL — PRODUCTION BOX")
+        c.setFillColor(black)
+        c.setFont("Helvetica-Bold", 58)
+        c.drawCentredString(W / 2, H - 92 * mm, box.get("box_number") or "BOX")
+
+        y = [H - 118 * mm]
+
+        def line(lbl, val):
+            c.setFont("Helvetica-Bold", 14); c.drawString(30 * mm, y[0], lbl)
+            c.setFont("Helvetica", 14); c.drawString(85 * mm, y[0], str(val))
+            y[0] -= 13 * mm
+
+        rng = (f"{box.get('serial_from')}  ->  {box.get('serial_to')}"
+               if box.get("serial_from") else "-- not assigned --")
+        line("Serial Range:", rng)
+        line("Coupons:", box.get("coupon_count") or 0)
+        line("Distributor:", box.get("distributor_name") or "Not assigned")
+        line("Status:", (box.get("status") or "").upper())
+        line("Printed:", _now()[:19].replace("T", " "))
+
+        try:
+            from reportlab.graphics.barcode import code128
+            bc = code128.Code128(box.get("box_number") or "BOX",
+                                 barHeight=24 * mm, barWidth=0.55 * mm)
+            bc.drawOn(c, (W - bc.width) / 2, 32 * mm)
+            c.setFont("Helvetica", 11)
+            c.drawCentredString(W / 2, 26 * mm, box.get("box_number") or "")
+        except Exception:
+            pass
+
+        c.showPage(); c.save()
+        buf.seek(0)
+        return Response(
+            content=buf.read(), media_type="application/pdf",
+            headers={"Content-Disposition":
+                     f'inline; filename="{box.get("box_number") or "box"}-label.pdf"'})
 
     # ═════════════════════════════════════════════════════════════════════════
     # RETAILER SCAN PERMISSION — owner toggle (Role Permissions)
