@@ -6493,6 +6493,21 @@ agent_communication:
          works; coupon reports summary/fraud-dashboard still 200; print export-pdf still 200.
       Do NOT test frontend. Report any 500s or RBAC issues.
 
+  - agent: "main"
+    message: |
+      FRONTEND WIRING COMPLETED for the box/scan business workflow (backend was already
+      implemented + backend-tested earlier). Changes:
+      1) OwnerBoxesPage (Box Management) was built but NOT wired — added import + route
+         (/dms/owner/boxes) in App.js and a "Box Management" sidebar item for owner in DmsShell.
+      2) Added new RetailerScanPage (self-scan preview→submit) in CouponsV2.jsx + route
+         (/dms/retailer/scan). Retailer sidebar now shows "Scan Coupon" ONLY when owner has
+         enabled the scan permission (DmsShell fetches /scan-permission for retailer role).
+      3) Bug fix: OwnerBoxesPage PageHeader used `actions=` but PageHeader expects `action=`
+         (Create Box button was hidden). Fixed to `action=`.
+      Frontend verified by auto_frontend_testing_agent — 2nd pass 24/24 steps (100%):
+      Owner create box + assign distributor works; retailer scan gating ON/OFF works;
+      salesperson scan preview→submit renders. No changes to print engine or coupon artwork.
+
   - agent: "testing"
     message: |
       ✅ BOX-BASED COUPON WORKFLOW BACKEND TESTING COMPLETE — 22/30 TESTS PASSED (73.3%)
