@@ -6293,6 +6293,100 @@ agent_communication:
           NO CRITICAL ISSUES FOUND.
           All core box-based coupon workflow functionality is working as designed.
 
+  - task: "Box Management + Retailer Scan Permission UI (frontend)"
+    implemented: true
+    working: false
+    file: "frontend/src/pages/dms/CouponsV2.jsx, frontend/src/pages/dms/DmsShell.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "testing"
+        comment: |
+          ❌ FRONTEND TESTING FAILED — 2 CRITICAL BUGS FOUND
+          
+          Comprehensive UI testing completed for Box Management and Retailer Scan Permission gating.
+          Backend APIs are working correctly (verified in previous tests), but frontend has critical bugs.
+          
+          **TEST 1: OWNER BOX MANAGEMENT — ❌ FAILED**
+          ✅ Login as owner@gooil.com works
+          ✅ Box Management page loads (/dms/owner/boxes)
+          ✅ Page title "Box Management" displays correctly
+          ✅ Retailer Scan Permission card visible with toggle
+          ✅ Scan permission toggle (data-testid="scan-perm-toggle") found
+          ❌ **CRITICAL BUG #1: Create Box button NOT rendering**
+             - Button with data-testid="box-create-btn" not found on page
+             - Only 4 buttons total on page (hamburger menu, notifications, logout, Disable)
+             - Root cause: In CouponsV2.jsx line 3079, code uses `actions={...}` (plural)
+             - But PageHeader component expects `action={...}` (singular)
+             - Fix: Change line 3079 from `actions={` to `action={`
+          
+          **TEST 2: RETAILER SCAN PERMISSION GATING — ❌ FAILED**
+          ✅ Permission toggle works (can enable/disable)
+          ✅ When permission is OFF, toggle shows "OFF" badge
+          ✅ When permission is ON, toggle shows "ON" badge
+          ✅ Owner can successfully enable permission (green "ON" badge visible)
+          ❌ **CRITICAL BUG #2: Retailer sidebar shows OWNER menu items instead of RETAILER menu items**
+             - After logging in as retailer1@gooil.com, sidebar shows:
+               * Product Master, Distributors, Primary Orders, Owner Inventory, Primary Ledger
+               * Expenses, Bank Accounts, User Management, Live Tracking, Box Management, etc.
+             - These are ALL OWNER menu items, not retailer menu items
+             - Retailer should only see: Dashboard, Browse & Order, My Orders, (Scan Coupon when enabled)
+             - "Scan Coupon" menu item does NOT appear in sidebar even when permission is ON
+             - However, direct navigation to /dms/retailer/scan WORKS correctly:
+               * Page loads with scan inputs (ret-code-input, ret-code-scan)
+               * No permission block message
+               * All scan functionality accessible
+             - This suggests role detection in DmsShell sidebar is broken
+          
+          **TEST 3: SALESPERSON SCAN (regression) — ✅ PASSED**
+          ✅ Login as salesperson@gooil.com works
+          ✅ Navigate to /dms/salesperson/scan successful
+          ✅ Step 1 retailer search input found (data-testid="so-search")
+          ✅ Step 2 coupon code input found (data-testid="so-code-input")
+          ✅ Validate button found (data-testid="so-code-scan")
+          ⚠️ No retailers found (expected - salesperson has no distributor assignments)
+          ✅ No crash, page is functional
+          
+          **INVESTIGATION FINDINGS:**
+          1. Create Box button issue:
+             - PageHeader component (OwnerPages.jsx line 20) expects prop `action` (singular)
+             - CouponsV2.jsx line 3079 passes `actions` (plural)
+             - Simple prop name mismatch causing button not to render
+          
+          2. Retailer sidebar issue:
+             - When logged in as retailer1@gooil.com, sidebar renders 35 links
+             - All links are OWNER menu items (Product Master, Distributors, Primary Orders, etc.)
+             - This is a critical authentication/authorization bug
+             - The DmsShell.jsx sidebar filtering by role is not working correctly
+             - Direct page access works, so the issue is isolated to sidebar menu generation
+          
+          **SCREENSHOTS CAPTURED:**
+          - test1_box_management_page.png: Shows Box Management page with missing Create Box button
+          - test2_permission_off.png: Permission toggle showing OFF
+          - test2_retailer_no_scan.png: Retailer sidebar showing wrong (owner) menu items
+          - test2_permission_on.png: Permission toggle showing ON
+          - test2_retailer_scan_page.png: Retailer dashboard with wrong sidebar
+          - test3_salesperson_scan_page.png: Salesperson scan page working correctly
+          - investigation_box_management_full.png: Full page view of Box Management
+          - investigation_retailer_sidebar.png: Retailer sidebar showing owner menu items
+          - investigation_retailer_scan_direct.png: Direct access to /dms/retailer/scan works
+          
+          **CONSOLE ERRORS:**
+          - Multiple 401 errors on /api/auth/me (expected after logout/re-login)
+          - 403 error on /api/dms/coupons/so/retailers (expected - salesperson has no assignments)
+          - No application crashes or critical JavaScript errors
+          
+          **ROOT CAUSES IDENTIFIED:**
+          1. **Bug #1 (Create Box button):** Prop name mismatch - `actions` vs `action`
+          2. **Bug #2 (Retailer sidebar):** Role-based sidebar filtering not working - retailer sees owner menu
+          
+          **IMPACT:**
+          - Bug #1: BLOCKING - Owner cannot create boxes via UI (must use API directly)
+          - Bug #2: BLOCKING - Retailer cannot access Scan Coupon via sidebar (must use direct URL)
+          - Both bugs prevent the requested test scenarios from completing successfully
+
 
 agent_communication:
   - agent: "main"
@@ -6359,3 +6453,42 @@ agent_communication:
       - Please summarize and finish
       
       YOU MUST ASK USER BEFORE DOING FRONTEND TESTING
+
+  - agent: "testing"
+    message: |
+      ❌ FRONTEND TESTING COMPLETE — 2 CRITICAL BUGS FOUND (BLOCKING)
+      
+      User requested frontend testing for Box Management + Retailer Scan Permission.
+      Tested all 3 scenarios as specified in review_request. Found 2 critical bugs.
+      
+      **CRITICAL BUG #1: Create Box Button Missing**
+      - File: /app/frontend/src/pages/dms/CouponsV2.jsx line 3079
+      - Issue: Code uses `actions={...}` but PageHeader expects `action={...}` (singular)
+      - Fix: Change `actions={` to `action={` on line 3079
+      - Impact: Owner cannot create boxes via UI (blocking TEST 1)
+      
+      **CRITICAL BUG #2: Retailer Sidebar Shows Owner Menu Items**
+      - File: /app/frontend/src/pages/dms/DmsShell.jsx (sidebar role filtering)
+      - Issue: When logged in as retailer1@gooil.com, sidebar shows OWNER menu items
+        (Product Master, Distributors, Primary Orders, Owner Inventory, etc.)
+      - Expected: Retailer should only see Dashboard, Browse & Order, My Orders, Scan Coupon
+      - Impact: Retailer cannot access "Scan Coupon" via sidebar (blocking TEST 2)
+      - Note: Direct navigation to /dms/retailer/scan WORKS correctly, so issue is isolated to sidebar
+      
+      **TEST RESULTS:**
+      - TEST 1 (Owner Box Management): ❌ FAILED - Create Box button missing
+      - TEST 2 (Retailer Scan Permission Gating): ❌ FAILED - Sidebar shows wrong menu items
+      - TEST 3 (Salesperson Scan regression): ✅ PASSED - All elements render, no crash
+      
+      **POSITIVE FINDINGS:**
+      ✅ Login works for all roles (owner, retailer, salesperson)
+      ✅ Box Management page loads correctly
+      ✅ Retailer Scan Permission toggle works (enable/disable)
+      ✅ Direct access to /dms/retailer/scan works (bypassing sidebar)
+      ✅ Salesperson scan page renders correctly
+      ✅ No application crashes
+      
+      **ACTION ITEMS FOR MAIN AGENT:**
+      1. Fix Bug #1: Change `actions={` to `action={` in CouponsV2.jsx line 3079
+      2. Fix Bug #2: Debug DmsShell.jsx sidebar role filtering - retailer seeing owner menu
+      3. After fixes, request re-testing of both scenarios
