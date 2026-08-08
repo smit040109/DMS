@@ -87,3 +87,18 @@ All money in **INR**, 10 demo users (password `Demo@2026`), mobile-responsive te
 - Print spec: 12x18 inch paper, 35mm round die-cut, 77/sheet (7x11), auto sheet calc, FRONT+BACK (back mirrored for duplex), mixed values on one sheet.
 - Endpoints: GET /api/dms/coupons/batches/{bid}/export-pdf?side=front|back|both ; POST /api/dms/coupons/print-mixed {batch_ids|coupon_ids|items,side}.
 - QR stays secure v2 (GOOIL2|ciphertext|signature) — no UUID/secret/signature/db-ids exposed. Backend tested 24/24 pass.
+
+## Update — Login fix + Coupon Box enhancements
+- LOGIN FIX: frontend/.env REACT_APP_BACKEND_URL reset to EMPTY (same-origin /api via ingress).
+  Added CRA dev "proxy":"http://localhost:8001" in package.json so /api also works on localhost dev.
+  Resolves "Network error — is the server reachable?" on the preview URL. Verified by testing agent.
+- Fraud Alerts: every fraud-flagged scan now writes an instant owner notification (kind=coupon_fraud,
+  title "Fraud alert: <reason>", body = coupon + GPS/IP location, link=/dms/owner/coupons/fraud),
+  in the notification-bell schema (recipient_id + created_at).
+- Box Label PDF: GET /api/dms/coupons/boxes/{bid}/label-pdf — printable A4 label with big Box Number,
+  serial range, distributor, status, date + Code128 barcode. "Label" button on each box row.
+- Box Scan History: GET /api/dms/coupons/boxes/{bid}/scan-history — claimed coupons with retailer,
+  claimed-by, timestamp and GPS/IP. "History" button opens a dialog on the Box Management page.
+- Box Dashboard card: GET /api/dms/coupons/boxes/stats — boxes created/assigned/coupons-in-boxes/claimed;
+  shown as a "Coupon Boxes" summary card on the Owner Dashboard.
+- Backend 22/23 passed; frontend 4/4 flows passed. Coupon print artwork/engine unchanged.
