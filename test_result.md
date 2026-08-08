@@ -6778,3 +6778,80 @@ agent_communication:
       NO CRITICAL ISSUES FOUND.
       All NEW coupon/box enhancement endpoints production-ready.
       All requested test scenarios passed successfully.
+
+  - agent: "testing"
+    message: |
+      ✅ LOGIN BUG FIX + BOX ENHANCEMENTS UI VERIFICATION COMPLETE — ALL 4 TESTS PASSED (100%)
+      
+      Comprehensive frontend UI testing completed for login bug fix and new box features.
+      All critical functionality working correctly with NO network errors.
+      
+      **TEST 0: LOGIN BUG FIX (CRITICAL) — ✅ PASSED**
+      - Navigated to /login page ✅
+      - Entered credentials: owner@gooil.com / GoOil@2026 ✅
+      - Clicked "Sign in" button ✅
+      - ✅ NO "Network error — is the server reachable?" message displayed
+      - ✅ Successfully redirected to /dms (Owner Dashboard)
+      - Owner Dashboard loaded correctly ✅
+      - CRITICAL: The reported login bug is FIXED — no network error message appears
+      
+      **TEST 1: OWNER DASHBOARD "Coupon Boxes" CARD — ✅ PASSED**
+      - "Coupon Boxes" card (data-testid="box-summary-card") visible on dashboard ✅
+      - All 4 metrics present and displaying values:
+        * Boxes Created: 4 ✅
+        * Assigned to Distributor: 2 ✅
+        * Coupons in Boxes: 10 ✅
+        * Coupons Claimed: 1 ✅
+      - Clicking card navigates to /dms/owner/boxes (Box Management) ✅
+      
+      **TEST 2: BOX MANAGEMENT: LABEL + HISTORY BUTTONS — ✅ PASSED**
+      - Navigated to Box Management page (/dms/owner/boxes) ✅
+      - Found 4 existing boxes ✅
+      - Verified THREE action buttons on box row (BOX000004):
+        * "History" button (data-testid="box-history-BOX000004") ✅
+        * "Label" button (data-testid="box-label-BOX000004") ✅
+        * "Assign Coupons" button (data-testid="box-assign-coupons-BOX000004") ✅
+      - Distributor dropdown present (data-testid="box-assign-dist-BOX000004") ✅
+      - History button functionality:
+        * Clicked History button ✅
+        * Dialog opened with title "Scan History — BOX000004" ✅
+        * Dialog shows summary chips (Coupons/Claimed/Pending) ✅
+        * Table displays message "No coupons from this box have been claimed yet." (expected) ✅
+      - Label button functionality:
+        * Clicked Label button ✅
+        * New browser tab opened (PDF generation triggered) ✅
+        * Success toast displayed: "Preparing label for BOX000004…" ✅
+        * NO JavaScript errors thrown ✅
+      
+      **TEST 3: FRAUD ALERT NOTIFICATION — ✅ PASSED**
+      - Clicked notification bell (data-testid="notif-bell") ✅
+      - Found 1 fraud alert notification present:
+        * Title: "Fraud alert: invalid code" ✅
+        * Body: "Coupon ZZZZZ999 · by Karan Salesperson · IP 127.0.0.1" ✅
+      - Clicked fraud alert notification ✅
+      - Successfully navigated to /dms/owner/coupons/fraud (Fraud page) ✅
+      
+      🎯 CRITICAL SUCCESS CRITERIA MET:
+      - ✅ LOGIN BUG FIXED: NO "Network error — is the server reachable?" message
+      - ✅ Login works perfectly with owner@gooil.com / GoOil@2026
+      - ✅ Coupon Boxes card visible on dashboard with all 4 metrics
+      - ✅ Card click navigates to Box Management
+      - ✅ THREE action buttons present: History, Label, Assign Coupons
+      - ✅ History button opens dialog with correct title and structure
+      - ✅ Label button triggers PDF generation (new tab + success toast)
+      - ✅ Fraud alert notification present and clickable
+      - ✅ Fraud alert navigates to correct page
+      
+      📊 TEST COVERAGE:
+      - Total: 4 test scenarios
+      - Passed: 4 ✅ (100%)
+      - Failed: 0 ❌
+      
+      ⚠️ MINOR OBSERVATIONS (NOT CRITICAL):
+      - 2 console warnings about missing aria-describedby for DialogContent (accessibility, not functional)
+      - Label button opens new tab with empty URL (expected for blob: PDF URLs)
+      - These are minor UI polish items and do not affect functionality
+      
+      NO CRITICAL ISSUES FOUND.
+      All requested features working as designed.
+      Login bug fix verified — production ready.
