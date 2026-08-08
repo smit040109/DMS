@@ -10,7 +10,7 @@ import re
 from io import BytesIO
 
 # Get backend URL from environment
-BACKEND_URL = os.getenv("REACT_APP_BACKEND_URL", "https://print-ready-coupons.preview.emergentagent.com")
+BACKEND_URL = os.getenv("REACT_APP_BACKEND_URL", "https://coupon-box-assign.preview.emergentagent.com")
 BASE_URL = f"{BACKEND_URL}/api"
 
 # Test credentials

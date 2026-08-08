@@ -4,7 +4,7 @@ import requests
 import time
 import json
 
-BASE_URL = "https://print-ready-coupons.preview.emergentagent.com/api"
+BASE_URL = "https://coupon-box-assign.preview.emergentagent.com/api"
 
 def login():
     resp = requests.post(f"{BASE_URL}/auth/login", 

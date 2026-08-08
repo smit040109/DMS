@@ -15,7 +15,7 @@ import sys
 from datetime import datetime
 
 # Backend URL
-BASE_URL = "https://print-ready-coupons.preview.emergentagent.com/api"
+BASE_URL = "https://coupon-box-assign.preview.emergentagent.com/api"
 PASSWORD = "GoOil@2026"
 
 # Test credentials

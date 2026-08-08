@@ -38,6 +38,7 @@ const NAV_BY_ROLE = {
     { label: "Sales Visibility",to: "/dms/owner/distributor-sales", icon: "Store" },
     { label: "Coupons",            to: "/dms/owner/coupons",                     icon: "Ticket" },
     { label: "All Coupons",        to: "/dms/owner/coupons/all",                 icon: "Ticket" },
+    { label: "Box Management",     to: "/dms/owner/boxes",                       icon: "Boxes" },
     { label: "Redemptions",        to: "/dms/owner/coupons/redemptions",         icon: "Wallet" },
     { label: "Credit Notes",       to: "/dms/owner/coupons/credit-notes",        icon: "FileText" },
     { label: "Dispatch Advices",   to: "/dms/owner/coupons/dispatch-advices",    icon: "Truck" },
@@ -250,7 +251,30 @@ export default function DmsShell({ children }) {
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const role = user?.role || "owner";
-  const items = NAV_BY_ROLE[role] || NAV_BY_ROLE.owner;
+  const baseItems = NAV_BY_ROLE[role] || NAV_BY_ROLE.owner;
+  const [retailerScanEnabled, setRetailerScanEnabled] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    if (role === "retailer") {
+      dms.cpnGetScanPermission()
+        .then(p => { if (alive) setRetailerScanEnabled(!!p.retailer_scan_enabled); })
+        .catch(() => { if (alive) setRetailerScanEnabled(false); });
+    }
+    return () => { alive = false; };
+  }, [role]);
+
+  // Retailer sees "Scan Coupon" only when the owner has enabled the permission.
+  const items = React.useMemo(() => {
+    if (role === "retailer" && retailerScanEnabled) {
+      const copy = [...baseItems];
+      const idx = copy.findIndex(i => i.to === "/dms/retailer/my-orders");
+      const scanItem = { label: "Scan Coupon", to: "/dms/retailer/scan", icon: "ScanLine" };
+      if (idx >= 0) copy.splice(idx + 1, 0, scanItem); else copy.push(scanItem);
+      return copy;
+    }
+    return baseItems;
+  }, [role, retailerScanEnabled, baseItems]);
 
   const isActive = (to) => (to === "/dms" ? location.pathname === "/dms" : location.pathname.startsWith(to));
 

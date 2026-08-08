@@ -10,7 +10,7 @@ import io
 from datetime import datetime
 
 # Configuration
-BASE_URL = "https://25b62c98-87f3-43b6-86a6-61366389e44e.preview.emergentagent.com/api"
+BASE_URL = "https://coupon-box-assign.preview.emergentagent.com/api"
 PASSWORD = "GoOil@2026"
 
 # Test credentials

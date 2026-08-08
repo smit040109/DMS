@@ -39,7 +39,9 @@ import {
   OwnerCouponReportsPage,
   OwnerCouponAuditLogPage,
   OwnerFraudDashboardPage,
+  OwnerBoxesPage,
   SalesOfficerScanPage,
+  RetailerScanPage,
   RetailerWalletPage,
   DistributorCouponsPage,
 } from "@/pages/dms/CouponsV2";
@@ -114,6 +116,7 @@ function AppRoutes() {
       <Route path="/dms/owner/coupons/audit-log"        element={<DmsPage Component={OwnerCouponAuditLogPage} />} />
       <Route path="/dms/owner/coupons/fraud"            element={<DmsPage Component={OwnerFraudDashboardPage} />} />
       <Route path="/dms/owner/coupon-reports"           element={<DmsPage Component={OwnerCouponReportsPage} />} />
+      <Route path="/dms/owner/boxes"                     element={<DmsPage Component={OwnerBoxesPage} />} />
       <Route path="/dms/owner/price-circulars"     element={<DmsPage Component={PriceCircularsPage} />} />
       <Route path="/dms/owner/price-circulars/new" element={<DmsPage Component={NewPriceCircularPage} />} />
       <Route path="/dms/owner/price-circulars/:id" element={<DmsPage Component={PriceCircularDetailPage} />} />
@@ -137,6 +140,7 @@ function AppRoutes() {
       <Route path="/dms/reports/:reportId"         element={<DmsPage Component={GenericReportPage} />} />
       <Route path="/dms/salesperson/scan"          element={<DmsPage Component={SalesOfficerScanPage} />} />
       <Route path="/dms/retailer/wallet"           element={<DmsPage Component={RetailerWalletPage} />} />
+      <Route path="/dms/retailer/scan"             element={<DmsPage Component={RetailerScanPage} />} />
       <Route path="/dms/distributor/coupons"       element={<DmsPage Component={DistributorCouponsPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
       <Route path="/dms/team-leader/salespersons"  element={<DmsPage Component={TlSalespersonsPage} />} />
