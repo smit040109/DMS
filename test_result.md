@@ -6855,3 +6855,96 @@ agent_communication:
       NO CRITICAL ISSUES FOUND.
       All requested features working as designed.
       Login bug fix verified — production ready.
+
+  - agent: "testing"
+    message: |
+      ✅ DEMO DATA PURGE BUG FIX VERIFIED — ALL 3 PAGES WORKING (100%)
+      
+      Comprehensive re-testing completed for the 3 pages that previously crashed after demo-data purge.
+      Backend fix confirmed: All endpoints now return empty/zero data instead of 400 errors.
+      
+      **TEST 1: DISTRIBUTOR - MY STOCK PAGE — ✅ PASSED (100%)**
+      ✅ Login as distributor1@gooil.com successful
+      ✅ Distributor Dashboard loaded successfully
+         - All KPIs showing zeros: 0 boxes, ₹0 stock value, ₹0 payable, 0 pending orders, 0 ready orders, ₹0 sales MTD
+         - "No orders yet" message displayed
+      ✅ Navigate to My Stock page (/dms/distributor/stock) successful
+      ✅ **CRITICAL: NO React error overlay / NO blank screen (BUG FIXED!)**
+      ✅ Page loaded with proper empty state:
+         - Title: "My Stock" visible
+         - Display: "0 boxes" ✅
+         - Display: "Total stock value ₹0" ✅
+         - Empty state message: "Item-level view will appear here once Secondary Sales (Iteration 2) is enabled." ✅
+      ✅ NO network errors for distributor endpoints
+      
+      **TEST 2: RETAILER - BROWSE & ORDER PAGE — ✅ PASSED (100%)**
+      ✅ FULL logout performed (localStorage + sessionStorage cleared)
+      ✅ Login as retailer1@gooil.com successful
+      ✅ Navigate to Browse & Order page (/dms/retailer/browse) successful
+      ✅ **CRITICAL: NO React error overlay / NO blank screen (BUG FIXED!)**
+      ✅ Page loaded with proper empty state:
+         - Title: "Browse & Order" visible
+         - Empty state icon visible (Package icon)
+         - Empty state message: "No products available" ✅
+         - Empty state description: "Your distributor hasn't given you any visibility yet." ✅
+         - Cart footer showing: "0 items • Sub ₹0 • GST ₹0" ✅
+      ✅ NO network errors for retailer browse endpoint
+      
+      **TEST 3: RETAILER - MY WALLET PAGE — ✅ PASSED (100%)**
+      ✅ Navigate to My Wallet page (/dms/retailer/wallet) successful
+      ✅ **CRITICAL: NO React error overlay / NO blank screen (BUG FIXED!)**
+      ✅ Page loaded with proper empty state:
+         - Title: "My Wallets & Coupons" visible
+         - Cash Wallet card visible with ₹0 balance ✅
+         - Reward Points Wallet card visible with 0 pts ✅
+         - All 4 tabs present: Cash Transactions (0), Reward Transactions (0), My Coupons (0), Redemptions (0) ✅
+         - Empty transactions message: "No transactions" ✅
+      ✅ Retailer Dashboard loaded successfully
+         - All KPIs showing zeros: 0 total orders, 0 in transit, ₹0 outstanding, 0 pending items
+         - "No orders yet" message displayed
+      ✅ NO network errors for retailer wallet/transactions/coupons/redemptions endpoints
+      
+      **BACKEND VERIFICATION (CRITICAL) — ✅ ALL FIXED**
+      Previously failing endpoints (400 Bad Request) now returning 200 OK with empty data:
+      - GET /api/dms/dashboard/retailer → 200 OK ✅ (was 400)
+      - GET /api/dms/retailer/browse → 200 OK ✅ (was 400)
+      - GET /api/dms/coupons/retailer/wallet → 200 OK ✅ (was 400)
+      - GET /api/dms/coupons/retailer/transactions → 200 OK ✅ (was 400)
+      - GET /api/dms/coupons/retailer/coupons → 200 OK ✅ (was 400)
+      - GET /api/dms/coupons/retailer/redemptions → 200 OK ✅ (was 400)
+      - GET /api/dms/dashboard/distributor → 200 OK ✅ (was 400)
+      
+      🎯 CRITICAL SUCCESS CRITERIA MET:
+      ✅ NO React error overlays detected (no red screen crashes)
+      ✅ NO blank white screens
+      ✅ All 3 pages load successfully with proper empty states
+      ✅ All dashboards functional (Distributor + Retailer)
+      ✅ Backend returns empty/zero data instead of 400 errors for users with no linked profile
+      ✅ Empty states are user-friendly with clear messages
+      ✅ All zero values displayed correctly (₹0, 0 boxes, 0 pts, 0 transactions)
+      
+      📊 TEST COVERAGE:
+      - Total: 3 critical pages tested
+      - Passed: 3/3 ✅ (100%)
+      - Failed: 0 ❌
+      - Distributor My Stock: ✅ PASSED
+      - Retailer Browse & Order: ✅ PASSED
+      - Retailer My Wallet: ✅ PASSED
+      - Distributor Dashboard: ✅ PASSED (regression)
+      - Retailer Dashboard: ✅ PASSED (regression)
+      
+      📸 SCREENSHOTS CAPTURED:
+      - test1_stock_page_success.png: Distributor My Stock page with 0 boxes empty state
+      - test2_browse_page_success.png: Retailer Browse & Order with "No products available" empty state
+      - test3_wallet_page_success.png: Retailer My Wallet with ₹0 / 0 pts empty state
+      - test3_retailer_dashboard_success.png: Retailer Dashboard with all zeros
+      
+      🔧 FIX CONFIRMED WORKING:
+      The reported issue "3 pages crashed after demo-data purge" is RESOLVED.
+      Backend now gracefully handles users with no linked distributor/retailer profile
+      by returning empty arrays and zero values instead of 400 Bad Request errors.
+      
+      NO CRITICAL ISSUES FOUND.
+      All 3 previously-crashing pages now working perfectly with proper empty states.
+      Demo-data purge bug fix is production-ready.
+

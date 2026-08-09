@@ -2217,14 +2217,31 @@ def build_coupons_router(db, get_current_user, notify=None):
             raise HTTPException(400, "Retailer profile not linked to your user")
         return ret
 
+    async def _my_retailer_opt(user: dict) -> Optional[Dict[str, Any]]:
+        """Like _my_retailer but returns None instead of raising when the
+        retailer has no linked profile yet (used by read-only views so the UI
+        shows a clean empty state instead of crashing)."""
+        if user.get("role") != "retailer":
+            return None
+        rid = user.get("retailer_id")
+        ret = None
+        if rid:
+            ret = _clean(await db.dms_retailers.find_one({"id": rid}))
+        if not ret:
+            ret = _clean(await db.dms_retailers.find_one({"user_id": user["id"]}))
+        return ret
+
     @router.get("/retailer/wallet")
     async def retailer_wallet(user: dict = Depends(get_current_user)):
-        ret = await _my_retailer(user)
+        ret = await _my_retailer_opt(user)
+        if not ret:
+            return {
+                "retailer_id": None, "retailer_name": None, "distributor_id": None,
+                "cash_wallet": {"balance": 0, "pending_redemptions": 0},
+                "reward_wallet": {"balance": 0, "pending_redemptions": 0},
+            }
         cash = await _wallet_balance(ret["id"], "cash")
         pts = await _wallet_balance(ret["id"], "reward")
-        # pending redemptions (subtract virtually from displayed balance? spec says
-        # balance = SUM(transactions). Debit tx is created only on approval, so raw
-        # balance is correct. We surface pending separately.)
         pend_cash = await db.dms_v2_redemption_requests.count_documents({
             "retailer_id": ret["id"], "wallet_type": "cash", "status": "pending",
         })
@@ -2242,7 +2259,9 @@ def build_coupons_router(db, get_current_user, notify=None):
     async def retailer_transactions(wallet_type: Optional[str] = Query(None),
                                     limit: int = Query(200, ge=1, le=1000),
                                     user: dict = Depends(get_current_user)):
-        ret = await _my_retailer(user)
+        ret = await _my_retailer_opt(user)
+        if not ret:
+            return {"data": [], "count": 0}
         q: Dict[str, Any] = {"retailer_id": ret["id"]}
         if wallet_type: q["wallet_type"] = wallet_type
         docs = await db.dms_v2_wallet_transactions.find(q, {"_id": 0})\
@@ -2251,7 +2270,9 @@ def build_coupons_router(db, get_current_user, notify=None):
 
     @router.get("/retailer/coupons")
     async def retailer_coupons(user: dict = Depends(get_current_user)):
-        ret = await _my_retailer(user)
+        ret = await _my_retailer_opt(user)
+        if not ret:
+            return {"data": [], "count": 0}
         docs = await db.dms_v2_coupons.find(
             {"retailer_id": ret["id"]},
             {"_id": 0, "secret_token": 0, "signature": 0},
@@ -2260,7 +2281,9 @@ def build_coupons_router(db, get_current_user, notify=None):
 
     @router.get("/retailer/redemptions")
     async def retailer_redemptions(user: dict = Depends(get_current_user)):
-        ret = await _my_retailer(user)
+        ret = await _my_retailer_opt(user)
+        if not ret:
+            return {"data": [], "count": 0}
         docs = await db.dms_v2_redemption_requests.find({"retailer_id": ret["id"]}, {"_id": 0})\
             .sort("created_at", -1).to_list(500)
         return {"data": docs, "count": len(docs)}

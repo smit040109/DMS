@@ -896,7 +896,14 @@ def build_dms_router(db, get_current_user):
     async def distributor_dashboard(user: dict = Depends(dist_or_dacct)):
         did = user.get("distributor_id")
         if not did:
-            raise HTTPException(status_code=400, detail="Not linked to a distributor")
+            # Distributor user with no linked profile yet → clean empty dashboard
+            return {
+                "kpis": {
+                    "stock_boxes": 0, "stock_value": 0, "payable_to_owner": 0,
+                    "pending_primary_orders": 0, "ready_to_receive": 0,
+                    "receivable_from_retailers": 0, "sales_mtd": 0, "revenue_mtd": 0,
+                }
+            }
         # current stock (value at cost)
         stock_qty = 0
         stock_value = 0.0
@@ -1230,6 +1237,9 @@ def build_dms_router(db, get_current_user):
         role = user.get("role")
         rid = retailer_id or user.get("retailer_id")
         if not rid:
+            # Retailer with no linked profile yet → clean empty browse
+            if role == "retailer":
+                return {"data": [], "mode": None, "retailer": None, "pending": []}
             raise HTTPException(status_code=400, detail="retailer_id required")
         retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
         if not retailer:
@@ -2618,7 +2628,9 @@ def build_dms_router(db, get_current_user):
     async def retailer_dashboard(user: dict = Depends(retailer_only)):
         rid = user.get("retailer_id")
         if not rid:
-            raise HTTPException(status_code=400, detail="Not linked to a retailer")
+            # Retailer with no linked profile yet → clean empty dashboard
+            return {"kpis": {"total_orders": 0, "in_transit": 0,
+                             "outstanding": 0, "pending_items": 0}}
         billed = 0.0; paid = 0.0
         async for e in db.dms_retailer_ledger.find({"retailer_id": rid}, {"_id": 0}):
             if e["kind"] == "invoice":
