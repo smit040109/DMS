@@ -669,7 +669,64 @@ async def _seed_godowns_with_stock(raw_db):
 
 
 async def seed_dms(raw_db):
-    """Idempotent seed guarded by SEED_VERSION marker."""
+    """Bootstrap only — DEMO DATA SEEDING IS DISABLED.
+
+    The owner requested that ALL demo business data be removed. This function
+    therefore NEVER seeds demo products/distributors/retailers/orders/coupons/etc.
+    It only:
+      * ensures the DMS tenant exists,
+      * ensures a clean global settings doc exists (without overwriting owner edits),
+      * ensures coupon-engine indexes exist,
+      * bootstraps login accounts ONLY if the tenant has zero users (so the owner
+        can never get locked out) — existing users are left untouched.
+    """
+    await ensure_dms_tenant(raw_db)
+
+    # Ensure a clean global settings doc (do not clobber owner-configured values)
+    existing_settings = await raw_db.dms_settings.find_one({"id": "global"})
+    if not existing_settings:
+        await raw_db.dms_settings.insert_one({
+            "id": "global",
+            "tenant_id": DMS_TENANT_ID,
+            "gst_pct": 0.0,
+            "company_name": "GO OIL Lubricants",
+            "retailer_scan_enabled": False,
+            "created_at": _now(),
+            "updated_at": _now(),
+        })
+
+    # Coupon-engine indexes (idempotent / safe)
+    try:
+        await raw_db.dms_v2_coupons.create_index("coupon_code", unique=True)
+        await raw_db.dms_v2_coupons.create_index([("batch_id", 1), ("status", 1)])
+        await raw_db.dms_v2_coupons.create_index("retailer_id")
+        await raw_db.dms_v2_coupons.create_index("distributor_id")
+        await raw_db.dms_v2_wallet_transactions.create_index(
+            [("retailer_id", 1), ("wallet_type", 1)]
+        )
+        await raw_db.dms_v2_retailer_wallets.create_index(
+            [("retailer_id", 1), ("wallet_type", 1)], unique=True
+        )
+        await raw_db.dms_v2_coupon_batches.create_index("batch_no", unique=True)
+        await raw_db.dms_v2_coupon_audit_log.create_index([("entity_id", 1), ("at", -1)])
+    except Exception:
+        pass
+
+    # Bootstrap login accounts ONLY if none exist for this tenant (never wipe/reseed).
+    user_count = await raw_db.users.count_documents({"tenant_id": DMS_TENANT_ID})
+    if user_count == 0:
+        await _seed_users(raw_db)
+
+    await raw_db.dms_meta.update_one(
+        {"id": "seed_marker"},
+        {"$set": {"id": "seed_marker", "version": SEED_VERSION, "at": _now()}},
+        upsert=True,
+    )
+    return True
+
+
+async def _seed_dms_full_demo_DISABLED(raw_db):
+    """Legacy full demo seed — kept for reference only, NO LONGER CALLED."""
     await ensure_dms_tenant(raw_db)
 
     marker = await raw_db.dms_meta.find_one({"id": "seed_marker"})
