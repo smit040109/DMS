@@ -28,6 +28,7 @@ import { OwnerUsersPage } from "@/pages/dms/OwnerUsersPage";
 import { LiveTrackingPage } from "@/pages/dms/LiveTrackingPage";
 import { TlDashboardPage, TlDistributorsMonitoringPage, TlSalespersonsPage, TlOrdersMonitoringPage, TlRetailersPage } from "@/pages/dms/TeamLeaderPages";
 import { OwnerTlPerformancePage, OwnerDistributorSalesListPage, OwnerDistributorSalesDetailPage } from "@/pages/dms/OwnerInsightsPages";
+import { OwnerHierarchyPage } from "@/pages/dms/HierarchyPage";
 import { RmDashboardPage, RmTeamLeadersPage, RmRegionPerformancePage, RmDistributorsPage, RmSalespersonsPage } from "@/pages/dms/RegionalManagerPages";
 import {
   OwnerCouponsPage,
@@ -44,6 +45,8 @@ import {
   RetailerScanPage,
   RetailerWalletPage,
   DistributorCouponsPage,
+  DistributorScanPage,
+  OwnerScanAuditPage,
 } from "@/pages/dms/CouponsV2";
 import { PrintEbillPage, PrintRetailerBillPage, PrintPurchaseOrderPage, PrintDocumentPage } from "@/pages/dms/PrintPages";
 import { ImportExportPage, DirectSalesPage, DocumentsPage } from "@/pages/dms/Phase2CPages";
@@ -103,6 +106,7 @@ function AppRoutes() {
       <Route path="/dms/owner/ledger"              element={<DmsPage Component={PrimaryLedgerPage} />} />
       <Route path="/dms/owner/retailer-prices"     element={<DmsPage Component={CategoriesPage} />} />
       <Route path="/dms/owner/users"               element={<DmsPage Component={OwnerUsersPage} />} />
+      <Route path="/dms/owner/hierarchy"           element={<DmsPage Component={OwnerHierarchyPage} />} />
       <Route path="/dms/owner/live-tracking"       element={<DmsPage Component={LiveTrackingPage} />} />
       <Route path="/dms/owner/tl-performance"      element={<DmsPage Component={OwnerTlPerformancePage} />} />
       <Route path="/dms/owner/distributor-sales"   element={<DmsPage Component={OwnerDistributorSalesListPage} />} />
@@ -142,6 +146,8 @@ function AppRoutes() {
       <Route path="/dms/retailer/wallet"           element={<DmsPage Component={RetailerWalletPage} />} />
       <Route path="/dms/retailer/scan"             element={<DmsPage Component={RetailerScanPage} />} />
       <Route path="/dms/distributor/coupons"       element={<DmsPage Component={DistributorCouponsPage} />} />
+      <Route path="/dms/distributor/scan"          element={<DmsPage Component={DistributorScanPage} />} />
+      <Route path="/dms/owner/coupons/scan-audit"  element={<DmsPage Component={OwnerScanAuditPage} />} />
       <Route path="/dms/team-leader/live-tracking" element={<DmsPage Component={LiveTrackingPage} />} />
       <Route path="/dms/team-leader/salespersons"  element={<DmsPage Component={TlSalespersonsPage} />} />
       <Route path="/dms/team-leader/orders"        element={<DmsPage Component={TlOrdersMonitoringPage} />} />

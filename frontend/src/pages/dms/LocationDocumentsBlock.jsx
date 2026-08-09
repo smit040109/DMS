@@ -194,15 +194,24 @@ export default function LocationDocumentsBlock({
           </div>
         ) : (
           <div className="space-y-2">
-            {documents.map((d, i) => (
+            {documents.map((d, i) => {
+              const isImg = (d.type || "").startsWith("image/") || /^data:image\//.test(d.url || "");
+              const isPdf = (d.type || "").includes("pdf") || /^data:application\/pdf/.test(d.url || "");
+              return (
               <div key={i} className="flex items-center gap-2.5 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                <FileText size={16} className="text-[#a67c00] shrink-0" />
+                {isImg && d.url ? (
+                  <a href={d.url} target="_blank" rel="noreferrer" className="shrink-0" title="Open full image">
+                    <img src={d.url} alt={d.name} className="h-12 w-12 rounded object-cover border border-slate-200" />
+                  </a>
+                ) : (
+                  <FileText size={16} className={`shrink-0 ${isPdf ? "text-rose-500" : "text-[#a67c00]"}`} />
+                )}
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-slate-900 truncate">{d.name}</div>
-                  <div className="text-[11px] text-slate-500">{fmtSize(d.size)} · {d.type?.split("/")[1] || "file"}</div>
+                  <div className="text-[11px] text-slate-500">{fmtSize(d.size)} · {d.type?.split("/")[1] || (isImg ? "image" : "file")}</div>
                 </div>
                 {d.url && (
-                  <a href={d.url} target="_blank" rel="noreferrer" download={d.name} className="p-1 rounded hover:bg-slate-100" title="View / download">
+                  <a href={d.url} target="_blank" rel="noreferrer" className="p-1 rounded hover:bg-slate-100" title="Preview / open">
                     <ExternalLink size={14} className="text-slate-500" />
                   </a>
                 )}
@@ -210,7 +219,8 @@ export default function LocationDocumentsBlock({
                   <X size={14} />
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

@@ -124,7 +124,23 @@ export function OwnerCouponsPage() {
   const [batches, setBatches] = useState([]);
   const [busy, setBusy] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
+  const [scanPerm, setScanPerm] = useState(false);
+  const [permBusy, setPermBusy] = useState(false);
   const nav = useNavigate();
+
+  useEffect(() => {
+    dms.cpnGetScanPermission().then(p => setScanPerm(!!p.retailer_scan_enabled)).catch(() => {});
+  }, []);
+  const toggleScanPerm = async () => {
+    setPermBusy(true);
+    try {
+      const next = !scanPerm;
+      const r = await dms.cpnSetScanPermission(next);
+      setScanPerm(!!r.retailer_scan_enabled);
+      toast.success(next ? "Retailer scanning enabled" : "Retailer scanning disabled");
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+    finally { setPermBusy(false); }
+  };
 
   const load = useCallback(async () => {
     setBusy(true);
@@ -167,7 +183,26 @@ export function OwnerCouponsPage() {
         }
       />
 
-      {/* Life-cycle KPIs — as per Owner Dashboard spec. All clickable → drill into filtered list */}
+      {/* Retailer self-scan permission toggle (Owner controls) */}
+      <Card className="p-4 mb-5 flex items-center justify-between flex-wrap gap-3" data-testid="retailer-scan-perm-card">
+        <div>
+          <div className="font-semibold text-slate-900 flex items-center gap-2">
+            <ScanLine size={16} className="text-[#a67c00]" /> Retailer Self-Scan Permission
+          </div>
+          <div className="text-xs text-slate-500 mt-0.5">
+            When ON, retailers see a &quot;Scan Coupon&quot; option in their login and can scan coupons into their own wallet.
+          </div>
+        </div>
+        <button
+          onClick={toggleScanPerm}
+          disabled={permBusy}
+          data-testid="retailer-scan-toggle"
+          className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors ${scanPerm ? "bg-emerald-500" : "bg-slate-300"}`}
+        >
+          <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${scanPerm ? "translate-x-8" : "translate-x-1"}`} />
+        </button>
+      </Card>
+
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-5">
         <Kpi label="Generated"      value={totalGenerated}               tint="bg-slate-100 text-slate-700"     icon={Ticket}
               onClick={() => nav("/dms/owner/coupons/all")}
@@ -2526,6 +2561,201 @@ export function RetailerScanPage() {
   );
 }
 
+
+// ═════════════════════ DISTRIBUTOR: Self-Scan (own wallet) ══════════════════
+export function DistributorScanPage() {
+  const [code, setCode] = useState("");
+  const [qrPayload, setQrPayload] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [last, setLast] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [scanned, setScanned] = useState(null);
+  const [gps, setGps] = useState(null);
+  const [wallet, setWallet] = useState(null);
+
+  const loadWallet = () => dms.cpnDistWallet().then(setWallet).catch(() => {});
+  useEffect(() => {
+    loadWallet();
+    if (typeof navigator !== "undefined" && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => setGps({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        () => setGps(null),
+        { maximumAge: 60_000, timeout: 5_000, enableHighAccuracy: false },
+      );
+    }
+  }, []);
+
+  const deviceId = useMemo(() => {
+    try {
+      let d = window.localStorage.getItem("gooil_device_id");
+      if (!d) { d = "dev-" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); window.localStorage.setItem("gooil_device_id", d); }
+      return d;
+    } catch { return null; }
+  }, []);
+
+  const runPreview = async () => {
+    const cCode = (code || "").trim().toUpperCase();
+    const qr = (qrPayload || "").trim();
+    if (!qr && !cCode) { toast.error("Enter coupon code or paste QR"); return; }
+    setBusy(true); setLast(null); setPreview(null);
+    try {
+      const r = await dms.cpnDistScanPreview({ qr_payload: qr || undefined, coupon_code: cCode || undefined, gps_lat: gps?.lat, gps_lng: gps?.lng, device_id: deviceId });
+      setScanned({ qr: qr || undefined, code: cCode || undefined });
+      setPreview(r.preview || {});
+      if (r.fraud) toast.error(`Fraud: ${(r.fraud_reason || "").replace(/_/g, " ")}`);
+    } catch (e) {
+      const msg = e?.response?.data?.detail || "Validation failed";
+      setPreview(null); setLast({ ok: false, message: msg }); toast.error(msg);
+    } finally { setBusy(false); }
+  };
+
+  const confirmSubmit = async () => {
+    if (!preview || preview.fraud || !scanned) return;
+    setBusy(true);
+    try {
+      const r = await dms.cpnDistScan({ qr_payload: scanned.qr, coupon_code: scanned.code, gps_lat: gps?.lat, gps_lng: gps?.lng, device_id: deviceId });
+      setLast({ ok: true, ...r });
+      setPreview(null); setScanned(null); setCode(""); setQrPayload("");
+      toast.success(r.message);
+      loadWallet();
+    } catch (e) {
+      const msg = e?.response?.data?.detail || "Submit failed";
+      setLast({ ok: false, message: msg }); setPreview(null); toast.error(msg);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <PageHeader title="Scan Coupon" subtitle="Scan a QR or type the coupon code. Cash/points credit to your own wallet after Submit." />
+      {wallet && (
+        <div className="grid grid-cols-2 gap-3 max-w-xl mb-4">
+          <Card className="p-4"><div className="text-xs text-slate-500">Cash Wallet</div><div className="text-xl font-bold text-emerald-700">{inr(wallet.cash_wallet?.balance || 0)}</div></Card>
+          <Card className="p-4"><div className="text-xs text-slate-500">Reward Wallet</div><div className="text-xl font-bold text-[#a67c00]">{wallet.reward_wallet?.balance || 0} pts</div></Card>
+        </div>
+      )}
+      <div className="max-w-xl">
+        <Card className="p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <ScanLine className="text-[#a67c00]" size={18} />
+            <h3 className="font-bold text-slate-900">Scan / Enter Coupon</h3>
+          </div>
+          <Label>QR Payload (paste from scanner)</Label>
+          <div className="flex gap-2 mt-1 mb-3">
+            <Input value={qrPayload} onChange={e => setQrPayload(e.target.value)} placeholder="GOOIL2:xxxxx (paste from scanner)"
+                   onKeyDown={e => e.key === "Enter" && runPreview()} data-testid="dist-qr-input" />
+            <Button className={GOLD_BTN} disabled={busy || !qrPayload.trim()} onClick={runPreview} data-testid="dist-qr-scan">{busy ? "…" : "Validate"}</Button>
+          </div>
+          <div className="relative flex items-center py-2">
+            <div className="flex-grow border-t border-slate-200"></div>
+            <span className="mx-3 text-xs text-slate-400">OR enter manually</span>
+            <div className="flex-grow border-t border-slate-200"></div>
+          </div>
+          <Label>Coupon Code</Label>
+          <div className="flex gap-2 mt-1">
+            <Input value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="ABCDE001"
+                   onKeyDown={e => e.key === "Enter" && runPreview()} data-testid="dist-code-input" className="font-mono" />
+            <Button className={GOLD_BTN} disabled={busy || !code.trim()} onClick={runPreview} data-testid="dist-code-scan">Validate</Button>
+          </div>
+
+          {preview && (
+            <div className={`mt-4 p-4 rounded-lg border ${preview.fraud ? "bg-rose-50 border-rose-300" : "bg-amber-50 border-amber-300"}`} data-testid="dist-preview">
+              <div className="flex items-center gap-2 mb-2">
+                {preview.fraud ? <ShieldAlert size={20} className="text-rose-600" /> : <ScanLine size={20} className="text-[#a67c00]" />}
+                <h4 className="font-bold text-slate-900">Confirm before submit</h4>
+                <span className={`ml-auto text-xs font-bold px-2 py-0.5 rounded ${preview.fraud ? "bg-rose-600 text-white" : "bg-emerald-600 text-white"}`}>FRAUD: {preview.fraud ? "YES" : "NO"}</span>
+              </div>
+              {preview.fraud && <div className="mb-2 text-sm text-rose-700 font-semibold">Reason: {(preview.fraud_reason || "").replace(/_/g, " ")}</div>}
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                <PreviewKV k="Logged-in User" v={preview.logged_in_user} />
+                <PreviewKV k="Role" v={preview.user_role} />
+                <PreviewKV k="Distributor" v={preview.distributor_name} />
+                <PreviewKV k="Box Number" v={preview.box_number || "—"} />
+                <PreviewKV k="Coupon Serial" v={preview.coupon_serial} />
+                <PreviewKV k="Coupon Type" v={preview.coupon_type} />
+                <PreviewKV k="Coupon Value" v={preview.coupon_type === "cash" ? `₹${preview.coupon_value}` : preview.coupon_value} />
+              </div>
+              <div className="flex gap-2 mt-3">
+                <Button className={GOLD_BTN} disabled={busy || preview.fraud} onClick={confirmSubmit} data-testid="dist-submit">{busy ? "Submitting…" : "Submit & Credit Wallet"}</Button>
+                <Button variant="outline" onClick={() => { setPreview(null); setScanned(null); }} disabled={busy}>Cancel</Button>
+              </div>
+            </div>
+          )}
+
+          {last && (
+            <div className={`mt-4 p-4 rounded-lg border ${last.ok ? "bg-emerald-50 border-emerald-300" : "bg-rose-50 border-rose-300"}`} data-testid="dist-result">
+              <div className="flex items-start gap-2">
+                {last.ok ? <CheckCircle2 size={22} className="text-emerald-600 mt-0.5" /> : <XCircle size={22} className="text-rose-600 mt-0.5" />}
+                <div className="flex-1">
+                  <div className={`font-semibold ${last.ok ? "text-emerald-900" : "text-rose-900"}`}>{last.ok ? "Coupon Claimed" : "Scan Rejected"}</div>
+                  {last.ok && (
+                    <div className="text-sm mt-1 space-y-1">
+                      <div><span className="font-mono font-bold">{last.coupon_serial}</span></div>
+                      <div>{last.coupon_type === "cash" ? <>+<b className="text-emerald-700">{inr(last.coupon_value)}</b> to Cash Wallet</> : <>+<b className="text-emerald-700">{last.coupon_value} pts</b> to Reward Wallet</>}</div>
+                      <div className="text-xs">New {last.wallet_type} balance: <b>{last.wallet_type === "cash" ? inr(last.new_balance) : `${last.new_balance} pts`}</b></div>
+                    </div>
+                  )}
+                  {!last.ok && <div className="text-sm text-slate-700 mt-1">{last.message}</div>}
+                </div>
+              </div>
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+
+// ═════════════════ OWNER: Coupon Scan Audit (who scanned + designation) ══════
+export function OwnerScanAuditPage() {
+  const [rows, setRows] = useState([]);
+  const [channel, setChannel] = useState("");
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    dms.cpnScanAudit(channel ? { channel } : {})
+      .then(r => setRows(r.data || []))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [channel]);
+  const CH_LABEL = { distributor_self_scan: "Distributor Scan", retailer_self_scan: "Retailer Scan", salesperson_scan: "Salesperson Scan" };
+  return (
+    <div>
+      <PageHeader title="Coupon Scan Audit" subtitle="Every scan with the scanner's login and designation" />
+      <div className="flex gap-2 mb-3 flex-wrap">
+        {["", "distributor_self_scan", "retailer_self_scan", "salesperson_scan"].map(c => (
+          <button key={c || "all"} onClick={() => setChannel(c)}
+            className={`px-3 py-1.5 rounded-full text-xs font-semibold border ${channel === c ? "bg-[#a67c00] text-white border-[#a67c00]" : "bg-white text-slate-600 border-slate-200"}`}>
+            {c ? CH_LABEL[c] : "All"}
+          </button>
+        ))}
+      </div>
+      <Card className="overflow-x-auto">
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>When</TableHead><TableHead>Serial</TableHead>
+            <TableHead>Type / Value</TableHead><TableHead>Scanned By (Login)</TableHead>
+            <TableHead>Designation</TableHead><TableHead>Retailer / Distributor</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {loading && <TableRow><TableCell colSpan={6} className="text-center py-10 text-slate-400">Loading…</TableCell></TableRow>}
+            {!loading && rows.length === 0 && <TableRow><TableCell colSpan={6} className="text-center py-10 text-slate-400">No scans yet</TableCell></TableRow>}
+            {!loading && rows.map(r => (
+              <TableRow key={r.coupon_id}>
+                <TableCell className="text-xs text-slate-500 whitespace-nowrap">{niceDate(r.scanned_at)}</TableCell>
+                <TableCell className="text-xs font-mono font-semibold">{r.serial}</TableCell>
+                <TableCell className="text-xs">{r.coupon_type === "cash" ? <b className="text-emerald-700">{inr(r.coupon_value)}</b> : <b className="text-[#a67c00]">{r.coupon_value} pts</b>}</TableCell>
+                <TableCell className="text-xs">{r.scanned_by_name} <span className="text-slate-400 font-mono">{(r.scanned_by_user_id || "").slice(0, 12)}</span></TableCell>
+                <TableCell className="text-xs"><span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 font-semibold">{r.designation}</span></TableCell>
+                <TableCell className="text-xs text-slate-600">{r.retailer_name || r.distributor_name || "—"}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
+    </div>
+  );
+}
 
 // ═════════════════════════ RETAILER: Wallet & History (view-only) ═══════════
 export function RetailerWalletPage() {

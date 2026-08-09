@@ -31,6 +31,7 @@ const NAV_BY_ROLE = {
     { label: "Stock Transfers", to: "/dms/warehouse/transfers",   icon: "ArrowLeftRight" },
     { label: "Retailer Prices", to: "/dms/owner/retailer-prices", icon: "TrendingUp" },
     { label: "User Management", to: "/dms/owner/users",           icon: "Users" },
+    { label: "Hierarchy",       to: "/dms/owner/hierarchy",       icon: "Building2" },
     { label: "Live Tracking",   to: "/dms/owner/live-tracking",   icon: "MapPin" },
     { label: "Attendance",      to: "/dms/owner/attendance",      icon: "ClipboardList" },
     { label: "Retailer Access", to: "/dms/owner/retailer-access",  icon: "Store" },
@@ -45,6 +46,7 @@ const NAV_BY_ROLE = {
     { label: "Coupon Reports",     to: "/dms/owner/coupon-reports",              icon: "ShieldAlert" },
     { label: "Fraud Dashboard",    to: "/dms/owner/coupons/fraud",               icon: "AlertTriangle" },
     { label: "Coupon Audit Log",   to: "/dms/owner/coupons/audit-log",           icon: "Activity" },
+    { label: "Scan Audit",          to: "/dms/owner/coupons/scan-audit",          icon: "ScanLine" },
     // Phase 2C
     { label: "+Add Sales",      to: "/dms/direct-sales",          icon: "Receipt" },
     { label: "Documents",       to: "/dms/documents",             icon: "FileText" },
@@ -89,6 +91,7 @@ const NAV_BY_ROLE = {
     { label: "+Add Sales",        to: "/dms/direct-sales",               icon: "Receipt" },
     { label: "Documents",         to: "/dms/documents",                  icon: "FileText" },
     { label: "Coupon Rewards",    to: "/dms/distributor/coupons",        icon: "Award" },
+    { label: "Scan Coupon",       to: "/dms/distributor/scan",           icon: "ScanLine" },
     { label: "Secondary Ledger",  to: "/dms/distributor/sec-ledger",     icon: "ScrollText" },
     { label: "Primary Ledger",    to: "/dms/distributor/ledger",         icon: "ScrollText" },
     { label: "Expenses",          to: "/dms/expenses",                   icon: "Receipt" },

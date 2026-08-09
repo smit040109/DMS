@@ -50,6 +50,44 @@ export function EmptyState({ icon: Icon = Package, title, description, action })
   );
 }
 
+// Read-only documents + location gallery (KYC preview for distributor/retailer)
+export function DocumentsGallery({ documents = [], locationLink, lat, lng }) {
+  const mapsLink = locationLink || (lat && lng ? `https://maps.google.com/?q=${lat},${lng}` : "");
+  return (
+    <div className="rounded-xl border border-[#c9a227]/30 bg-[#faf6e6]/40 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <div className="font-semibold text-slate-900 text-sm">KYC Documents</div>
+        {mapsLink && (
+          <a href={mapsLink} target="_blank" rel="noreferrer" className="text-xs text-[#8a6600] underline">View location on Map</a>
+        )}
+      </div>
+      {(!documents || documents.length === 0) ? (
+        <div className="text-xs text-slate-500">No documents uploaded.</div>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+          {documents.map((d, i) => {
+            const isImg = (d.type || "").startsWith("image/") || /^data:image\//.test(d.url || "");
+            return (
+              <a key={i} href={d.url} target="_blank" rel="noreferrer"
+                 className="block rounded-lg border border-slate-200 bg-white overflow-hidden hover:shadow-md transition" title={d.name}>
+                {isImg && d.url ? (
+                  <img src={d.url} alt={d.name} className="h-28 w-full object-cover" />
+                ) : (
+                  <div className="h-28 w-full flex items-center justify-center bg-slate-50 text-slate-400">
+                    <Paperclip size={22} />
+                  </div>
+                )}
+                <div className="px-2 py-1.5 text-[11px] text-slate-700 truncate border-t border-slate-100">{d.name || `Document ${i + 1}`}</div>
+              </a>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // Clickable Finance stat cell — used on the dashboard Cash & Bank Snapshot
 function FinanceStat({ label, value, valueClass = "", borderLeft = false, onClick }) {
   return (
@@ -568,7 +606,7 @@ function ManageCategoriesModal({ open, onOpenChange, onChanged }) {
           <div className="col-span-1"><Label>Description</Label><Input value={desc} onChange={e => setDesc(e.target.value)} placeholder="optional" /></div>
           <div><Button onClick={submit} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white w-full" data-testid="save-cat-btn">{editing ? "Update" : "Add"}</Button></div>
         </div>
-        {editing && <div className="text-xs text-slate-500 mb-2">Editing "{editing.name}" — <button className="text-[#a67c00] underline" onClick={() => { setEditing(null); setName(""); setDesc(""); }}>cancel</button></div>}
+        {editing && <div className="text-xs text-slate-500 mb-2">Editing &quot;{editing.name}&quot; — <button className="text-[#a67c00] underline" onClick={() => { setEditing(null); setName(""); setDesc(""); }}>cancel</button></div>}
         <Card className="max-h-[420px] overflow-y-auto">
           <Table>
             <TableHeader><TableRow><TableHead>Name</TableHead><TableHead>Description</TableHead><TableHead className="w-24 text-right"></TableHead></TableRow></TableHeader>
@@ -668,7 +706,20 @@ export function DistributorsPage() {
               <span className="text-slate-500">GSTIN</span>
               <span className="font-mono text-slate-700">{d.kyc?.gstin || "—"}</span>
             </div>
-            <div className="mt-3 text-[#a67c00] text-xs font-medium flex items-center">Manage → <ChevronRight size={14} /></div>
+            <div className="mt-3 flex items-center justify-between">
+              <div className="text-[#a67c00] text-xs font-medium flex items-center">Manage → <ChevronRight size={14} /></div>
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!window.confirm(`Delete distributor "${d.name}"? This also removes their login.`)) return;
+                  try { await dms.deleteDistributor(d.id); toast.success("Deleted"); load(); }
+                  catch (err) { toast.error(err.response?.data?.detail || "Delete failed"); }
+                }}
+                className="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-50"
+                title="Delete distributor" data-testid={`del-dist-${d.id}`}>
+                <Trash2 size={15} />
+              </button>
+            </div>
           </Card>
         ))}
       </div>
@@ -722,6 +773,7 @@ export function DistributorsPage() {
 
 export function DistributorDetailPage() {
   const { id } = useParams();
+  const nav = useNavigate();
   const [d, setD] = useState(null);
   const [vis, setVis] = useState([]);
   const [tab, setTab] = useState("kyc");
@@ -735,11 +787,21 @@ export function DistributorDetailPage() {
   };
   useEffect(() => { load(); }, [id]);
 
+  const del = async () => {
+    if (!window.confirm(`Delete distributor "${d.name}"? This also removes their login. This cannot be undone.`)) return;
+    try {
+      await dms.deleteDistributor(id);
+      toast.success("Distributor deleted");
+      nav("/dms/owner/distributors");
+    } catch (e) { toast.error(e.response?.data?.detail || "Delete failed"); }
+  };
+
   const saveKyc = async () => {
     try {
       const kyc = ["gstin", "pan", "aadhaar", "shop_license", "bank_name", "bank_account", "bank_ifsc", "notes"].reduce((a, k) => (a[k] = form[k] || "", a), {});
       await dms.updateDistributor(id, {
         name: form.name, phone: form.phone, address: form.address, region: form.region, credit_limit: Number(form.credit_limit || 0), kyc,
+        documents: form.documents || [], gps_lat: form.gps_lat, gps_lng: form.gps_lng, location_link: form.location_link,
       });
       toast.success("Updated"); setEditKyc(false); load();
     } catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
@@ -758,6 +820,7 @@ export function DistributorDetailPage() {
         title={d.name}
         subtitle={`${d.email} • ${d.region || "—"} • Credit ${inr(d.credit_limit)}`}
         back="/dms/owner/distributors"
+        action={<Button variant="outline" size="sm" onClick={del} className="text-rose-600 border-rose-200 hover:bg-rose-50" data-testid="delete-distributor-btn"><Trash2 size={14} className="mr-1" /> Delete</Button>}
       />
       <div className="flex gap-2 mb-4 border-b border-slate-200">
         {[
@@ -787,12 +850,25 @@ export function DistributorDetailPage() {
                   <span className="text-slate-900 font-medium">{v || "—"}</span>
                 </div>
               ))}
+              <div className="md:col-span-2 mt-2">
+                <DocumentsGallery documents={d.documents || []} locationLink={d.location_link} lat={d.gps_lat} lng={d.gps_lng} />
+              </div>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">
               {["name", "phone", "address", "region", "credit_limit", "gstin", "pan", "shop_license", "bank_name", "bank_account", "bank_ifsc"].map(k => (
                 <div key={k} className={k === "address" ? "col-span-2" : ""}><Label className="capitalize">{k.replace(/_/g, " ")}</Label><Input value={form[k] || ""} onChange={e => setForm({ ...form, [k]: e.target.value })} /></div>
               ))}
+              <div className="col-span-2">
+                <LocationDocumentsBlock
+                  lat={form.gps_lat} lng={form.gps_lng} locationLink={form.location_link}
+                  onLat={(v) => setForm(f => ({ ...f, gps_lat: v }))}
+                  onLng={(v) => setForm(f => ({ ...f, gps_lng: v }))}
+                  onLocationLink={(v) => setForm(f => ({ ...f, location_link: v }))}
+                  documents={form.documents || []}
+                  onDocuments={(docs) => setForm(f => ({ ...f, documents: docs }))}
+                />
+              </div>
               <div className="col-span-2 flex justify-end gap-2 mt-3">
                 <Button variant="outline" onClick={() => setEditKyc(false)}>Cancel</Button>
                 <Button onClick={saveKyc} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="save-kyc-btn">Save</Button>
@@ -1149,23 +1225,30 @@ export function ExcelButtons({ onImported }) {
     catch (e) { toast.error(e?.response?.data?.detail || "Export failed"); }
     finally { setBusy(false); }
   };
+  const doTemplate = async () => {
+    setBusy(true);
+    try { await dms.importTemplate(); toast.success("Template downloaded"); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Template download failed"); }
+    finally { setBusy(false); }
+  };
   const doImport = async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
     setBusy(true);
     try {
-      const r = await dms.importProducts(f);
-      toast.success(`Imported: +${r.created} created, ${r.updated} updated, ${r.skipped} skipped`);
-      if (r.errors?.length) toast.warning(`Some rows skipped:\n${r.errors.slice(0, 3).join("\n")}`);
+      const r = await dms.importPriceCircular(f);
+      toast.success(`Imported ${r.products_parsed} products (+${r.created} new, ${r.updated} updated) across ${r.categories} categories. Price Circular Batch ${r.circular_batch_no} created.`);
+      if (r.warnings?.length) toast.warning(r.warnings.slice(0, 2).join("\n"));
       onImported?.();
     } catch (err) { toast.error(err?.response?.data?.detail || "Import failed"); }
     finally { setBusy(false); e.target.value = ""; }
   };
   return (
     <>
-      <input ref={inputRef} type="file" accept=".xlsx" className="hidden" onChange={doImport} data-testid="import-file-input" />
+      <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv,.pdf" className="hidden" onChange={doImport} data-testid="import-file-input" />
+      <Button variant="outline" onClick={doTemplate} disabled={busy} data-testid="template-products-btn"><FileDown size={14} className="mr-1" /> Template</Button>
       <Button variant="outline" onClick={doExport} disabled={busy} data-testid="export-products-btn"><FileDown size={14} className="mr-1" /> Export</Button>
-      <Button variant="outline" onClick={() => inputRef.current?.click()} disabled={busy} data-testid="import-products-btn"><FileUp size={14} className="mr-1" /> Import</Button>
+      <Button variant="outline" onClick={() => inputRef.current?.click()} disabled={busy} data-testid="import-products-btn"><FileUp size={14} className="mr-1" /> {busy ? "Working…" : "Import"}</Button>
     </>
   );
 }

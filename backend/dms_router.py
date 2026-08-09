@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Body, Query, UploadFile, File, Request
+from fastapi import APIRouter, Depends, HTTPException, Body, Query, UploadFile, File, Request, Form
 from pydantic import BaseModel
 
 
@@ -435,6 +435,25 @@ def build_dms_router(db, get_current_user):
         if r.matched_count == 0:
             raise HTTPException(status_code=404, detail="Distributor not found")
         return {"ok": True}
+
+    @router.delete("/distributors/{did}")
+    async def delete_distributor(did: str, user: dict = Depends(owner_only)):
+        dist = await db.dms_distributors.find_one({"id": did}, {"_id": 0})
+        if not dist:
+            raise HTTPException(status_code=404, detail="Distributor not found")
+        # block delete if there are primary orders referencing this distributor
+        order_count = await db.dms_primary_orders.count_documents({"distributor_id": did})
+        if order_count:
+            raise HTTPException(status_code=400,
+                detail=f"Cannot delete — {order_count} primary order(s) exist for this distributor. Deactivate instead.")
+        await db.dms_distributors.delete_one({"id": did})
+        await db.dms_dist_visibility.delete_many({"distributor_id": did})
+        # remove linked login user(s)
+        uid = dist.get("user_id")
+        if uid:
+            await db.users.delete_one({"id": uid})
+        await db.users.delete_many({"distributor_id": did, "role": "distributor"})
+        return {"ok": True, "deleted": did}
 
     # ── product visibility per distributor (owner control) ──
     @router.get("/distributors/{did}/visibility")
@@ -1146,6 +1165,26 @@ def build_dms_router(db, get_current_user):
         if r.matched_count == 0:
             raise HTTPException(status_code=404, detail="Retailer not found")
         return {"ok": True}
+
+    @router.delete("/retailers/{rid}")
+    async def delete_retailer(rid: str, user: dict = Depends(get_current_user)):
+        if user.get("role") not in ("owner", "owner_accountant", "distributor",
+                                    "team_leader", "salesperson", "super_admin"):
+            raise HTTPException(status_code=403, detail="Not allowed to delete retailers")
+        ret = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+        if not ret:
+            raise HTTPException(status_code=404, detail="Retailer not found")
+        order_count = await db.dms_secondary_orders.count_documents({"retailer_id": rid})
+        if order_count:
+            raise HTTPException(status_code=400,
+                detail=f"Cannot delete — {order_count} order(s) exist for this retailer. Deactivate instead.")
+        await db.dms_retailers.delete_one({"id": rid})
+        await db.dms_ret_visibility.delete_many({"retailer_id": rid})
+        uid = ret.get("user_id")
+        if uid:
+            await db.users.delete_one({"id": uid})
+        await db.users.delete_many({"retailer_id": rid, "role": "retailer"})
+        return {"ok": True, "deleted": rid}
 
     @router.put("/retailers/{rid}/login-access")
     async def set_retailer_login_access(rid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
@@ -1882,7 +1921,93 @@ def build_dms_router(db, get_current_user):
         await db.dms_sp_assignments.delete_one({"salesperson_id": salesperson_id, "distributor_id": distributor_id})
         return {"ok": True}
 
-    @router.get("/assignments/rm-tls")
+    # ── consolidated hierarchy tree (owner view) ──
+    @router.get("/owner/hierarchy")
+    async def owner_hierarchy(user: dict = Depends(owner_or_accountant)):
+        """Full org tree: Regional Managers → Team Leaders → Distributors →
+        (Salespersons + Retailers). Also returns flat lists of all users/entities
+        so the UI can offer assignment dropdowns."""
+        users = await db.users.find(
+            {"tenant_id": DMS_TENANT_ID},
+            {"_id": 0, "id": 1, "name": 1, "role": 1, "email": 1}).to_list(2000)
+        by_role: Dict[str, List[Dict[str, Any]]] = {}
+        umap: Dict[str, Dict[str, Any]] = {}
+        for u in users:
+            umap[u["id"]] = u
+            by_role.setdefault(u.get("role"), []).append(u)
+
+        distributors = await db.dms_distributors.find(
+            {}, {"_id": 0, "id": 1, "name": 1, "region": 1}).to_list(1000)
+        retailers = await db.dms_retailers.find(
+            {}, {"_id": 0, "id": 1, "name": 1, "distributor_id": 1, "region": 1}).to_list(5000)
+
+        sp_asg = await db.dms_sp_assignments.find({}, {"_id": 0}).to_list(5000)
+        tl_asg = await db.dms_tl_assignments.find({}, {"_id": 0}).to_list(5000)
+        rm_asg = await db.dms_rm_assignments.find({}, {"_id": 0}).to_list(5000)
+
+        # index
+        ret_by_dist: Dict[str, List[Dict[str, Any]]] = {}
+        for r in retailers:
+            ret_by_dist.setdefault(r.get("distributor_id"), []).append(
+                {"id": r["id"], "name": r.get("name"), "region": r.get("region")})
+        sp_by_dist: Dict[str, List[str]] = {}
+        for a in sp_asg:
+            sp_by_dist.setdefault(a["distributor_id"], []).append(a["salesperson_id"])
+        dist_by_tl: Dict[str, List[str]] = {}
+        for a in tl_asg:
+            dist_by_tl.setdefault(a["team_leader_id"], []).append(a["distributor_id"])
+        tl_by_rm: Dict[str, List[str]] = {}
+        for a in rm_asg:
+            tl_by_rm.setdefault(a["regional_manager_id"], []).append(a["team_leader_id"])
+
+        dmap = {d["id"]: d for d in distributors}
+
+        def _sp_list(did):
+            return [{"id": sid, "name": (umap.get(sid) or {}).get("name", sid)}
+                    for sid in sp_by_dist.get(did, [])]
+
+        def _dist_node(did):
+            d = dmap.get(did, {"id": did, "name": did})
+            return {"id": did, "name": d.get("name"), "region": d.get("region"),
+                    "salespersons": _sp_list(did),
+                    "retailers": ret_by_dist.get(did, [])}
+
+        assigned_dist_ids = set()
+        for lst in dist_by_tl.values():
+            assigned_dist_ids.update(lst)
+
+        tree = []
+        for rm in by_role.get("regional_manager", []):
+            tl_nodes = []
+            for tlid in tl_by_rm.get(rm["id"], []):
+                tl = umap.get(tlid, {"id": tlid, "name": tlid})
+                tl_nodes.append({"id": tlid, "name": tl.get("name"),
+                                 "distributors": [_dist_node(x) for x in dist_by_tl.get(tlid, [])]})
+            tree.append({"id": rm["id"], "name": rm.get("name"), "team_leaders": tl_nodes})
+
+        # team leaders not under any RM
+        assigned_tl_ids = {t for lst in tl_by_rm.values() for t in lst}
+        loose_tls = []
+        for tl in by_role.get("team_leader", []):
+            if tl["id"] not in assigned_tl_ids:
+                loose_tls.append({"id": tl["id"], "name": tl.get("name"),
+                                  "distributors": [_dist_node(x) for x in dist_by_tl.get(tl["id"], [])]})
+
+        # distributors not under any TL
+        loose_dists = [_dist_node(d["id"]) for d in distributors if d["id"] not in assigned_dist_ids]
+
+        return {
+            "tree": tree,
+            "unassigned_team_leaders": loose_tls,
+            "unassigned_distributors": loose_dists,
+            "all": {
+                "regional_managers": by_role.get("regional_manager", []),
+                "team_leaders": by_role.get("team_leader", []),
+                "salespersons": by_role.get("salesperson", []),
+                "distributors": [{"id": d["id"], "name": d.get("name")} for d in distributors],
+            },
+        }
+
     async def list_rm_tl_assignments(regional_manager_id: Optional[str] = None, user: dict = Depends(get_current_user)):
         q: Dict[str, Any] = {}
         if regional_manager_id:
@@ -3038,6 +3163,21 @@ def build_dms_router(db, get_current_user):
         await db.users.update_one({"id": uid}, {"$set": upd})
         return {"ok": True}
 
+    @router.delete("/owner/users/{uid}")
+    async def owner_delete_user(uid: str, user: dict = Depends(owner_only)):
+        if uid == user["id"]:
+            raise HTTPException(status_code=400, detail="You cannot delete your own account")
+        target = await db.users.find_one({"id": uid, "tenant_id": DMS_TENANT_ID}, {"_id": 0})
+        if not target:
+            raise HTTPException(status_code=404, detail="User not found")
+        if target.get("role") == "owner":
+            raise HTTPException(status_code=400, detail="Cannot delete the company owner account")
+        await db.users.delete_one({"id": uid})
+        # unlink from distributor/retailer profile if any (keep the business entity)
+        await db.dms_distributors.update_many({"user_id": uid}, {"$set": {"user_id": None}})
+        await db.dms_retailers.update_many({"user_id": uid}, {"$set": {"user_id": None}})
+        return {"ok": True, "deleted": uid}
+
     @router.post("/owner/users/{uid}/reset-password")
     async def owner_reset_password(uid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
         import bcrypt
@@ -3649,37 +3789,10 @@ def build_dms_router(db, get_current_user):
         header["lines"] = lines
         return _clean(header)
 
-    @router.post("/price-circulars")
-    async def create_price_circular(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
-        """Create a new Price Circular batch.
-
-        Body:
-          title            : str  (required)
-          effective_date   : YYYY-MM-DD (required)
-          notes            : str  (optional)
-          lines            : list of { product_id, mrp, dlp, distributor_margin_pct,
-                                       cash_coupon, foc_benefits, monthly_gift, trade_discount }
-                             (at least 1 required)
-
-        Behaviour:
-          - Deactivates ALL previous circular lines for the products included here.
-          - Marks previous circular headers as inactive if they had lines only for these products.
-          - Creates a new batch (auto batch_no = max+1).
-          - Auto-updates product.previous_price = old DLP, product.unit_price = new DLP.
-          - Closes any open dms_price_batches row and opens a new one — so old-vs-new price
-            still works with existing order/browse logic.
-          - Never deletes historical lines — full history preserved.
-        """
-        title = (body.get("title") or "").strip()
-        eff_date = (body.get("effective_date") or "").strip()
-        lines = body.get("lines") or []
-        if not title:
-            raise HTTPException(status_code=400, detail="title required")
-        if not eff_date:
-            raise HTTPException(status_code=400, detail="effective_date required")
-        if not lines:
-            raise HTTPException(status_code=400, detail="At least one line required")
-
+    async def _publish_circular(title: str, eff_date: str, notes: str,
+                                lines: List[Dict[str, Any]], created_by: str) -> Dict[str, Any]:
+        """Core Price Circular publish logic — shared by the API endpoint and the
+        file importer. Returns the header doc (with lines_count)."""
         # next batch number
         latest = await db.dms_price_circulars.find_one(
             {"kind": {"$ne": "line"}},
@@ -3697,8 +3810,8 @@ def build_dms_router(db, get_current_user):
             "batch_no": next_batch,
             "batch_label": f"Batch {next_batch} — {title}",
             "is_active": True,
-            "notes": (body.get("notes") or "").strip(),
-            "created_by": user.get("id"),
+            "notes": (notes or "").strip(),
+            "created_by": created_by,
             "created_at": _now(),
         }
         await db.dms_price_circulars.insert_one(header_doc)
@@ -3784,6 +3897,152 @@ def build_dms_router(db, get_current_user):
 
         header_doc["lines_count"] = inserted_lines
         return _clean(header_doc)
+
+    @router.post("/price-circulars")
+    async def create_price_circular(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
+        """Create a new Price Circular batch. See _publish_circular for behaviour.
+
+        Body: title, effective_date, notes, lines[{product_id, mrp, dlp,
+               distributor_margin_pct, cash_coupon, foc_benefits, monthly_gift, trade_discount}]
+        """
+        title = (body.get("title") or "").strip()
+        eff_date = (body.get("effective_date") or "").strip()
+        lines = body.get("lines") or []
+        if not title:
+            raise HTTPException(status_code=400, detail="title required")
+        if not eff_date:
+            raise HTTPException(status_code=400, detail="effective_date required")
+        if not lines:
+            raise HTTPException(status_code=400, detail="At least one line required")
+        return await _publish_circular(title, eff_date, (body.get("notes") or ""),
+                                       lines, user.get("id"))
+
+    # =========================================================================
+    # SMART PRICE-LIST IMPORT (Excel / CSV / PDF) — GO OIL circular format
+    # =========================================================================
+    @router.get("/owner/products/import-template")
+    async def products_import_template(user: dict = Depends(owner_or_accountant)):
+        from fastapi.responses import Response
+        import dms_price_import
+        data = dms_price_import.build_template_xlsx()
+        return Response(
+            content=data,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": 'attachment; filename="GO_OIL_price_list_template.xlsx"'},
+        )
+
+    @router.post("/owner/products/import-circular")
+    async def products_import_circular(
+        file: UploadFile = File(...),
+        title: Optional[str] = Form(None),
+        effective_date: Optional[str] = Form(None),
+        user: dict = Depends(owner_or_accountant),
+    ):
+        """Import products + pricing from a GO OIL price-list file (xlsx/csv/pdf).
+
+        Categories appear as full-width header rows; each product row carries
+        MRP, DLP, distributor margin, cash coupon, FOC, monthly gift, trade
+        discount. Creates/updates products and publishes a new Price Circular.
+        """
+        import dms_price_import
+        raw = await file.read()
+        try:
+            parsed = dms_price_import.parse_price_list(raw, file.filename or "")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not read the file: {e}")
+
+        if parsed["product_count"] == 0:
+            msg = " ".join(parsed.get("warnings") or []) or \
+                "No product rows detected. Make sure the header row has MATERIAL DESCRIPTION and DLP/MRP columns."
+            raise HTTPException(status_code=400, detail=msg)
+
+        existing_skus: set = set()
+        async for p in db.dms_products.find({}, {"_id": 0, "sku_code": 1}):
+            if p.get("sku_code"):
+                existing_skus.add(p["sku_code"])
+        cats = {c["name"].strip().lower(): c["id"]
+                async for c in db.dms_categories.find({}, {"_id": 0, "name": 1, "id": 1})}
+
+        current_cat_id: Optional[str] = None
+        created, updated = 0, 0
+        circular_lines: List[Dict[str, Any]] = []
+
+        async def _ensure_cat(name: str) -> str:
+            key = name.strip().lower()
+            cid = cats.get(key)
+            if not cid:
+                cid = _nid("cat")
+                await db.dms_categories.insert_one(
+                    {"id": cid, "name": name.strip(), "created_at": _now()})
+                cats[key] = cid
+            return cid
+
+        for it in parsed["items"]:
+            if it["type"] == "category":
+                current_cat_id = await _ensure_cat(it["name"])
+                continue
+            if not current_cat_id:
+                current_cat_id = await _ensure_cat("Uncategorized")
+
+            md = it["material_description"]
+            grade = it["grade_specs"]
+            pack = it["pack_size"]
+            name = " ".join(x for x in [md, grade, pack] if x).strip() or md
+            dlp = float(it["dlp"] or 0)
+
+            existing = await db.dms_products.find_one({
+                "material_description": md, "grade_specs": grade,
+                "pack_size": pack, "category_id": current_cat_id}, {"_id": 0})
+            if existing:
+                pid = existing["id"]
+                await db.dms_products.update_one({"id": pid}, {"$set": {
+                    "name": name, "material_description": md, "grade_specs": grade,
+                    "pack_size": pack, "mrp": _round(it.get("mrp") or 0),
+                    "active": True, "updated_at": _now()}})
+                updated += 1
+            else:
+                pid = _nid("prd")
+                sku = dms_price_import.make_sku(md, pack, existing_skus)
+                await db.dms_products.insert_one({
+                    "id": pid, "name": name, "category_id": current_cat_id,
+                    "sku_code": sku, "material_description": md,
+                    "grade_specs": grade, "pack_size": pack, "description": "",
+                    "box_qty": 1, "unit_price": _round(dlp), "previous_price": None,
+                    "mrp": _round(it.get("mrp") or 0), "hsn": "", "gst_pct": 0.0,
+                    "coupons_per_box": 100, "points_value": 10,
+                    "active": True, "created_at": _now(),
+                })
+                await db.dms_price_batches.insert_one({
+                    "id": _nid("pb"), "product_id": pid, "price": _round(dlp),
+                    "from_date": _now(), "to_date": None, "created_at": _now()})
+                created += 1
+
+            circular_lines.append({
+                "product_id": pid, "mrp": it["mrp"], "dlp": dlp,
+                "distributor_margin_pct": it["distributor_margin_pct"],
+                "cash_coupon": it["cash_coupon"], "foc_benefits": it["foc_benefits"],
+                "monthly_gift": it["monthly_gift"],
+                "trade_discount": str(it.get("trade_discount") or ""),
+            })
+
+        circular = None
+        if circular_lines:
+            ttl = (title or "").strip() or f"Imported — {(file.filename or 'price list')}"
+            eff = (effective_date or "").strip() or _now()[:10]
+            circular = await _publish_circular(
+                ttl, eff, "Imported via file upload", circular_lines, user.get("id"))
+
+        return {
+            "ok": True,
+            "created": created,
+            "updated": updated,
+            "categories": parsed["category_count"],
+            "products_parsed": parsed["product_count"],
+            "source": parsed["source"],
+            "circular_id": (circular or {}).get("id"),
+            "circular_batch_no": (circular or {}).get("batch_no"),
+            "warnings": parsed.get("warnings", []),
+        }
 
     @router.get("/products/{pid}/circular-history")
     async def product_circular_history(pid: str, user: dict = Depends(get_current_user)):

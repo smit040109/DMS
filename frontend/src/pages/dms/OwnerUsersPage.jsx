@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Plus, KeyRound, LogIn, Search, Users, ShieldCheck } from "lucide-react";
+import { Plus, KeyRound, LogIn, Search, Users, ShieldCheck, Trash2 } from "lucide-react";
 
 const ROLE_OPTIONS = [
   { value: "owner_accountant",       label: "Owner Accountant" },
@@ -206,6 +206,20 @@ export function OwnerUsersPage() {
                       >
                         <LogIn size={14} className="mr-1" />
                         {busyId === u.id ? "Opening…" : "Login As"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isMe || u.role === "owner"}
+                        onClick={async () => {
+                          if (!window.confirm(`Delete user "${u.name}" (${u.email})? This cannot be undone.`)) return;
+                          try { await dms.ownerDeleteUser(u.id); toast.success("User deleted"); refresh(); }
+                          catch (e) { toast.error(e?.response?.data?.detail || "Delete failed"); }
+                        }}
+                        className="text-rose-600 border-rose-200 hover:bg-rose-50"
+                        data-testid={`delete-user-${u.email}`}
+                      >
+                        <Trash2 size={14} className="mr-1" /> Delete
                       </Button>
                     </div>
                   </TableCell>

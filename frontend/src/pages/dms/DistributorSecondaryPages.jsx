@@ -12,8 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Plus, ChevronRight, Store, Truck, Receipt, IndianRupee, MapPin, Printer, FileText } from "lucide-react";
+import { Plus, ChevronRight, Store, Truck, Receipt, IndianRupee, MapPin, Printer, FileText, Trash2 } from "lucide-react";
 import LocationDocumentsBlock from "./LocationDocumentsBlock";
+import { DocumentsGallery } from "./OwnerPages";
 
 // Distributor: retailers list
 export function DistRetailersPage() {
@@ -39,7 +40,20 @@ export function DistRetailersPage() {
             <div className="text-xs text-slate-500 mt-0.5">{r.phone}</div>
             <div className="text-xs text-slate-500 truncate">{r.address}</div>
             {r.gps_lat && <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1"><MapPin size={10} /> {r.gps_lat.toFixed(4)}, {r.gps_lng.toFixed(4)}</div>}
-            <div className="mt-3 text-[#a67c00] text-xs font-medium">Manage → <ChevronRight size={12} className="inline" /></div>
+            <div className="mt-3 flex items-center justify-between">
+              <div className="text-[#a67c00] text-xs font-medium">Manage → <ChevronRight size={12} className="inline" /></div>
+              <button
+                onClick={async (e) => {
+                  e.stopPropagation();
+                  if (!window.confirm(`Delete retailer "${r.name}"? This also removes their login.`)) return;
+                  try { await dms.deleteRetailer(r.id); toast.success("Deleted"); load(); }
+                  catch (err) { toast.error(err.response?.data?.detail || "Delete failed"); }
+                }}
+                className="text-rose-500 hover:text-rose-700 p-1 rounded hover:bg-rose-50"
+                title="Delete retailer" data-testid={`del-ret-${r.id}`}>
+                <Trash2 size={15} />
+              </button>
+            </div>
           </Card>
         ))}
       </div>
@@ -80,6 +94,7 @@ export function DistRetailersPage() {
 
 export function DistRetailerDetailPage() {
   const { id } = useParams();
+  const nav = useNavigate();
   const [r, setR] = useState(null);
   const [tab, setTab] = useState("visibility");
   const [vis, setVis] = useState([]);
@@ -91,10 +106,16 @@ export function DistRetailerDetailPage() {
   useEffect(() => { load(); }, [id]);
   const toggleVis = async (pid, v) => { await dms.setRetVisibility(id, { product_id: pid, visible: v }); setVis(vis.map(x => x.product_id === pid ? { ...x, visible: v } : x)); };
   const changeMode = async (m) => { await dms.setRetMode(id, { mode: m }); setMode(m); toast.success(`Mode: ${m === "box_pcs" ? "Box + PCS" : "Box only"}`); };
+  const del = async () => {
+    if (!window.confirm(`Delete retailer "${r.name}"? This also removes their login.`)) return;
+    try { await dms.deleteRetailer(id); toast.success("Retailer deleted"); nav("/dms/distributor/retailers"); }
+    catch (e) { toast.error(e.response?.data?.detail || "Delete failed"); }
+  };
   if (!r) return <div className="p-8 text-center text-slate-500">Loading…</div>;
   return (
     <div>
-      <PageHeader title={r.name} subtitle={`${r.phone} • ${r.address}`} back="/dms/distributor/retailers" />
+      <PageHeader title={r.name} subtitle={`${r.phone} • ${r.address}`} back="/dms/distributor/retailers"
+        action={<Button variant="outline" size="sm" onClick={del} className="text-rose-600 border-rose-200 hover:bg-rose-50" data-testid="delete-retailer-btn"><Trash2 size={14} className="mr-1" /> Delete</Button>} />
       <div className="flex gap-2 mb-4 border-b border-slate-200">
         {[{ k: "visibility", l: "Product Visibility" }, { k: "mode", l: "Selling Mode" }, { k: "info", l: "Details" }].map(t => (
           <button key={t.k} onClick={() => setTab(t.k)} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${tab === t.k ? "border-[#a67c00] text-[#a67c00]" : "border-transparent text-slate-500 hover:text-slate-700"}`}>{t.l}</button>
@@ -129,6 +150,9 @@ export function DistRetailerDetailPage() {
             {[["Name", r.name], ["Phone", r.phone], ["Address", r.address], ["Region", r.region], ["GSTIN", r.kyc?.gstin], ["Shop License", r.kyc?.shop_license], ["Credit Limit", inr(r.credit_limit)], ["GPS", r.gps_lat ? `${r.gps_lat.toFixed(4)}, ${r.gps_lng.toFixed(4)}` : "—"]].map(([k, v]) => (
               <div key={k} className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">{k}</span><span className="text-slate-900 font-medium">{v || "—"}</span></div>
             ))}
+          </div>
+          <div className="mt-4">
+            <DocumentsGallery documents={r.documents || []} locationLink={r.location_link} lat={r.gps_lat} lng={r.gps_lng} />
           </div>
         </Card>
       )}

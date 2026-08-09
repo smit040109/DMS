@@ -2113,6 +2113,8 @@ def build_coupons_router(db, get_current_user, notify=None):
                 "status": "claimed",
                 "claimed_by_user_id": user["id"],
                 "claimed_by_user_name": user.get("name") or user.get("email"),
+                "claimed_by_role": user.get("role"),
+                "scan_channel": "salesperson_scan",
                 "claim_timestamp": _now(),
                 "claim_ip": meta.get("ip_address"),
                 "claim_gps_lat": meta.get("gps_lat"),
@@ -2337,6 +2339,7 @@ def build_coupons_router(db, get_current_user, notify=None):
                 "status": "claimed",
                 "claimed_by_user_id": user["id"],
                 "claimed_by_user_name": user.get("name") or user.get("email"),
+                "claimed_by_role": user.get("role"),
                 "claim_timestamp": _now(),
                 "claim_ip": meta.get("ip_address"),
                 "claim_gps_lat": meta.get("gps_lat"),
@@ -2377,9 +2380,196 @@ def build_coupons_router(db, get_current_user, notify=None):
                             else f"{cp['coupon_value']:g} points credited to your Reward Wallet")}
 
     # ─────────────────────────────────────────────────────────────────────────
-    # REDEMPTIONS — Cash & Reward
+    # DISTRIBUTOR SELF-SCAN  (coupon credited to distributor's OWN wallet)
     # ─────────────────────────────────────────────────────────────────────────
-    @router.post("/redemptions")
+    distributor_only = _guard("distributor")
+
+    async def _my_distributor(user: dict) -> Dict[str, Any]:
+        if user.get("role") != "distributor":
+            raise HTTPException(403, "Distributor only")
+        did = user.get("distributor_id")
+        dist = None
+        if did:
+            dist = _clean(await db.dms_distributors.find_one({"id": did}))
+        if not dist:
+            dist = _clean(await db.dms_distributors.find_one({"user_id": user["id"]}))
+        if not dist:
+            raise HTTPException(400, "Distributor profile not linked to your user")
+        return dist
+
+    async def _my_distributor_opt(user: dict) -> Optional[Dict[str, Any]]:
+        if user.get("role") != "distributor":
+            return None
+        did = user.get("distributor_id")
+        dist = None
+        if did:
+            dist = _clean(await db.dms_distributors.find_one({"id": did}))
+        if not dist:
+            dist = _clean(await db.dms_distributors.find_one({"user_id": user["id"]}))
+        return dist
+
+    async def _dist_wallet_balance(distributor_id: str, wallet_type: str) -> float:
+        pipeline = [
+            {"$match": {"distributor_id": distributor_id, "wallet_type": wallet_type}},
+            {"$group": {"_id": None, "bal": {"$sum": "$amount"}}},
+        ]
+        rows = await db.dms_v2_dist_wallet_txns.aggregate(pipeline).to_list(1)
+        return _round(rows[0]["bal"]) if rows else 0.0
+
+    @router.get("/distributor/wallet")
+    async def distributor_wallet(user: dict = Depends(get_current_user)):
+        dist = await _my_distributor_opt(user)
+        if not dist:
+            return {"distributor_id": None, "distributor_name": None,
+                    "cash_wallet": {"balance": 0}, "reward_wallet": {"balance": 0}}
+        return {
+            "distributor_id": dist["id"], "distributor_name": dist.get("name"),
+            "cash_wallet": {"balance": await _dist_wallet_balance(dist["id"], "cash")},
+            "reward_wallet": {"balance": await _dist_wallet_balance(dist["id"], "reward")},
+        }
+
+    @router.get("/distributor/transactions")
+    async def distributor_transactions(limit: int = Query(200, ge=1, le=1000),
+                                       user: dict = Depends(get_current_user)):
+        dist = await _my_distributor_opt(user)
+        if not dist:
+            return {"data": [], "count": 0}
+        docs = await db.dms_v2_dist_wallet_txns.find(
+            {"distributor_id": dist["id"]}, {"_id": 0}
+        ).sort("at", -1).limit(limit).to_list(limit)
+        return {"data": docs, "count": len(docs)}
+
+    @router.post("/distributor/scan/preview")
+    async def distributor_scan_preview(request: Request, body: Dict[str, Any] = Body(...),
+                                       user: dict = Depends(distributor_only)):
+        dist = await _my_distributor(user)
+        meta = _client_meta(request, body)
+        cp, fraud_reason, box_number, _ = await _scan_resolve(
+            body.get("qr_payload"), body.get("coupon_code"), {}, dist["id"])
+        preview = _scan_preview_body(user, None, dist, cp, fraud_reason, box_number, None)
+        preview.update({"ip_address": meta.get("ip_address"),
+                        "gps_lat": meta.get("gps_lat"), "gps_lng": meta.get("gps_lng"),
+                        "device_id": meta.get("device_id"), "timestamp": _now()})
+        return {"ok": not preview["fraud"], "fraud": preview["fraud"],
+                "fraud_reason": fraud_reason, "preview": preview}
+
+    @router.post("/distributor/scan")
+    async def distributor_scan_submit(request: Request, body: Dict[str, Any] = Body(...),
+                                      user: dict = Depends(distributor_only)):
+        dist = await _my_distributor(user)
+        meta = _client_meta(request, body)
+        cp, fraud_reason, box_number, _ = await _scan_resolve(
+            body.get("qr_payload"), body.get("coupon_code"), {}, dist["id"])
+        if fraud_reason:
+            await _log_fraud(fraud_reason, (cp or {}).get("visible_serial") or "unknown",
+                             user, None, dist["id"], request=request, body=body,
+                             extra={"box_number": box_number, "channel": "distributor_self_scan"})
+            raise HTTPException(400, f"Coupon rejected — {fraud_reason.replace('_', ' ')}")
+
+        upd = await db.dms_v2_coupons.update_one(
+            {"id": cp["id"], "status": "unused"},
+            {"$set": {
+                "status": "claimed",
+                "claimed_by_user_id": user["id"],
+                "claimed_by_user_name": user.get("name") or user.get("email"),
+                "claimed_by_role": user.get("role"),
+                "claim_timestamp": _now(),
+                "claim_ip": meta.get("ip_address"),
+                "claim_gps_lat": meta.get("gps_lat"),
+                "claim_gps_lng": meta.get("gps_lng"),
+                "claim_device_id": meta.get("device_id"),
+                "distributor_id": dist["id"], "distributor_name": dist.get("name"),
+                "scan_box_number": box_number, "scan_channel": "distributor_self_scan",
+                "updated_at": _now(),
+            }})
+        if upd.modified_count != 1:
+            raise HTTPException(400, "Coupon has just been claimed by another scan")
+
+        wallet_type = "cash" if cp["coupon_type"] == "cash" else "reward"
+        tx_id = _nid("dwtx")
+        await db.dms_v2_dist_wallet_txns.insert_one({
+            "id": tx_id, "distributor_id": dist["id"], "distributor_name": dist.get("name"),
+            "wallet_type": wallet_type, "kind": "credit_coupon",
+            "amount": _round(cp["coupon_value"]), "coupon_id": cp["id"],
+            "coupon_code": cp["coupon_code"], "batch_id": cp["batch_id"],
+            "created_by": user["id"], "created_by_name": user.get("name"),
+            "created_by_role": user.get("role"), "at": _now(),
+        })
+        await db.dms_v2_coupons.update_one({"id": cp["id"]},
+            {"$set": {"wallet_transaction_id": tx_id, "updated_at": _now()}})
+        await _audit(user, "coupon.claimed", "coupon", cp["id"],
+                     {"coupon_code": cp["coupon_code"], "distributor_id": dist["id"],
+                      "channel": "distributor_self_scan", "box_number": box_number,
+                      "wallet_transaction_id": tx_id})
+        new_bal = await _dist_wallet_balance(dist["id"], wallet_type)
+        return {"ok": True, "fraud": False, "box_number": box_number,
+                "coupon_serial": cp.get("visible_serial"),
+                "coupon_type": cp["coupon_type"], "coupon_value": cp["coupon_value"],
+                "wallet_type": wallet_type, "new_balance": new_bal,
+                "message": (f"₹{cp['coupon_value']:g} credited to your Cash Wallet"
+                            if wallet_type == "cash"
+                            else f"{cp['coupon_value']:g} points credited to your Reward Wallet")}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # COUPON SCAN AUDIT — owner view of every scan with scanner id + designation
+    # ─────────────────────────────────────────────────────────────────────────
+    @router.get("/audit")
+    async def coupon_scan_audit(
+        limit: int = Query(300, ge=1, le=2000),
+        channel: Optional[str] = Query(None),
+        user: dict = Depends(owner_or_accountant),
+    ):
+        _ROLE_LABEL = {
+            "distributor": "Distributor", "retailer": "Retailer",
+            "salesperson": "Salesperson", "team_leader": "Team Leader",
+            "regional_manager": "Regional Manager", "owner": "Owner",
+            "owner_accountant": "Owner Accountant", "super_admin": "Super Admin",
+        }
+        q: Dict[str, Any] = {"claim_timestamp": {"$ne": None},
+                             "claimed_by_user_id": {"$ne": None}}
+        if channel:
+            q["scan_channel"] = channel
+        docs = await db.dms_v2_coupons.find(
+            q, {"_id": 0, "id": 1, "visible_serial": 1, "coupon_code": 1,
+                "coupon_type": 1, "coupon_value": 1, "status": 1,
+                "claimed_by_user_id": 1, "claimed_by_user_name": 1, "claimed_by_role": 1,
+                "scan_channel": 1, "claim_timestamp": 1, "retailer_id": 1,
+                "retailer_name": 1, "distributor_id": 1, "distributor_name": 1,
+                "batch_label": 1, "claim_gps_lat": 1, "claim_gps_lng": 1}
+        ).sort("claim_timestamp", -1).limit(limit).to_list(limit)
+
+        # resolve missing designations by user lookup (older records)
+        need_ids = list({d.get("claimed_by_user_id") for d in docs
+                         if not d.get("claimed_by_role") and d.get("claimed_by_user_id")})
+        role_map: Dict[str, str] = {}
+        if need_ids:
+            urows = await db.users.find({"id": {"$in": need_ids}},
+                                        {"_id": 0, "id": 1, "role": 1}).to_list(1000)
+            role_map = {u["id"]: u.get("role") for u in urows}
+
+        out = []
+        for d in docs:
+            role = d.get("claimed_by_role") or role_map.get(d.get("claimed_by_user_id"), "")
+            out.append({
+                "coupon_id": d.get("id"),
+                "serial": d.get("visible_serial") or d.get("coupon_code"),
+                "coupon_type": d.get("coupon_type"),
+                "coupon_value": d.get("coupon_value"),
+                "status": d.get("status"),
+                "scanned_by_user_id": d.get("claimed_by_user_id"),
+                "scanned_by_name": d.get("claimed_by_user_name"),
+                "designation": _ROLE_LABEL.get(role, role or "—"),
+                "role": role,
+                "channel": d.get("scan_channel"),
+                "retailer_name": d.get("retailer_name"),
+                "distributor_name": d.get("distributor_name"),
+                "batch_label": d.get("batch_label"),
+                "scanned_at": d.get("claim_timestamp"),
+                "gps_lat": d.get("claim_gps_lat"),
+                "gps_lng": d.get("claim_gps_lng"),
+            })
+        return {"data": out, "count": len(out)}
+
     async def create_redemption(body: Dict[str, Any] = Body(...),
                                 user: dict = Depends(get_current_user)):
         """

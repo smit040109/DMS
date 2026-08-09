@@ -27,6 +27,7 @@ export const dms = {
   createDistributor: (body) => api.post("/dms/distributors", body).then(r => r.data),
   getDistributor: (id) => api.get(`/dms/distributors/${id}`).then(r => r.data),
   updateDistributor: (id, body) => api.put(`/dms/distributors/${id}`, body).then(r => r.data),
+  deleteDistributor: (id) => api.delete(`/dms/distributors/${id}`).then(r => r.data),
   getDistVisibility: (id) => api.get(`/dms/distributors/${id}/visibility`).then(r => r.data),
   setDistVisibility: (id, body) => api.put(`/dms/distributors/${id}/visibility`, body).then(r => r.data),
 
@@ -60,6 +61,7 @@ export const dms = {
   createRetailer: (body) => api.post("/dms/retailers", body).then(r => r.data),
   getRetailer: (id) => api.get(`/dms/retailers/${id}`).then(r => r.data),
   updateRetailer: (id, body) => api.put(`/dms/retailers/${id}`, body).then(r => r.data),
+  deleteRetailer: (id) => api.delete(`/dms/retailers/${id}`).then(r => r.data),
   getRetVisibility: (id) => api.get(`/dms/retailers/${id}/visibility`).then(r => r.data),
   setRetVisibility: (id, body) => api.put(`/dms/retailers/${id}/visibility`, body).then(r => r.data),
   getRetMode: (id) => api.get(`/dms/retailers/${id}/selling-mode`).then(r => r.data),
@@ -124,6 +126,8 @@ export const dms = {
   ownerCreateUser: (body) => api.post("/dms/owner/users", body).then(r => r.data),
   ownerUpdateUser: (uid, body) => api.patch(`/dms/owner/users/${uid}`, body).then(r => r.data),
   ownerResetPassword: (uid, new_password) => api.post(`/dms/owner/users/${uid}/reset-password`, { new_password }).then(r => r.data),
+  ownerDeleteUser: (uid) => api.delete(`/dms/owner/users/${uid}`).then(r => r.data),
+  ownerHierarchy: () => api.get("/dms/owner/hierarchy").then(r => r.data),
   ownerImpersonate: (uid) => api.post(`/dms/owner/impersonate/${uid}`).then(r => r.data),
 
   // live tracking (Phase 2 + 3)
@@ -237,6 +241,13 @@ export const dms = {
   cpnDistSummary: () => api.get("/dms/coupons/dist/summary").then(r => r.data),
   cpnDistCreditNotes: () => api.get("/dms/coupons/dist/credit-notes").then(r => r.data),
   cpnDistDispatchAdvices: () => api.get("/dms/coupons/dist/dispatch-advices").then(r => r.data),
+  // Distributor self-scan (credits distributor's own wallet)
+  cpnDistScanPreview: (body) => api.post("/dms/coupons/distributor/scan/preview", body).then(r => r.data),
+  cpnDistScan: (body) => api.post("/dms/coupons/distributor/scan", body).then(r => r.data),
+  cpnDistWallet: () => api.get("/dms/coupons/distributor/wallet").then(r => r.data),
+  cpnDistTransactions: () => api.get("/dms/coupons/distributor/transactions").then(r => r.data),
+  // Owner — scan audit (who scanned, designation)
+  cpnScanAudit: (params = {}) => api.get("/dms/coupons/audit", { params }).then(r => r.data),
   // Owner — CN / DA / Audit / Reports
   cpnCreditNotes: () => api.get("/dms/coupons/credit-notes").then(r => r.data),
   cpnDispatchAdvices: () => api.get("/dms/coupons/dispatch-advices").then(r => r.data),
@@ -346,6 +357,18 @@ export const dms = {
   importProducts: (file) => {
     const fd = new FormData(); fd.append("file", file);
     return api.post("/dms/owner/products/import", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
+  },
+  importPriceCircular: (file, title) => {
+    const fd = new FormData(); fd.append("file", file);
+    if (title) fd.append("title", title);
+    return api.post("/dms/owner/products/import-circular", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
+  },
+  importTemplate: async () => {
+    const r = await api.get("/dms/owner/products/import-template", { responseType: "blob" });
+    const url = URL.createObjectURL(new Blob([r.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+    const a = document.createElement("a"); a.href = url;
+    a.download = "GO_OIL_price_list_template.xlsx";
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   },
   // Item 10: Sale Bill Import + Payment Import + templates
   importSaleBills: (file) => {

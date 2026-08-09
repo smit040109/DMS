@@ -1,738 +1,639 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for GO OIL DMS - NEW Coupon/Box Enhancements
-Tests: Box Stats, Box Label PDF, Box Scan History, Fraud Alert Notifications, Regression
+GO OIL DMS — Backend API Testing for NEW endpoints (CONTINUATION v3)
+
+Tests:
+1. SMART PRICE-LIST IMPORT
+   - GET /api/dms/owner/products/import-template
+   - POST /api/dms/owner/products/import-circular
+2. COUPON SCANNING + AUDIT
+   - GET /api/dms/coupons/scan-permission
+   - PUT /api/dms/coupons/scan-permission
+   - GET /api/dms/coupons/distributor/wallet
+   - POST /api/dms/coupons/distributor/scan
+   - GET /api/dms/coupons/audit
+3. DELETE ENDPOINTS
+   - DELETE /api/dms/distributors/{did}
+   - DELETE /api/dms/retailers/{rid}
+   - DELETE /api/dms/owner/users/{uid}
+4. HIERARCHY
+   - GET /api/dms/owner/hierarchy
 """
 
 import requests
-import json
-from typing import Dict, Any, Optional
+import sys
+import io
+from openpyxl import Workbook
 
-# Configuration
-BASE_URL = "http://localhost:8001"
+# Base URL from frontend/.env
+BASE_URL = "https://2025d85f-a2d8-4129-a13b-26acc1a60644.preview.emergentagent.com"
 API_BASE = f"{BASE_URL}/api"
 
-# Test credentials (password: GoOil@2026)
+# Test credentials from test_credentials.md
 CREDENTIALS = {
     "owner": {"email": "owner@gooil.com", "password": "GoOil@2026"},
-    "salesperson": {"email": "salesperson@gooil.com", "password": "GoOil@2026"},
-    "retailer1": {"email": "retailer1@gooil.com", "password": "GoOil@2026"},
     "distributor1": {"email": "distributor1@gooil.com", "password": "GoOil@2026"},
-    "distributor2": {"email": "distributor2@gooil.com", "password": "GoOil@2026"},
+    "retailer1": {"email": "retailer1@gooil.com", "password": "GoOil@2026"},
+    "salesperson": {"email": "salesperson@gooil.com", "password": "GoOil@2026"},
 }
 
-# Global tokens storage
-tokens: Dict[str, str] = {}
-
-# Test results tracking
-test_results = {
-    "passed": 0,
-    "failed": 0,
-    "tests": []
-}
-
-def log_test(test_name: str, passed: bool, details: str = ""):
-    """Log test result"""
-    status = "✅ PASS" if passed else "❌ FAIL"
-    print(f"{status}: {test_name}")
-    if details:
-        print(f"  {details}")
-    
-    test_results["tests"].append({
-        "name": test_name,
-        "passed": passed,
-        "details": details
-    })
-    
-    if passed:
-        test_results["passed"] += 1
-    else:
-        test_results["failed"] += 1
-
-def login(role: str) -> Optional[str]:
-    """Login and return token"""
-    if role in tokens:
-        return tokens[role]
-    
-    creds = CREDENTIALS.get(role)
-    if not creds:
-        print(f"❌ No credentials for role: {role}")
+def login(email, password):
+    """Login and return JWT token"""
+    resp = requests.post(f"{API_BASE}/auth/login", json={"email": email, "password": password})
+    if resp.status_code != 200:
+        print(f"❌ Login failed for {email}: {resp.status_code} {resp.text}")
         return None
+    data = resp.json()
+    return data.get("token")
+
+def headers(token):
+    """Return authorization headers"""
+    return {"Authorization": f"Bearer {token}"}
+
+def build_test_xlsx():
+    """Build a small test xlsx file with GO OIL price list format"""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Price List"
     
-    try:
-        resp = requests.post(f"{API_BASE}/auth/login", json=creds, timeout=10)
-        if resp.status_code == 200:
-            data = resp.json()
-            # Token is in 'token' field (not 'access_token')
-            token = data.get("token") or data.get("access_token")
-            if token:
-                tokens[role] = token
-                print(f"✅ Login successful: {role} ({creds['email']})")
-                return token
-            else:
-                print(f"❌ Login failed for {role}: No token in response")
-                return None
-        else:
-            print(f"❌ Login failed for {role}: {resp.status_code} - {resp.text[:200]}")
-            return None
-    except Exception as e:
-        print(f"❌ Login exception for {role}: {e}")
-        return None
+    # Header row
+    headers = ["MATERIAL DESCRIPTION", "GRADE/ SPECS", "PACK SIZE", "MRP", "DLP",
+               "DISTRIBUTOR MARGINE", "CASH COUPON", "FOC BENEFITS", "MONTHLY GIFT", "TRADE DISCOUNT"]
+    ws.append(headers)
+    
+    # Category row (full-width)
+    ws.append(["TEST CATEGORY A"])
+    
+    # Product rows
+    ws.append(["PROD ONE", "SN", "1 ltr", 500, 350, "9%", "10", "", "AVAILABLE", ""])
+    ws.append(["PROD TWO", "SN", "2 ltr", 800, 600, "9%", "20", "", "AVAILABLE", ""])
+    
+    # Another category
+    ws.append(["TEST CATEGORY B"])
+    ws.append(["PROD THREE", "GL5", "500 ml", 300, 200, "9%", "", "FOC 9+1", "", ""])
+    
+    # Save to bytes
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
 
-def api_get(endpoint: str, token: str, params: Dict = None) -> requests.Response:
-    """Make GET request with auth"""
-    headers = {"Authorization": f"Bearer {token}"}
-    return requests.get(f"{API_BASE}{endpoint}", headers=headers, params=params, timeout=10)
-
-def api_post(endpoint: str, token: str, data: Dict = None) -> requests.Response:
-    """Make POST request with auth"""
-    headers = {"Authorization": f"Bearer {token}"}
-    return requests.post(f"{API_BASE}{endpoint}", headers=headers, json=data, timeout=10)
-
-def api_put(endpoint: str, token: str, data: Dict = None) -> requests.Response:
-    """Make PUT request with auth"""
-    headers = {"Authorization": f"Bearer {token}"}
-    return requests.put(f"{API_BASE}{endpoint}", headers=headers, json=data, timeout=10)
-
-# ============================================================================
-# TEST 1: BOX STATS + ROUTE ORDERING
-# ============================================================================
-def test_1_box_stats_and_route_ordering():
-    """Test box stats endpoint and ensure route ordering doesn't shadow real box IDs"""
+def test_price_import():
+    """Test SMART PRICE-LIST IMPORT endpoints"""
     print("\n" + "="*80)
-    print("TEST 1: BOX STATS + ROUTE ORDERING")
+    print("TEST 1: SMART PRICE-LIST IMPORT")
     print("="*80)
     
-    token = login("owner")
-    if not token:
-        log_test("TEST 1 - Login", False, "Owner login failed")
-        return None, None
+    owner_token = login(**CREDENTIALS["owner"])
+    dist1_token = login(**CREDENTIALS["distributor1"])
     
-    # 1.1: GET /boxes/stats should return stats
-    try:
-        resp = api_get("/dms/coupons/boxes/stats", token)
-        if resp.status_code == 200:
-            data = resp.json()
-            required_keys = ["boxes_total", "boxes_assigned", "boxes_unassigned", 
-                           "coupons_in_boxes", "coupons_claimed"]
-            missing = [k for k in required_keys if k not in data]
-            if missing:
-                log_test("TEST 1.1 - Box Stats Keys", False, f"Missing keys: {missing}")
-            else:
-                # Verify all values are integers
-                all_ints = all(isinstance(data[k], int) for k in required_keys)
-                if all_ints:
-                    log_test("TEST 1.1 - Box Stats", True, 
-                           f"Stats: total={data['boxes_total']}, assigned={data['boxes_assigned']}, "
-                           f"unassigned={data['boxes_unassigned']}, in_boxes={data['coupons_in_boxes']}, "
-                           f"claimed={data['coupons_claimed']}")
-                else:
-                    log_test("TEST 1.1 - Box Stats Types", False, "Not all values are integers")
-        else:
-            log_test("TEST 1.1 - Box Stats", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        log_test("TEST 1.1 - Box Stats", False, f"Exception: {e}")
+    if not owner_token or not dist1_token:
+        print("❌ Failed to login")
+        return False
     
-    # 1.2: Create a box to get a real box ID
-    box_id = None
-    box_number = None
-    try:
-        resp = api_post("/dms/coupons/boxes", token, {})
-        if resp.status_code == 200:
-            data = resp.json()
-            box_id = data.get("box", {}).get("id")
-            box_number = data.get("box", {}).get("box_number")
-            if box_id and box_number:
-                log_test("TEST 1.2 - Create Box", True, f"Created box: {box_number} (id={box_id})")
-            else:
-                log_test("TEST 1.2 - Create Box", False, "No box id/number in response")
-        else:
-            log_test("TEST 1.2 - Create Box", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        log_test("TEST 1.2 - Create Box", False, f"Exception: {e}")
-    
-    # 1.3: GET /boxes/{bid} should resolve to the real box (not shadowed by /boxes/stats)
-    if box_id:
-        try:
-            resp = api_get(f"/dms/coupons/boxes/{box_id}", token)
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("box", {}).get("id") == box_id:
-                    log_test("TEST 1.3 - Route Ordering", True, 
-                           f"GET /boxes/{box_id} correctly resolves to box (not shadowed by /stats)")
-                else:
-                    log_test("TEST 1.3 - Route Ordering", False, "Box ID mismatch")
-            else:
-                log_test("TEST 1.3 - Route Ordering", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            log_test("TEST 1.3 - Route Ordering", False, f"Exception: {e}")
+    # Test 1a: GET import-template as owner → 200, xlsx file
+    print("\n1a. GET /api/dms/owner/products/import-template as owner")
+    resp = requests.get(f"{API_BASE}/dms/owner/products/import-template", headers=headers(owner_token))
+    if resp.status_code == 200 and "spreadsheet" in resp.headers.get("content-type", ""):
+        print(f"✅ Owner: 200, content-type={resp.headers.get('content-type')}, size={len(resp.content)} bytes")
     else:
-        log_test("TEST 1.3 - Route Ordering", False, "No box_id from previous test")
+        print(f"❌ Owner: {resp.status_code}, content-type={resp.headers.get('content-type')}")
+        return False
     
-    return box_id, box_number
-
-# ============================================================================
-# TEST 2: BOX LABEL PDF
-# ============================================================================
-def test_2_box_label_pdf(box_id: Optional[str]):
-    """Test box label PDF generation"""
-    print("\n" + "="*80)
-    print("TEST 2: BOX LABEL PDF")
-    print("="*80)
-    
-    token = login("owner")
-    if not token:
-        log_test("TEST 2 - Login", False, "Owner login failed")
-        return
-    
-    # 2.1: GET /boxes/{bid}/label-pdf should return PDF
-    if box_id:
-        try:
-            resp = api_get(f"/dms/coupons/boxes/{box_id}/label-pdf", token)
-            if resp.status_code == 200:
-                content_type = resp.headers.get("content-type", "")
-                size = len(resp.content)
-                if "application/pdf" in content_type and size > 1000:
-                    log_test("TEST 2.1 - Box Label PDF", True, 
-                           f"PDF generated: {size} bytes, content-type={content_type}")
-                else:
-                    log_test("TEST 2.1 - Box Label PDF", False, 
-                           f"Invalid PDF: size={size}, content-type={content_type}")
-            else:
-                log_test("TEST 2.1 - Box Label PDF", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            log_test("TEST 2.1 - Box Label PDF", False, f"Exception: {e}")
+    # Test 1b: GET import-template as distributor1 → 403
+    print("\n1b. GET /api/dms/owner/products/import-template as distributor1 → 403")
+    resp = requests.get(f"{API_BASE}/dms/owner/products/import-template", headers=headers(dist1_token))
+    if resp.status_code == 403:
+        print(f"✅ Distributor1: 403 (correct RBAC)")
     else:
-        log_test("TEST 2.1 - Box Label PDF", False, "No box_id from previous test")
+        print(f"❌ Distributor1: {resp.status_code} (expected 403)")
+        return False
     
-    # 2.2: GET /boxes/BOGUSID/label-pdf should return 404
-    try:
-        resp = api_get("/dms/coupons/boxes/BOGUSID/label-pdf", token)
-        if resp.status_code == 404:
-            log_test("TEST 2.2 - Label PDF 404", True, "Bogus ID correctly returns 404")
+    # Test 1c: POST import-circular as owner with test file
+    print("\n1c. POST /api/dms/owner/products/import-circular as owner (first import)")
+    xlsx_data = build_test_xlsx()
+    files = {"file": ("test_price_list.xlsx", xlsx_data, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    resp = requests.post(f"{API_BASE}/dms/owner/products/import-circular", 
+                        headers=headers(owner_token), files=files)
+    if resp.status_code == 200:
+        data = resp.json()
+        # Accept either created=3 (first run) or updated=3 (subsequent runs - idempotent)
+        if data.get("ok") and (data.get("created") == 3 or data.get("updated") == 3) and data.get("categories") == 2:
+            print(f"✅ Owner: 200, created={data.get('created')}, updated={data.get('updated')}, categories={data.get('categories')}, circular_batch_no={data.get('circular_batch_no')}")
+            circular_batch_no = data.get("circular_batch_no")
         else:
-            log_test("TEST 2.2 - Label PDF 404", False, f"Expected 404, got {resp.status_code}")
-    except Exception as e:
-        log_test("TEST 2.2 - Label PDF 404", False, f"Exception: {e}")
-    
-    # 2.3: Distributor should get 403 (owner_or_accountant only)
-    dist_token = login("distributor1")
-    if dist_token and box_id:
-        try:
-            resp = api_get(f"/dms/coupons/boxes/{box_id}/label-pdf", dist_token)
-            if resp.status_code == 403:
-                log_test("TEST 2.3 - Label PDF RBAC", True, "Distributor correctly blocked (403)")
-            else:
-                log_test("TEST 2.3 - Label PDF RBAC", False, 
-                       f"Expected 403, got {resp.status_code}")
-        except Exception as e:
-            log_test("TEST 2.3 - Label PDF RBAC", False, f"Exception: {e}")
+            print(f"❌ Owner: 200 but unexpected data: {data}")
+            return False
     else:
-        log_test("TEST 2.3 - Label PDF RBAC", False, "No distributor token or box_id")
+        print(f"❌ Owner: {resp.status_code} {resp.text}")
+        return False
+    
+    # Test 1d: POST same file again → idempotent (created=0, updated=3)
+    print("\n1d. POST /api/dms/owner/products/import-circular as owner (re-import same file)")
+    files = {"file": ("test_price_list.xlsx", build_test_xlsx(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    resp = requests.post(f"{API_BASE}/dms/owner/products/import-circular", 
+                        headers=headers(owner_token), files=files)
+    if resp.status_code == 200:
+        data = resp.json()
+        if data.get("ok") and data.get("created") == 0 and data.get("updated") == 3:
+            print(f"✅ Owner: 200, created=0, updated=3 (idempotent)")
+        else:
+            print(f"⚠️  Owner: 200 but unexpected data: created={data.get('created')}, updated={data.get('updated')}")
+    else:
+        print(f"❌ Owner: {resp.status_code} {resp.text}")
+        return False
+    
+    # Test 1e: POST as distributor1 → 403
+    print("\n1e. POST /api/dms/owner/products/import-circular as distributor1 → 403")
+    files = {"file": ("test.xlsx", build_test_xlsx(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+    resp = requests.post(f"{API_BASE}/dms/owner/products/import-circular", 
+                        headers=headers(dist1_token), files=files)
+    if resp.status_code == 403:
+        print(f"✅ Distributor1: 403 (correct RBAC)")
+    else:
+        print(f"❌ Distributor1: {resp.status_code} (expected 403)")
+        return False
+    
+    # Test 1f: Verify products exist
+    print("\n1f. GET /api/dms/products as owner → verify imported products")
+    resp = requests.get(f"{API_BASE}/dms/products", headers=headers(owner_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        products = data.get("data", [])
+        imported = [p for p in products if "PROD ONE" in p.get("material_description", "") or 
+                   "PROD TWO" in p.get("material_description", "") or 
+                   "PROD THREE" in p.get("material_description", "")]
+        if len(imported) >= 3:
+            print(f"✅ Owner: 200, found {len(imported)} imported products with material_description/grade_specs/pack_size")
+        else:
+            print(f"⚠️  Owner: 200 but only found {len(imported)} imported products (expected 3)")
+    else:
+        print(f"❌ Owner: {resp.status_code}")
+        return False
+    
+    # Test 1g: Verify price-circulars
+    print("\n1g. GET /api/dms/price-circulars as owner → verify new circular")
+    resp = requests.get(f"{API_BASE}/dms/price-circulars", headers=headers(owner_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        circulars = data.get("data", [])
+        if len(circulars) > 0:
+            print(f"✅ Owner: 200, {len(circulars)} circulars exist")
+        else:
+            print(f"⚠️  Owner: 200 but no circulars found")
+    else:
+        print(f"❌ Owner: {resp.status_code}")
+        return False
+    
+    return True
 
-# ============================================================================
-# TEST 3: FULL BOX FLOW + SCAN HISTORY + FRAUD ALERT
-# ============================================================================
-def test_3_full_box_flow_scan_history_fraud():
-    """Test complete box flow with scan history and fraud detection"""
+def test_coupon_scanning():
+    """Test COUPON SCANNING + AUDIT endpoints"""
     print("\n" + "="*80)
-    print("TEST 3: FULL BOX FLOW + SCAN HISTORY + FRAUD ALERT")
+    print("TEST 2: COUPON SCANNING + AUDIT")
     print("="*80)
     
-    token = login("owner")
-    if not token:
-        log_test("TEST 3 - Login", False, "Owner login failed")
-        return
+    owner_token = login(**CREDENTIALS["owner"])
+    dist1_token = login(**CREDENTIALS["distributor1"])
     
-    # 3a: Create a coupon batch
-    batch_id = None
-    try:
-        batch_data = {
-            "prefix": "HB",
-            "count": 20,
-            "coupon_type": "reward",
-            "coupon_value": 10,
-            "generation_mode": "prefix_sequential"
-        }
-        resp = api_post("/dms/coupons/batches", token, batch_data)
-        if resp.status_code == 200:
-            data = resp.json()
-            batch_id = data.get("batch", {}).get("id")
-            if batch_id:
-                log_test("TEST 3a - Create Batch", True, f"Batch created: {batch_id}")
-            else:
-                log_test("TEST 3a - Create Batch", False, "No batch_id in response")
+    if not owner_token or not dist1_token:
+        print("❌ Failed to login")
+        return False
+    
+    # Test 2a: GET scan-permission as owner
+    print("\n2a. GET /api/dms/coupons/scan-permission as owner")
+    resp = requests.get(f"{API_BASE}/dms/coupons/scan-permission", headers=headers(owner_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        print(f"✅ Owner: 200, retailer_scan_enabled={data.get('retailer_scan_enabled')}")
+    else:
+        print(f"❌ Owner: {resp.status_code}")
+        return False
+    
+    # Test 2b: PUT scan-permission as owner
+    print("\n2b. PUT /api/dms/coupons/scan-permission as owner (enable)")
+    resp = requests.put(f"{API_BASE}/dms/coupons/scan-permission", 
+                       headers=headers(owner_token), json={"enabled": True})
+    if resp.status_code == 200:
+        data = resp.json()
+        if data.get("ok"):
+            print(f"✅ Owner: 200, ok=true")
         else:
-            log_test("TEST 3a - Create Batch", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        log_test("TEST 3a - Create Batch", False, f"Exception: {e}")
+            print(f"❌ Owner: 200 but ok=false")
+            return False
+    else:
+        print(f"❌ Owner: {resp.status_code}")
+        return False
     
-    if not batch_id:
-        print("⚠️  Cannot continue TEST 3 without batch_id")
-        return
+    # Test 2c: PUT scan-permission as distributor1 → 403
+    print("\n2c. PUT /api/dms/coupons/scan-permission as distributor1 → 403")
+    resp = requests.put(f"{API_BASE}/dms/coupons/scan-permission", 
+                       headers=headers(dist1_token), json={"enabled": False})
+    if resp.status_code == 403:
+        print(f"✅ Distributor1: 403 (correct RBAC)")
+    else:
+        print(f"❌ Distributor1: {resp.status_code} (expected 403)")
+        return False
     
-    # 3a: Activate the batch
-    try:
-        resp = api_post(f"/dms/coupons/batches/{batch_id}/activate", token, {})
-        if resp.status_code == 200:
-            log_test("TEST 3a - Activate Batch", True, "Batch activated")
+    # Test 2d: GET distributor/wallet as distributor1
+    print("\n2d. GET /api/dms/coupons/distributor/wallet as distributor1")
+    resp = requests.get(f"{API_BASE}/dms/coupons/distributor/wallet", headers=headers(dist1_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        if "cash_wallet" in data and "reward_wallet" in data:
+            print(f"✅ Distributor1: 200, cash_wallet={data.get('cash_wallet')}, reward_wallet={data.get('reward_wallet')}")
         else:
-            log_test("TEST 3a - Activate Batch", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        log_test("TEST 3a - Activate Batch", False, f"Exception: {e}")
+            print(f"❌ Distributor1: 200 but missing wallet fields: {data}")
+            return False
+    else:
+        print(f"❌ Distributor1: {resp.status_code}")
+        return False
     
-    # 3b: Create a box
-    box_id = None
-    box_number = None
-    try:
-        resp = api_post("/dms/coupons/boxes", token, {})
-        if resp.status_code == 200:
-            data = resp.json()
-            box_id = data.get("box", {}).get("id")
-            box_number = data.get("box", {}).get("box_number")
-            if box_id:
-                log_test("TEST 3b - Create Box", True, f"Box created: {box_number}")
-            else:
-                log_test("TEST 3b - Create Box", False, "No box_id in response")
-        else:
-            log_test("TEST 3b - Create Box", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        log_test("TEST 3b - Create Box", False, f"Exception: {e}")
+    # Test 2e: GET distributor/wallet as owner (should work or return empty)
+    print("\n2e. GET /api/dms/coupons/distributor/wallet as owner")
+    resp = requests.get(f"{API_BASE}/dms/coupons/distributor/wallet", headers=headers(owner_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        print(f"✅ Owner: 200, {data}")
+    else:
+        print(f"⚠️  Owner: {resp.status_code} (may be expected if owner has no distributor profile)")
     
-    if not box_id:
-        print("⚠️  Cannot continue TEST 3 without box_id")
-        return
+    # Test 2f: POST distributor/scan with bogus coupon → 400
+    print("\n2f. POST /api/dms/coupons/distributor/scan as distributor1 with bogus coupon → 400")
+    resp = requests.post(f"{API_BASE}/dms/coupons/distributor/scan", 
+                        headers=headers(dist1_token), 
+                        json={"coupon_code": "BOGUS123"})
+    if resp.status_code == 400:
+        print(f"✅ Distributor1: 400 (rejected, not 500)")
+    else:
+        print(f"❌ Distributor1: {resp.status_code} (expected 400)")
+        return False
     
-    # 3b: Assign coupons to box (first 10 from batch)
-    assigned_serials = []
-    try:
-        assign_data = {
-            "batch_id": batch_id,
-            "from_serial": "HB001",
-            "to_serial": "HB010"
-        }
-        resp = api_post(f"/dms/coupons/boxes/{box_id}/assign-coupons", token, assign_data)
-        if resp.status_code == 200:
-            data = resp.json()
-            assigned = data.get("assigned", 0)
-            if assigned > 0:
-                assigned_serials = [f"HB{str(i).zfill(3)}" for i in range(1, assigned + 1)]
-                log_test("TEST 3b - Assign Coupons", True, 
-                       f"Assigned {assigned} coupons to box")
-            else:
-                log_test("TEST 3b - Assign Coupons", False, "No coupons assigned")
-        else:
-            log_test("TEST 3b - Assign Coupons", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        log_test("TEST 3b - Assign Coupons", False, f"Exception: {e}")
+    # Test 2g: POST distributor/scan as owner (non-distributor) → 403
+    print("\n2g. POST /api/dms/coupons/distributor/scan as owner → 403")
+    resp = requests.post(f"{API_BASE}/dms/coupons/distributor/scan", 
+                        headers=headers(owner_token), 
+                        json={"coupon_code": "TEST123"})
+    if resp.status_code == 403:
+        print(f"✅ Owner: 403 (correct RBAC)")
+    else:
+        print(f"❌ Owner: {resp.status_code} (expected 403)")
+        return False
     
-    if not assigned_serials:
-        print("⚠️  Cannot continue TEST 3 without assigned coupons")
-        return
+    # Test 2h: GET audit as owner
+    print("\n2h. GET /api/dms/coupons/audit as owner")
+    resp = requests.get(f"{API_BASE}/dms/coupons/audit", headers=headers(owner_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        print(f"✅ Owner: 200, data={data.get('data', [])}, count={data.get('count')}")
+    else:
+        print(f"❌ Owner: {resp.status_code}")
+        return False
     
-    # 3c: Get distributor1 ID
-    distributor_id = None
-    try:
-        resp = api_get("/dms/distributors", token)
-        if resp.status_code == 200:
-            data = resp.json()
-            distributors = data.get("data", [])
-            # Find distributor with "Anil" or "Delhi" in name
-            for d in distributors:
-                if "Anil" in d.get("name", "") or "Delhi" in d.get("name", ""):
-                    distributor_id = d.get("id")
-                    log_test("TEST 3c - Get Distributor", True, 
-                           f"Found distributor: {d.get('name')} (id={distributor_id})")
-                    break
-            if not distributor_id and distributors:
-                # Fallback to first distributor
-                distributor_id = distributors[0].get("id")
-                log_test("TEST 3c - Get Distributor", True, 
-                       f"Using first distributor: {distributors[0].get('name')}")
-        else:
-            log_test("TEST 3c - Get Distributor", False, f"HTTP {resp.status_code}")
-    except Exception as e:
-        log_test("TEST 3c - Get Distributor", False, f"Exception: {e}")
+    # Test 2i: GET audit as distributor1 → 403
+    print("\n2i. GET /api/dms/coupons/audit as distributor1 → 403")
+    resp = requests.get(f"{API_BASE}/dms/coupons/audit", headers=headers(dist1_token))
+    if resp.status_code == 403:
+        print(f"✅ Distributor1: 403 (correct RBAC)")
+    else:
+        print(f"❌ Distributor1: {resp.status_code} (expected 403)")
+        return False
     
-    if not distributor_id:
-        print("⚠️  Cannot continue TEST 3 without distributor_id")
-        return
+    # Test 2j: GET audit with channel filter
+    print("\n2j. GET /api/dms/coupons/audit?channel=distributor_self_scan as owner")
+    resp = requests.get(f"{API_BASE}/dms/coupons/audit?channel=distributor_self_scan", headers=headers(owner_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        print(f"✅ Owner: 200, filtered data count={data.get('count')}")
+    else:
+        print(f"❌ Owner: {resp.status_code}")
+        return False
     
-    # 3c: Assign box to distributor
-    try:
-        assign_data = {"distributor_id": distributor_id}
-        resp = api_post(f"/dms/coupons/boxes/{box_id}/assign-distributor", token, assign_data)
-        if resp.status_code == 200:
-            data = resp.json()
-            coupons_updated = data.get("coupons_updated", 0)
-            log_test("TEST 3c - Assign Distributor", True, 
-                   f"Distributor assigned, {coupons_updated} coupons updated")
-        else:
-            log_test("TEST 3c - Assign Distributor", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        log_test("TEST 3c - Assign Distributor", False, f"Exception: {e}")
-    
-    # 3d: Get retailer under this distributor
-    retailer_id = None
-    sp_token = login("salesperson")
-    if sp_token:
-        try:
-            resp = api_get("/dms/coupons/so/retailers", sp_token)
-            if resp.status_code == 200:
-                data = resp.json()
-                retailers = data.get("data", [])
-                # Find retailer under our distributor
-                for r in retailers:
-                    if r.get("distributor_id") == distributor_id:
-                        retailer_id = r.get("id")
-                        log_test("TEST 3d - Get Retailer", True, 
-                               f"Found retailer: {r.get('name')} under distributor")
-                        break
-                if not retailer_id and retailers:
-                    # Fallback to first retailer
-                    retailer_id = retailers[0].get("id")
-                    log_test("TEST 3d - Get Retailer", True, 
-                           f"Using first retailer: {retailers[0].get('name')}")
-            else:
-                log_test("TEST 3d - Get Retailer", False, f"HTTP {resp.status_code}")
-        except Exception as e:
-            log_test("TEST 3d - Get Retailer", False, f"Exception: {e}")
-    
-    if not retailer_id:
-        print("⚠️  Cannot continue TEST 3 without retailer_id")
-        return
-    
-    # 3e: Scan a boxed coupon (should succeed)
-    scanned_serial = assigned_serials[0]
-    if sp_token:
-        try:
-            scan_data = {
-                "retailer_id": retailer_id,
-                "coupon_code": scanned_serial
-            }
-            resp = api_post("/dms/coupons/scan", sp_token, scan_data)
-            if resp.status_code == 200:
-                data = resp.json()
-                fraud = data.get("fraud", True)
-                box_num = data.get("box_number")
-                if not fraud and box_num:
-                    log_test("TEST 3e - Scan Valid Coupon", True, 
-                           f"Scan successful: fraud=False, box={box_num}, wallet credited")
-                else:
-                    log_test("TEST 3e - Scan Valid Coupon", False, 
-                           f"Unexpected: fraud={fraud}, box_number={box_num}")
-            else:
-                log_test("TEST 3e - Scan Valid Coupon", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            log_test("TEST 3e - Scan Valid Coupon", False, f"Exception: {e}")
-    
-    # 3f: Get box scan history
-    try:
-        resp = api_get(f"/dms/coupons/boxes/{box_id}/scan-history", token)
-        if resp.status_code == 200:
-            data = resp.json()
-            claimed_count = data.get("claimed_count", 0)
-            scan_data = data.get("data", [])
-            if claimed_count >= 1 and scan_data:
-                # Check if scanned coupon is in history
-                found = any(c.get("visible_serial") == scanned_serial for c in scan_data)
-                has_retailer = any(c.get("retailer_name") for c in scan_data)
-                has_claimed_by = any(c.get("claimed_by_user_name") for c in scan_data)
-                has_timestamp = any(c.get("claim_timestamp") for c in scan_data)
-                
-                if found and has_retailer and has_claimed_by and has_timestamp:
-                    log_test("TEST 3f - Box Scan History", True, 
-                           f"Scan history: claimed={claimed_count}, scanned coupon present with all fields")
-                else:
-                    log_test("TEST 3f - Box Scan History", False, 
-                           f"Missing fields: found={found}, retailer={has_retailer}, "
-                           f"claimed_by={has_claimed_by}, timestamp={has_timestamp}")
-            else:
-                log_test("TEST 3f - Box Scan History", False, 
-                       f"No scans in history: claimed_count={claimed_count}")
-        else:
-            log_test("TEST 3f - Box Scan History", False, f"HTTP {resp.status_code}: {resp.text[:200]}")
-    except Exception as e:
-        log_test("TEST 3f - Box Scan History", False, f"Exception: {e}")
-    
-    # 3g: Distributor2 should get 403 for scan history
-    dist2_token = login("distributor2")
-    if dist2_token:
-        try:
-            resp = api_get(f"/dms/coupons/boxes/{box_id}/scan-history", dist2_token)
-            if resp.status_code == 403:
-                log_test("TEST 3g - Scan History RBAC", True, 
-                       "Distributor2 correctly blocked from other distributor's box (403)")
-            else:
-                log_test("TEST 3g - Scan History RBAC", False, 
-                       f"Expected 403, got {resp.status_code}")
-        except Exception as e:
-            log_test("TEST 3g - Scan History RBAC", False, f"Exception: {e}")
+    return True
 
-# ============================================================================
-# TEST 4: FRAUD ALERT NOTIFICATION
-# ============================================================================
-def test_4_fraud_alert_notification():
-    """Test fraud alert notification creation"""
+def test_delete_endpoints():
+    """Test DELETE endpoints with RBAC + guards"""
     print("\n" + "="*80)
-    print("TEST 4: FRAUD ALERT NOTIFICATION")
+    print("TEST 3: DELETE ENDPOINTS")
     print("="*80)
     
-    sp_token = login("salesperson")
-    if not sp_token:
-        log_test("TEST 4 - Login", False, "Salesperson login failed")
-        return
+    owner_token = login(**CREDENTIALS["owner"])
+    dist1_token = login(**CREDENTIALS["distributor1"])
+    retailer1_token = login(**CREDENTIALS["retailer1"])
     
-    # Get a retailer
-    retailer_id = None
-    try:
-        resp = api_get("/dms/coupons/so/retailers", sp_token)
+    if not owner_token or not dist1_token or not retailer1_token:
+        print("❌ Failed to login")
+        return False
+    
+    # Test 3a: Create throwaway distributor
+    print("\n3a. POST /api/dms/distributors as owner (create throwaway)")
+    resp = requests.post(f"{API_BASE}/dms/distributors", 
+                        headers=headers(owner_token),
+                        json={
+                            "name": "ZZ Test Dist",
+                            "email": "zztestdist@gooil.com",
+                            "password": "GoOil@2026",
+                            "phone": "9999999999",
+                            "address": "Test Address",
+                            "region": "X"
+                        })
+    if resp.status_code == 200:
+        data = resp.json()
+        throwaway_dist_id = data.get("id")
+        print(f"✅ Owner: 200, created distributor id={throwaway_dist_id}")
+    else:
+        print(f"❌ Owner: {resp.status_code} {resp.text}")
+        return False
+    
+    # Test 3b: DELETE distributor as owner → ok
+    print(f"\n3b. DELETE /api/dms/distributors/{throwaway_dist_id} as owner")
+    resp = requests.delete(f"{API_BASE}/dms/distributors/{throwaway_dist_id}", headers=headers(owner_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        if data.get("ok"):
+            print(f"✅ Owner: 200, ok=true")
+        else:
+            print(f"❌ Owner: 200 but ok=false")
+            return False
+    else:
+        print(f"❌ Owner: {resp.status_code} {resp.text}")
+        return False
+    
+    # Test 3c: DELETE same distributor again → 404
+    print(f"\n3c. DELETE /api/dms/distributors/{throwaway_dist_id} again → 404")
+    resp = requests.delete(f"{API_BASE}/dms/distributors/{throwaway_dist_id}", headers=headers(owner_token))
+    if resp.status_code == 404:
+        print(f"✅ Owner: 404 (correct)")
+    else:
+        print(f"❌ Owner: {resp.status_code} (expected 404)")
+        return False
+    
+    # Test 3d: DELETE distributor as distributor1 → 403
+    print("\n3d. Create another throwaway distributor and try DELETE as distributor1 → 403")
+    resp = requests.post(f"{API_BASE}/dms/distributors", 
+                        headers=headers(owner_token),
+                        json={
+                            "name": "ZZ Test Dist 2",
+                            "email": "zztestdist2@gooil.com",
+                            "password": "GoOil@2026",
+                            "phone": "8888888888",
+                            "address": "Test Address 2",
+                            "region": "Y"
+                        })
+    if resp.status_code == 200:
+        throwaway_dist_id2 = resp.json().get("id")
+        resp = requests.delete(f"{API_BASE}/dms/distributors/{throwaway_dist_id2}", headers=headers(dist1_token))
+        if resp.status_code == 403:
+            print(f"✅ Distributor1: 403 (correct RBAC)")
+            # Clean up
+            requests.delete(f"{API_BASE}/dms/distributors/{throwaway_dist_id2}", headers=headers(owner_token))
+        else:
+            print(f"❌ Distributor1: {resp.status_code} (expected 403)")
+            return False
+    else:
+        print(f"⚠️  Could not create second throwaway distributor")
+    
+    # Test 3e: Create throwaway retailer
+    print("\n3e. POST /api/dms/retailers as owner (create throwaway)")
+    resp = requests.post(f"{API_BASE}/dms/retailers", 
+                        headers=headers(owner_token),
+                        json={
+                            "name": "ZZ Test Retailer",
+                            "email": "zztestretailer@gooil.com",
+                            "password": "GoOil@2026",
+                            "phone": "7777777777",
+                            "address": "Test Retailer Address",
+                            "distributor_id": "dist-existing"  # Use existing distributor
+                        })
+    if resp.status_code == 200:
+        data = resp.json()
+        throwaway_ret_id = data.get("id")
+        print(f"✅ Owner: 200, created retailer id={throwaway_ret_id}")
+    else:
+        # Try with distributor1 token
+        resp = requests.post(f"{API_BASE}/dms/retailers", 
+                            headers=headers(dist1_token),
+                            json={
+                                "name": "ZZ Test Retailer",
+                                "phone": "7777777777",
+                                "address": "Test Retailer Address"
+                            })
+        if resp.status_code == 200:
+            throwaway_ret_id = resp.json().get("id")
+            print(f"✅ Distributor1: 200, created retailer id={throwaway_ret_id}")
+        else:
+            print(f"⚠️  Could not create throwaway retailer: {resp.status_code}")
+            throwaway_ret_id = None
+    
+    # Test 3f: DELETE retailer as owner → ok
+    if throwaway_ret_id:
+        print(f"\n3f. DELETE /api/dms/retailers/{throwaway_ret_id} as owner")
+        resp = requests.delete(f"{API_BASE}/dms/retailers/{throwaway_ret_id}", headers=headers(owner_token))
         if resp.status_code == 200:
             data = resp.json()
-            retailers = data.get("data", [])
-            if retailers:
-                retailer_id = retailers[0].get("id")
-                log_test("TEST 4 - Get Retailer", True, f"Found retailer: {retailers[0].get('name')}")
+            if data.get("ok"):
+                print(f"✅ Owner: 200, ok=true")
+            else:
+                print(f"❌ Owner: 200 but ok=false")
+                return False
         else:
-            log_test("TEST 4 - Get Retailer", False, f"HTTP {resp.status_code}")
-    except Exception as e:
-        log_test("TEST 4 - Get Retailer", False, f"Exception: {e}")
+            print(f"❌ Owner: {resp.status_code} {resp.text}")
+            return False
     
-    if not retailer_id:
-        print("⚠️  Cannot continue TEST 4 without retailer_id")
-        return
+    # Test 3g: Create throwaway user (or use existing if already created)
+    print("\n3g. POST /api/dms/owner/users as owner (create throwaway)")
+    resp = requests.post(f"{API_BASE}/dms/owner/users", 
+                        headers=headers(owner_token),
+                        json={
+                            "email": "zztestuser@gooil.com",
+                            "password": "GoOil@2026",
+                            "name": "ZZ User",
+                            "role": "salesperson"
+                        })
+    if resp.status_code == 200:
+        data = resp.json()
+        user_obj = data.get("user", {})
+        throwaway_user_id = user_obj.get("id")
+        print(f"✅ Owner: 200, created user id={throwaway_user_id}")
+    elif resp.status_code == 400 and "already exists" in resp.text:
+        # User already exists from previous test run - find it
+        print(f"⚠️  User already exists, finding existing user...")
+        resp = requests.get(f"{API_BASE}/dms/owner/users", headers=headers(owner_token))
+        if resp.status_code == 200:
+            users = resp.json().get("data", [])
+            existing = [u for u in users if u.get("email") == "zztestuser@gooil.com"]
+            if existing:
+                throwaway_user_id = existing[0].get("id")
+                print(f"✅ Owner: Found existing user id={throwaway_user_id}")
+            else:
+                print(f"❌ Could not find existing user")
+                return False
+        else:
+            print(f"❌ Could not list users: {resp.status_code}")
+            return False
+    else:
+        print(f"❌ Owner: {resp.status_code} {resp.text}")
+        return False
     
-    # 4.1: Trigger fraud with invalid coupon code
-    try:
-        scan_data = {
-            "retailer_id": retailer_id,
-            "coupon_code": "ZZZZZ999"
-        }
-        resp = api_post("/dms/coupons/scan", sp_token, scan_data)
+    # Test 3h: DELETE user as owner → ok
+    print(f"\n3h. DELETE /api/dms/owner/users/{throwaway_user_id} as owner")
+    resp = requests.delete(f"{API_BASE}/dms/owner/users/{throwaway_user_id}", headers=headers(owner_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        if data.get("ok"):
+            print(f"✅ Owner: 200, ok=true")
+        else:
+            print(f"❌ Owner: 200 but ok=false")
+            return False
+    else:
+        print(f"❌ Owner: {resp.status_code} {resp.text}")
+        return False
+    
+    # Test 3i: Try DELETE own owner id → 400
+    print("\n3i. Try DELETE own owner id → 400")
+    # Get owner user id
+    resp = requests.get(f"{API_BASE}/dms/me", headers=headers(owner_token))
+    if resp.status_code == 200:
+        owner_user_id = resp.json().get("id")
+        resp = requests.delete(f"{API_BASE}/dms/owner/users/{owner_user_id}", headers=headers(owner_token))
         if resp.status_code == 400:
-            log_test("TEST 4.1 - Trigger Fraud", True, 
-                   "Invalid coupon correctly rejected (400)")
+            print(f"✅ Owner: 400 (cannot delete self)")
         else:
-            log_test("TEST 4.1 - Trigger Fraud", False, 
-                   f"Expected 400, got {resp.status_code}")
-    except Exception as e:
-        log_test("TEST 4.1 - Trigger Fraud", False, f"Exception: {e}")
+            print(f"❌ Owner: {resp.status_code} (expected 400)")
+            return False
+    else:
+        print(f"⚠️  Could not get owner user id")
     
-    # 4.2: Check owner notifications for fraud alert
-    owner_token = login("owner")
-    if owner_token:
-        try:
-            resp = api_get("/dms/notifications", owner_token)
-            if resp.status_code == 200:
-                data = resp.json()
-                notifications = data.get("data", [])
-                # Find recent fraud notification
-                fraud_notifs = [n for n in notifications 
-                              if n.get("kind") == "coupon_fraud" 
-                              and "Fraud alert:" in n.get("title", "")]
-                
-                if fraud_notifs:
-                    notif = fraud_notifs[0]
-                    title = notif.get("title", "")
-                    body = notif.get("body", "")
-                    link = notif.get("link", "")
-                    
-                    has_title = title.startswith("Fraud alert:")
-                    has_coupon = "ZZZZZ999" in body or "coupon" in body.lower()
-                    has_location = any(x in body for x in ["GPS", "IP", "location"])
-                    has_link = link == "/dms/owner/coupons/fraud"
-                    
-                    if has_title and has_coupon and has_location and has_link:
-                        log_test("TEST 4.2 - Fraud Notification", True, 
-                               f"Fraud notification found: kind=coupon_fraud, "
-                               f"title='{title}', link={link}")
-                    else:
-                        log_test("TEST 4.2 - Fraud Notification", False, 
-                               f"Incomplete notification: title={has_title}, "
-                               f"coupon={has_coupon}, location={has_location}, link={has_link}")
-                else:
-                    log_test("TEST 4.2 - Fraud Notification", False, 
-                           "No fraud notification found in owner's notifications")
-            else:
-                log_test("TEST 4.2 - Fraud Notification", False, f"HTTP {resp.status_code}")
-        except Exception as e:
-            log_test("TEST 4.2 - Fraud Notification", False, f"Exception: {e}")
+    # Test 3j: DELETE user as distributor1 → 403
+    print("\n3j. Create another throwaway user and try DELETE as distributor1 → 403")
+    resp = requests.post(f"{API_BASE}/dms/owner/users", 
+                        headers=headers(owner_token),
+                        json={
+                            "email": "zztestuser2@gooil.com",
+                            "password": "GoOil@2026",
+                            "name": "ZZ User 2",
+                            "role": "salesperson"
+                        })
+    if resp.status_code == 200:
+        user_obj = resp.json().get("user", {})
+        throwaway_user_id2 = user_obj.get("id")
+        resp = requests.delete(f"{API_BASE}/dms/owner/users/{throwaway_user_id2}", headers=headers(dist1_token))
+        if resp.status_code == 403:
+            print(f"✅ Distributor1: 403 (correct RBAC)")
+            # Clean up
+            requests.delete(f"{API_BASE}/dms/owner/users/{throwaway_user_id2}", headers=headers(owner_token))
+        else:
+            print(f"❌ Distributor1: {resp.status_code} (expected 403)")
+            return False
+    else:
+        print(f"⚠️  Could not create second throwaway user")
+    
+    return True
 
-# ============================================================================
-# TEST 5: REGRESSION
-# ============================================================================
-def test_5_regression():
-    """Test existing functionality still works"""
+def test_hierarchy():
+    """Test HIERARCHY endpoint"""
     print("\n" + "="*80)
-    print("TEST 5: REGRESSION")
+    print("TEST 4: HIERARCHY")
     print("="*80)
     
-    token = login("owner")
-    if not token:
-        log_test("TEST 5 - Login", False, "Owner login failed")
-        return
+    owner_token = login(**CREDENTIALS["owner"])
+    dist1_token = login(**CREDENTIALS["distributor1"])
     
-    # 5.1: GET /scan-permission
-    try:
-        resp = api_get("/dms/coupons/scan-permission", token)
-        if resp.status_code == 200:
-            data = resp.json()
-            enabled = data.get("retailer_scan_enabled")
-            log_test("TEST 5.1 - Get Scan Permission", True, 
-                   f"Scan permission: enabled={enabled}")
-        else:
-            log_test("TEST 5.1 - Get Scan Permission", False, f"HTTP {resp.status_code}")
-    except Exception as e:
-        log_test("TEST 5.1 - Get Scan Permission", False, f"Exception: {e}")
+    if not owner_token or not dist1_token:
+        print("❌ Failed to login")
+        return False
     
-    # 5.2: PUT /scan-permission (enable)
-    try:
-        resp = api_put("/dms/coupons/scan-permission", token, {"enabled": True})
-        if resp.status_code == 200:
-            log_test("TEST 5.2 - Enable Scan Permission", True, "Permission enabled")
-        else:
-            log_test("TEST 5.2 - Enable Scan Permission", False, f"HTTP {resp.status_code}")
-    except Exception as e:
-        log_test("TEST 5.2 - Enable Scan Permission", False, f"Exception: {e}")
-    
-    # 5.3: PUT /scan-permission (disable)
-    try:
-        resp = api_put("/dms/coupons/scan-permission", token, {"enabled": False})
-        if resp.status_code == 200:
-            log_test("TEST 5.3 - Disable Scan Permission", True, "Permission disabled")
-        else:
-            log_test("TEST 5.3 - Disable Scan Permission", False, f"HTTP {resp.status_code}")
-    except Exception as e:
-        log_test("TEST 5.3 - Disable Scan Permission", False, f"Exception: {e}")
-    
-    # 5.4: Box create → assign-coupons → assign-distributor sequence
-    try:
-        # Create box
-        resp = api_post("/dms/coupons/boxes", token, {})
-        if resp.status_code != 200:
-            log_test("TEST 5.4 - Box Workflow", False, f"Create box failed: {resp.status_code}")
-            return
-        
-        box_id = resp.json().get("box", {}).get("id")
-        if not box_id:
-            log_test("TEST 5.4 - Box Workflow", False, "No box_id in response")
-            return
-        
-        # Get an existing batch with active coupons
-        resp = api_get("/dms/coupons/batches", token)
-        if resp.status_code != 200:
-            log_test("TEST 5.4 - Box Workflow", False, f"Get batches failed: {resp.status_code}")
-            return
-        
-        batches = resp.json().get("data", [])
-        active_batch = None
-        for b in batches:
-            if b.get("status") == "active":
-                active_batch = b
-                break
-        
-        if not active_batch:
-            log_test("TEST 5.4 - Box Workflow", False, "No active batch found")
-            return
-        
-        # Assign coupons (try a small range)
-        batch_id = active_batch.get("id")
-        prefix = active_batch.get("prefix", "")
-        assign_data = {
-            "batch_id": batch_id,
-            "from_serial": f"{prefix}011",
-            "to_serial": f"{prefix}015"
-        }
-        resp = api_post(f"/dms/coupons/boxes/{box_id}/assign-coupons", token, assign_data)
-        if resp.status_code != 200:
-            # Try without batch_id filter
-            assign_data = {
-                "from_serial": f"{prefix}011",
-                "to_serial": f"{prefix}015"
-            }
-            resp = api_post(f"/dms/coupons/boxes/{box_id}/assign-coupons", token, assign_data)
-        
-        if resp.status_code != 200:
-            log_test("TEST 5.4 - Box Workflow", False, 
-                   f"Assign coupons failed: {resp.status_code} - {resp.text[:200]}")
-            return
-        
-        coupons_updated = resp.json().get("assigned", 0)
-        if coupons_updated == 0:
-            log_test("TEST 5.4 - Box Workflow", False, "No coupons assigned (might be already boxed)")
-            return
-        
-        # Get distributor
-        resp = api_get("/dms/distributors", token)
-        if resp.status_code != 200:
-            log_test("TEST 5.4 - Box Workflow", False, f"Get distributors failed: {resp.status_code}")
-            return
-        
-        distributors = resp.json().get("data", [])
-        if not distributors:
-            log_test("TEST 5.4 - Box Workflow", False, "No distributors found")
-            return
-        
-        distributor_id = distributors[0].get("id")
-        
-        # Assign distributor
-        resp = api_post(f"/dms/coupons/boxes/{box_id}/assign-distributor", token, 
-                       {"distributor_id": distributor_id})
-        if resp.status_code == 200:
-            data = resp.json()
-            coupons_updated = data.get("coupons_updated", 0)
-            if coupons_updated > 0:
-                log_test("TEST 5.4 - Box Workflow", True, 
-                       f"Complete workflow: box created → coupons assigned → "
-                       f"distributor assigned ({coupons_updated} coupons updated)")
+    # Test 4a: GET hierarchy as owner
+    print("\n4a. GET /api/dms/owner/hierarchy as owner")
+    resp = requests.get(f"{API_BASE}/dms/owner/hierarchy", headers=headers(owner_token))
+    if resp.status_code == 200:
+        data = resp.json()
+        required_keys = ["tree", "unassigned_team_leaders", "unassigned_distributors", "all"]
+        if all(k in data for k in required_keys):
+            all_data = data.get("all", {})
+            all_keys = ["regional_managers", "team_leaders", "salespersons", "distributors"]
+            if all(k in all_data for k in all_keys):
+                print(f"✅ Owner: 200, all required keys present")
+                print(f"   tree: {len(data.get('tree', []))} regional managers")
+                print(f"   unassigned_team_leaders: {len(data.get('unassigned_team_leaders', []))}")
+                print(f"   unassigned_distributors: {len(data.get('unassigned_distributors', []))}")
+                print(f"   all.regional_managers: {len(all_data.get('regional_managers', []))}")
+                print(f"   all.team_leaders: {len(all_data.get('team_leaders', []))}")
+                print(f"   all.salespersons: {len(all_data.get('salespersons', []))}")
+                print(f"   all.distributors: {len(all_data.get('distributors', []))}")
             else:
-                log_test("TEST 5.4 - Box Workflow", False, "No coupons updated")
+                print(f"❌ Owner: 200 but missing keys in 'all': {all_data.keys()}")
+                return False
         else:
-            log_test("TEST 5.4 - Box Workflow", False, 
-                   f"Assign distributor failed: {resp.status_code}")
-    except Exception as e:
-        log_test("TEST 5.4 - Box Workflow", False, f"Exception: {e}")
+            print(f"❌ Owner: 200 but missing required keys: {data.keys()}")
+            return False
+    else:
+        print(f"❌ Owner: {resp.status_code}")
+        return False
+    
+    # Test 4b: GET hierarchy as distributor1 → 403
+    print("\n4b. GET /api/dms/owner/hierarchy as distributor1 → 403")
+    resp = requests.get(f"{API_BASE}/dms/owner/hierarchy", headers=headers(dist1_token))
+    if resp.status_code == 403:
+        print(f"✅ Distributor1: 403 (correct RBAC)")
+    else:
+        print(f"❌ Distributor1: {resp.status_code} (expected 403)")
+        return False
+    
+    return True
 
-# ============================================================================
-# MAIN
-# ============================================================================
 def main():
     print("\n" + "="*80)
-    print("GO OIL DMS - NEW COUPON/BOX ENHANCEMENTS - BACKEND API TESTING")
+    print("GO OIL DMS — Backend API Testing (CONTINUATION v3)")
     print("="*80)
     print(f"Base URL: {BASE_URL}")
     print(f"API Base: {API_BASE}")
-    print("="*80)
     
-    # Run all tests
-    box_id, box_number = test_1_box_stats_and_route_ordering()
-    test_2_box_label_pdf(box_id)
-    test_3_full_box_flow_scan_history_fraud()
-    test_4_fraud_alert_notification()
-    test_5_regression()
+    results = {
+        "SMART PRICE-LIST IMPORT": False,
+        "COUPON SCANNING + AUDIT": False,
+        "DELETE ENDPOINTS": False,
+        "HIERARCHY": False,
+    }
     
-    # Print summary
+    try:
+        results["SMART PRICE-LIST IMPORT"] = test_price_import()
+    except Exception as e:
+        print(f"\n❌ SMART PRICE-LIST IMPORT failed with exception: {e}")
+    
+    try:
+        results["COUPON SCANNING + AUDIT"] = test_coupon_scanning()
+    except Exception as e:
+        print(f"\n❌ COUPON SCANNING + AUDIT failed with exception: {e}")
+    
+    try:
+        results["DELETE ENDPOINTS"] = test_delete_endpoints()
+    except Exception as e:
+        print(f"\n❌ DELETE ENDPOINTS failed with exception: {e}")
+    
+    try:
+        results["HIERARCHY"] = test_hierarchy()
+    except Exception as e:
+        print(f"\n❌ HIERARCHY failed with exception: {e}")
+    
+    # Summary
     print("\n" + "="*80)
-    print("TEST SUMMARY")
+    print("SUMMARY")
     print("="*80)
-    total = test_results["passed"] + test_results["failed"]
-    pass_rate = (test_results["passed"] / total * 100) if total > 0 else 0
-    print(f"Total Tests: {total}")
-    print(f"Passed: {test_results['passed']} ✅")
-    print(f"Failed: {test_results['failed']} ❌")
-    print(f"Pass Rate: {pass_rate:.1f}%")
-    print("="*80)
+    for test_name, passed in results.items():
+        status = "✅ PASS" if passed else "❌ FAIL"
+        print(f"{status}: {test_name}")
     
-    # Print failed tests
-    if test_results["failed"] > 0:
-        print("\nFAILED TESTS:")
-        for test in test_results["tests"]:
-            if not test["passed"]:
-                print(f"  ❌ {test['name']}")
-                if test["details"]:
-                    print(f"     {test['details']}")
+    total = len(results)
+    passed = sum(1 for v in results.values() if v)
+    print(f"\nTotal: {passed}/{total} tests passed ({int(passed/total*100)}%)")
     
-    print("\n✅ Testing complete!")
+    if passed == total:
+        print("\n🎉 ALL TESTS PASSED!")
+        return 0
+    else:
+        print(f"\n⚠️  {total - passed} test(s) failed")
+        return 1
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
