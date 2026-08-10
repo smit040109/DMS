@@ -163,6 +163,7 @@ export function ImportExportPage() {
 // =====================================================================
 export function DirectSalesPage() {
   const { user } = useAuth();
+  const isRetailer = user?.role === "retailer";
   const [distributors, setDistributors] = useState([]);
   const [retailers, setRetailers] = useState([]);
   const [products, setProducts] = useState([]);
@@ -172,6 +173,7 @@ export function DirectSalesPage() {
     date: today(),
     bill_no: "",
     notes: "",
+    customer: { name: "", phone: "", address: "", gstin: "" },
     items: [{ product_id: "", qty_boxes: 1, box_price: 0 }],
   });
   const [busy, setBusy] = useState(false);
@@ -218,37 +220,55 @@ export function DirectSalesPage() {
   const subtotal = form.items.reduce((s, it) => s + (Number(it.qty_boxes) * Number(it.box_price || 0)), 0);
 
   const submit = async () => {
-    if (!form.distributor_id) return toast.error("Choose distributor");
-    if (!form.retailer_id) return toast.error("Choose retailer");
+    if (!isRetailer) {
+      if (!form.distributor_id) return toast.error("Choose distributor");
+      if (!form.retailer_id) return toast.error("Choose retailer");
+    } else {
+      if (!form.customer.name) return toast.error("Enter customer name");
+    }
     const items = form.items.filter(it => it.product_id && Number(it.qty_boxes) > 0);
     if (items.length === 0) return toast.error("Add at least one product line");
     setBusy(true);
     try {
-      const bill = await dms.createDirectSale({ ...form, items });
+      const payload = isRetailer
+        ? { date: form.date, bill_no: form.bill_no, notes: form.notes, customer: form.customer, items }
+        : { ...form, items };
+      const bill = await dms.createDirectSale(payload);
       setLastBill(bill); toast.success(`Bill ${bill.bill_no} created`);
-      setForm({ distributor_id: form.distributor_id, retailer_id: "", date: today(), bill_no: "", notes: "", items: [{ product_id: "", qty_boxes: 1, box_price: 0 }] });
+      setForm({ distributor_id: form.distributor_id, retailer_id: "", date: today(), bill_no: "", notes: "", customer: { name: "", phone: "", address: "", gstin: "" }, items: [{ product_id: "", qty_boxes: 1, box_price: 0 }] });
     } catch (e) { toast.error(e?.response?.data?.detail || "Save failed"); }
     setBusy(false);
   };
 
   return (
     <div className="space-y-4">
-      <PageHeader title="+Add Sales (Direct Invoice)" subtitle="Create a retailer bill without a sales order" />
+      <PageHeader title="+Add Sales (Direct Invoice)" subtitle={isRetailer ? "Create a bill for a walk-in customer" : "Create a retailer bill without a sales order"} />
 
       <Card className="p-5">
         <div className="grid md:grid-cols-3 gap-3 mb-4">
-          {user?.role !== "distributor" && user?.role !== "distributor_accountant" && (
-            <div><Label>Distributor*</Label>
-              <Select value={form.distributor_id} onValueChange={v => setForm({ ...form, distributor_id: v, retailer_id: "" })}>
-                <SelectTrigger><SelectValue placeholder="Choose distributor" /></SelectTrigger>
-                <SelectContent>{distributors.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
-              </Select></div>
+          {isRetailer ? (
+            <>
+              <div><Label>Customer Name*</Label><Input value={form.customer.name} onChange={e => setForm({ ...form, customer: { ...form.customer, name: e.target.value } })} placeholder="Walk-in customer" data-testid="ds-customer-name" /></div>
+              <div><Label>Customer Phone</Label><Input value={form.customer.phone} onChange={e => setForm({ ...form, customer: { ...form.customer, phone: e.target.value } })} /></div>
+              <div><Label>Customer GSTIN</Label><Input value={form.customer.gstin} onChange={e => setForm({ ...form, customer: { ...form.customer, gstin: e.target.value } })} /></div>
+              <div className="md:col-span-3"><Label>Customer Address</Label><Input value={form.customer.address} onChange={e => setForm({ ...form, customer: { ...form.customer, address: e.target.value } })} /></div>
+            </>
+          ) : (
+            <>
+              {user?.role !== "distributor" && user?.role !== "distributor_accountant" && (
+                <div><Label>Distributor*</Label>
+                  <Select value={form.distributor_id} onValueChange={v => setForm({ ...form, distributor_id: v, retailer_id: "" })}>
+                    <SelectTrigger><SelectValue placeholder="Choose distributor" /></SelectTrigger>
+                    <SelectContent>{distributors.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}</SelectContent>
+                  </Select></div>
+              )}
+              <div><Label>Retailer*</Label>
+                <Select value={form.retailer_id} onValueChange={v => setForm({ ...form, retailer_id: v })}>
+                  <SelectTrigger><SelectValue placeholder="Choose retailer" /></SelectTrigger>
+                  <SelectContent>{retailers.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}</SelectContent>
+                </Select></div>
+            </>
           )}
-          <div><Label>Retailer*</Label>
-            <Select value={form.retailer_id} onValueChange={v => setForm({ ...form, retailer_id: v })}>
-              <SelectTrigger><SelectValue placeholder="Choose retailer" /></SelectTrigger>
-              <SelectContent>{retailers.map(r => <SelectItem key={r.id} value={r.id}>{r.name}</SelectItem>)}</SelectContent>
-            </Select></div>
           <div><Label>Date*</Label><Input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
           <div><Label>Bill No. (auto)</Label><Input value={form.bill_no} onChange={e => setForm({ ...form, bill_no: e.target.value })} placeholder="Leave blank to auto-generate" /></div>
         </div>
@@ -287,8 +307,15 @@ export function DirectSalesPage() {
 
       {lastBill && (
         <Card className="p-4 border-emerald-200 bg-emerald-50">
-          <div className="font-semibold text-emerald-800">Last Created: {lastBill.bill_no}</div>
-          <div className="text-sm text-slate-700">Total: {inr(lastBill.total)} · Items: {lastBill.items?.length || 0}</div>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div className="font-semibold text-emerald-800">Last Created: {lastBill.bill_no}</div>
+              <div className="text-sm text-slate-700">Total: {inr(lastBill.total)} · Items: {lastBill.items?.length || 0}</div>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => window.open(`/dms/print/retailer-bill/${lastBill.id}`, "_blank")} data-testid="ds-print-bill">
+              Print / View Invoice
+            </Button>
+          </div>
         </Card>
       )}
     </div>

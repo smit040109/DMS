@@ -7820,3 +7820,18 @@ agent_communication:
       
       YOU MUST ASK USER BEFORE DOING FRONTEND TESTING
 
+
+  - agent: "main"
+    message: |
+      v6 FRONTEND built (not yet auto-tested):
+      - PrintPages.jsx: new shared <VyaparInvoice> (logo, GSTIN, Bill/Ship To, HSN table, per-line GST,
+        SGST/CGST or IGST, amount-in-words, Pay-To bank + auto UPI QR, T&C, signatory, optional
+        Acknowledgement). Applied to Primary e-Bill + Retailer bill + Direct sale. Visually verified.
+      - PriceCircularPages.jsx SettingsPage: Company Profile card + Print Acknowledgement toggle. Verified.
+      - Phase2CPages.jsx DirectSalesPage: retailer counter-sale mode + salesperson support + Print button.
+        Nav "+Add Sales" added for salesperson & retailer.
+      - OwnerPages.jsx distributor onboarding+detail: bank branch/UPI/QR image; docs via DocumentsGallery.
+      - DistributorSecondaryPages.jsx retailer onboarding+detail: bank/UPI/QR (NEW).
+      - LiveTrackingPage.jsx: renders field_staff + legend count.
+      Route note: Settings at /dms/owner/settings. Task 5 (crisp logo) pending user PNG/SVG.
+      Awaiting user go-ahead for automated FRONTEND testing.

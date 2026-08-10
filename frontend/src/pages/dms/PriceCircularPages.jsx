@@ -376,7 +376,14 @@ export function NewPriceCircularPage() {
 export function SettingsPage() {
   const [settings, setSettings] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ gst_pct: 0, company_name: "", invoice_terms: "", invoice_message: "" });
+  const [form, setForm] = useState({
+    gst_pct: 0, company_name: "", invoice_terms: "", invoice_message: "",
+    company_gstin: "", company_address: "", company_state: "", company_state_code: "",
+    company_phone: "", company_email: "", company_logo_url: "",
+    company_bank_name: "", company_bank_account: "", company_bank_ifsc: "", company_bank_branch: "",
+    company_upi_id: "", company_upi_name: "", invoice_signatory: "",
+    invoice_show_acknowledgement: false,
+  });
   const [fyLockDate, setFyLockDate] = useState("");
   const [fyBusy, setFyBusy] = useState(false);
 
@@ -389,6 +396,21 @@ export function SettingsPage() {
         company_name: s.company_name || "GO OIL Lubricants",
         invoice_terms: s.invoice_terms || "",
         invoice_message: s.invoice_message || "",
+        company_gstin: s.company_gstin || "",
+        company_address: s.company_address || "",
+        company_state: s.company_state || "",
+        company_state_code: s.company_state_code || "",
+        company_phone: s.company_phone || "",
+        company_email: s.company_email || "",
+        company_logo_url: s.company_logo_url || "",
+        company_bank_name: s.company_bank_name || "",
+        company_bank_account: s.company_bank_account || "",
+        company_bank_ifsc: s.company_bank_ifsc || "",
+        company_bank_branch: s.company_bank_branch || "",
+        company_upi_id: s.company_upi_id || "",
+        company_upi_name: s.company_upi_name || "",
+        invoice_signatory: s.invoice_signatory || "",
+        invoice_show_acknowledgement: !!s.invoice_show_acknowledgement,
       });
     })();
   }, []);
@@ -397,10 +419,8 @@ export function SettingsPage() {
     setSaving(true);
     try {
       const s = await dms.updateSettings({
+        ...form,
         gst_pct: Number(form.gst_pct),
-        company_name: form.company_name,
-        invoice_terms: form.invoice_terms,
-        invoice_message: form.invoice_message,
       });
       setSettings(s);
       toast.success("Settings updated");
@@ -446,17 +466,106 @@ export function SettingsPage() {
           </div>
         </Card>
 
-        <Card className="p-6 border-[#c9a227]/20 shadow-sm">
+        <Card className="p-6 border-[#c9a227]/20 shadow-sm md:col-span-2">
           <div className="flex items-center gap-3 mb-4">
             <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#faf0cf] to-[#c9a227]/25 flex items-center justify-center"><FileText size={20} className="text-[#a67c00]" /></div>
             <div>
-              <div className="font-display font-bold text-slate-900">Company</div>
-              <div className="text-xs text-slate-500">Displayed on invoices and bills</div>
+              <div className="font-display font-bold text-slate-900">Company Profile (Invoice)</div>
+              <div className="text-xs text-slate-500">Seller details printed on the primary e-Bill header</div>
             </div>
           </div>
-          <div>
-            <Label>Company Name</Label>
-            <Input value={form.company_name} onChange={e => setForm({ ...form, company_name: e.target.value })} data-testid="setting-company-input" />
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <Label>Company Name</Label>
+              <Input value={form.company_name} onChange={e => setForm({ ...form, company_name: e.target.value })} data-testid="setting-company-input" />
+            </div>
+            <div>
+              <Label>GSTIN</Label>
+              <Input value={form.company_gstin} onChange={e => setForm({ ...form, company_gstin: e.target.value })} placeholder="07ABCDE1234F1Z5" data-testid="setting-company-gstin" />
+            </div>
+            <div className="md:col-span-2">
+              <Label>Address</Label>
+              <textarea rows={2} value={form.company_address} onChange={e => setForm({ ...form, company_address: e.target.value })} className="w-full mt-1 px-3 py-2 rounded-lg border border-slate-200 text-sm" placeholder="Registered office address" data-testid="setting-company-address" />
+            </div>
+            <div>
+              <Label>State</Label>
+              <Input value={form.company_state} onChange={e => setForm({ ...form, company_state: e.target.value })} placeholder="Delhi" />
+            </div>
+            <div>
+              <Label>State Code</Label>
+              <Input value={form.company_state_code} onChange={e => setForm({ ...form, company_state_code: e.target.value })} placeholder="07" />
+            </div>
+            <div>
+              <Label>Phone</Label>
+              <Input value={form.company_phone} onChange={e => setForm({ ...form, company_phone: e.target.value })} />
+            </div>
+            <div>
+              <Label>Email</Label>
+              <Input value={form.company_email} onChange={e => setForm({ ...form, company_email: e.target.value })} />
+            </div>
+            <div className="md:col-span-2">
+              <Label>Company Logo</Label>
+              <div className="flex items-center gap-3 mt-1">
+                {form.company_logo_url ? <img src={form.company_logo_url} alt="logo" className="h-12 w-12 object-contain border rounded" /> : <div className="h-12 w-12 border rounded flex items-center justify-center text-[10px] text-slate-400">No logo</div>}
+                <input type="file" accept="image/*" data-testid="setting-company-logo" onChange={(e) => {
+                  const f = e.target.files?.[0]; if (!f) return;
+                  const rd = new FileReader(); rd.onload = () => setForm(v => ({ ...v, company_logo_url: rd.result })); rd.readAsDataURL(f);
+                }} className="text-xs" />
+                {form.company_logo_url && <Button variant="outline" size="sm" onClick={() => setForm(v => ({ ...v, company_logo_url: "" }))}>Remove</Button>}
+              </div>
+            </div>
+            <div>
+              <Label>Bank Name</Label>
+              <Input value={form.company_bank_name} onChange={e => setForm({ ...form, company_bank_name: e.target.value })} data-testid="setting-company-bank" />
+            </div>
+            <div>
+              <Label>Account No.</Label>
+              <Input value={form.company_bank_account} onChange={e => setForm({ ...form, company_bank_account: e.target.value })} />
+            </div>
+            <div>
+              <Label>IFSC</Label>
+              <Input value={form.company_bank_ifsc} onChange={e => setForm({ ...form, company_bank_ifsc: e.target.value })} />
+            </div>
+            <div>
+              <Label>Branch</Label>
+              <Input value={form.company_bank_branch} onChange={e => setForm({ ...form, company_bank_branch: e.target.value })} />
+            </div>
+            <div>
+              <Label>UPI ID (for QR)</Label>
+              <Input value={form.company_upi_id} onChange={e => setForm({ ...form, company_upi_id: e.target.value })} placeholder="gooil@hdfcbank" data-testid="setting-company-upi" />
+              <div className="text-[11px] text-slate-500 mt-1">A UPI QR is auto-generated on invoices from this ID.</div>
+            </div>
+            <div>
+              <Label>UPI Payee Name</Label>
+              <Input value={form.company_upi_name} onChange={e => setForm({ ...form, company_upi_name: e.target.value })} />
+            </div>
+            <div className="md:col-span-2">
+              <Label>Authorized Signatory (label)</Label>
+              <Input value={form.invoice_signatory} onChange={e => setForm({ ...form, invoice_signatory: e.target.value })} placeholder="For GO OIL Lubricants" />
+            </div>
+          </div>
+        </Card>
+
+        {/* Acknowledgement toggle (Vyapar-style) */}
+        <Card className="p-6 border-[#c9a227]/20 shadow-sm md:col-span-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-[#faf0cf] to-[#c9a227]/25 flex items-center justify-center"><FileText size={20} className="text-[#a67c00]" /></div>
+              <div>
+                <div className="font-display font-bold text-slate-900">Print Acknowledgement</div>
+                <div className="text-xs text-slate-500">When ON, an Acknowledgement / receiver-sign section is printed at the bottom of every invoice.</div>
+              </div>
+            </div>
+            <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+              <span className="text-sm text-slate-700">{form.invoice_show_acknowledgement ? "ON" : "OFF"}</span>
+              <input
+                type="checkbox"
+                checked={!!form.invoice_show_acknowledgement}
+                onChange={(e) => setForm({ ...form, invoice_show_acknowledgement: e.target.checked })}
+                data-testid="setting-ack-toggle"
+                className="h-5 w-9 appearance-none rounded-full bg-slate-300 checked:bg-[#a67c00] relative cursor-pointer transition-colors before:content-[''] before:absolute before:top-0.5 before:left-0.5 before:h-4 before:w-4 before:rounded-full before:bg-white before:transition-transform checked:before:translate-x-4"
+              />
+            </label>
           </div>
         </Card>
 

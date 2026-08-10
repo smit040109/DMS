@@ -750,6 +750,18 @@ export function DistributorsPage() {
                 <div><Label>Bank Name</Label><Input value={form.bank_name || ""} onChange={e => setForm({ ...form, bank_name: e.target.value })} /></div>
                 <div><Label>Bank Account</Label><Input value={form.bank_account || ""} onChange={e => setForm({ ...form, bank_account: e.target.value })} /></div>
                 <div><Label>IFSC</Label><Input value={form.bank_ifsc || ""} onChange={e => setForm({ ...form, bank_ifsc: e.target.value })} /></div>
+                <div><Label>Bank Branch</Label><Input value={form.bank_branch || ""} onChange={e => setForm({ ...form, bank_branch: e.target.value })} data-testid="d-branch" /></div>
+                <div><Label>UPI ID</Label><Input value={form.upi_id || ""} onChange={e => setForm({ ...form, upi_id: e.target.value })} placeholder="name@bank" data-testid="d-upi" /></div>
+                <div>
+                  <Label>Payment QR (image)</Label>
+                  <div className="flex items-center gap-2 mt-1">
+                    {form.qr_url ? <img src={form.qr_url} alt="qr" className="h-10 w-10 object-contain border rounded" /> : null}
+                    <input type="file" accept="image/*" data-testid="d-qr" onChange={(e) => {
+                      const f = e.target.files?.[0]; if (!f) return;
+                      const rd = new FileReader(); rd.onload = () => setForm(v => ({ ...v, qr_url: rd.result })); rd.readAsDataURL(f);
+                    }} className="text-xs" />
+                  </div>
+                </div>
               </div>
             </div>
             <LocationDocumentsBlock
@@ -783,7 +795,7 @@ export function DistributorDetailPage() {
   const load = async () => {
     const [dd, vv] = await Promise.all([dms.getDistributor(id), dms.getDistVisibility(id)]);
     setD(dd); setVis(vv.data);
-    setForm({ ...dd, ...(dd.kyc || {}) });
+    setForm({ ...dd, ...(dd.kyc || {}), ...(dd.bank || {}) });
   };
   useEffect(() => { load(); }, [id]);
 
@@ -799,8 +811,13 @@ export function DistributorDetailPage() {
   const saveKyc = async () => {
     try {
       const kyc = ["gstin", "pan", "aadhaar", "shop_license", "bank_name", "bank_account", "bank_ifsc", "notes"].reduce((a, k) => (a[k] = form[k] || "", a), {});
+      const bank = {
+        gstin: form.gstin || "", bank_name: form.bank_name || "", bank_account: form.bank_account || "",
+        bank_ifsc: form.bank_ifsc || "", bank_branch: form.bank_branch || "",
+        upi_id: form.upi_id || "", upi_name: form.upi_name || "", qr_url: form.qr_url || "",
+      };
       await dms.updateDistributor(id, {
-        name: form.name, phone: form.phone, address: form.address, region: form.region, credit_limit: Number(form.credit_limit || 0), kyc,
+        name: form.name, phone: form.phone, address: form.address, region: form.region, credit_limit: Number(form.credit_limit || 0), kyc, bank,
         documents: form.documents || [], gps_lat: form.gps_lat, gps_lng: form.gps_lng, location_link: form.location_link,
       });
       toast.success("Updated"); setEditKyc(false); load();
@@ -843,22 +860,40 @@ export function DistributorDetailPage() {
                 ["Business Name", d.name], ["Phone", d.phone], ["Email", d.email],
                 ["Address", d.address], ["Region", d.region], ["Credit Limit", inr(d.credit_limit)],
                 ["GSTIN", d.kyc?.gstin], ["PAN", d.kyc?.pan], ["Shop License", d.kyc?.shop_license],
-                ["Bank Name", d.kyc?.bank_name], ["Account No.", d.kyc?.bank_account], ["IFSC", d.kyc?.bank_ifsc],
+                ["Bank Name", d.bank?.bank_name || d.kyc?.bank_name], ["Account No.", d.bank?.bank_account || d.kyc?.bank_account], ["IFSC", d.bank?.bank_ifsc || d.kyc?.bank_ifsc],
+                ["Bank Branch", d.bank?.bank_branch], ["UPI ID", d.bank?.upi_id],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between border-b border-slate-100 py-1.5">
                   <span className="text-slate-500">{k}</span>
                   <span className="text-slate-900 font-medium">{v || "—"}</span>
                 </div>
               ))}
+              {d.bank?.qr_url && (
+                <div className="md:col-span-2 mt-2">
+                  <div className="text-xs uppercase tracking-wider text-slate-500 mb-1 font-semibold">Payment QR</div>
+                  <img src={d.bank.qr_url} alt="Payment QR" className="h-32 w-32 object-contain border rounded" data-testid="dist-qr-view" />
+                </div>
+              )}
               <div className="md:col-span-2 mt-2">
                 <DocumentsGallery documents={d.documents || []} locationLink={d.location_link} lat={d.gps_lat} lng={d.gps_lng} />
               </div>
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3">
-              {["name", "phone", "address", "region", "credit_limit", "gstin", "pan", "shop_license", "bank_name", "bank_account", "bank_ifsc"].map(k => (
+              {["name", "phone", "address", "region", "credit_limit", "gstin", "pan", "shop_license", "bank_name", "bank_account", "bank_ifsc", "bank_branch", "upi_id"].map(k => (
                 <div key={k} className={k === "address" ? "col-span-2" : ""}><Label className="capitalize">{k.replace(/_/g, " ")}</Label><Input value={form[k] || ""} onChange={e => setForm({ ...form, [k]: e.target.value })} /></div>
               ))}
+              <div className="col-span-2">
+                <Label>Payment QR (image)</Label>
+                <div className="flex items-center gap-2 mt-1">
+                  {form.qr_url ? <img src={form.qr_url} alt="qr" className="h-12 w-12 object-contain border rounded" /> : null}
+                  <input type="file" accept="image/*" onChange={(e) => {
+                    const f = e.target.files?.[0]; if (!f) return;
+                    const rd = new FileReader(); rd.onload = () => setForm(v => ({ ...v, qr_url: rd.result })); rd.readAsDataURL(f);
+                  }} className="text-xs" />
+                  {form.qr_url && <Button variant="outline" size="sm" onClick={() => setForm(v => ({ ...v, qr_url: "" }))}>Remove</Button>}
+                </div>
+              </div>
               <div className="col-span-2">
                 <LocationDocumentsBlock
                   lat={form.gps_lat} lng={form.gps_lng} locationLink={form.location_link}

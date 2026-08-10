@@ -57,7 +57,7 @@ function FlyTo({ target }) {
 // ============================================================================
 export function LiveTrackingPage() {
   const { user } = useAuth();
-  const [live, setLive] = useState({ salespersons: [], distributors: [], retailers: [], team_leaders: [] });
+  const [live, setLive] = useState({ salespersons: [], distributors: [], retailers: [], team_leaders: [], field_staff: [] });
   const [selectedSp, setSelectedSp] = useState(null);
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [detail, setDetail] = useState(null); // { punch, route, distance_km, visited, working_hours }
@@ -238,6 +238,7 @@ export function LiveTrackingPage() {
               <LegendBadge color="#6366f1" glyph="T" label={`Team Leaders (${(live.team_leaders || []).length})`} />
               <LegendBadge color="#0f766e" glyph="D" label={`Distributors (${live.distributors.length})`} />
               <LegendBadge color="#f59e0b" glyph="R" label={`Retailers (${live.retailers.length})`} />
+              <LegendBadge color="#10b981" glyph="●" label={`On-duty staff (${(live.field_staff || []).filter(f => f.online).length})`} />
             </div>
           </Card>
         </div>
@@ -310,6 +311,23 @@ export function LiveTrackingPage() {
               {polyline.length > 1 && (
                 <Polyline positions={polyline} color="#e11d48" weight={4} opacity={0.85} />
               )}
+
+              {/* CONTINUATION v6: ALL other punched-in field staff (distributor / dist-accountant /
+                  regional-manager / retailer) — live GPS while on duty. */}
+              {(live.field_staff || [])
+                .filter(f => f.lat && f.lng && !["salesperson", "team_leader"].includes(f.role))
+                .map(f => (
+                  <Marker key={`fs-${f.id}`} position={[f.lat, f.lng]} icon={f.online ? ICON_SP : ICON_SP_OFF}>
+                    <Popup>
+                      <b>{f.name}</b><br/>
+                      <span className="text-xs">{f.role_label}</span><br/>
+                      <span className={`text-xs ${f.online ? "text-emerald-700" : "text-slate-500"}`}>
+                        {f.online ? "● On duty" : "○ Idle"}
+                      </span>
+                      {f.last_ping_at && <><br/><span className="text-[11px] text-slate-500">Last: {niceDate(f.last_ping_at)}</span></>}
+                    </Popup>
+                  </Marker>
+                ))}
             </MapContainer>
           )}
         </Card>

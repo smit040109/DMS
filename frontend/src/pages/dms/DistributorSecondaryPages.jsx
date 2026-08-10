@@ -71,6 +71,21 @@ export function DistRetailersPage() {
             <div><Label>Password</Label><Input value={form.password || ""} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
             <div><Label>GSTIN</Label><Input value={form.gstin || ""} onChange={e => setForm({ ...form, gstin: e.target.value })} /></div>
             <div><Label>Shop License</Label><Input value={form.shop_license || ""} onChange={e => setForm({ ...form, shop_license: e.target.value })} /></div>
+            <div className="col-span-2 text-xs uppercase tracking-wider font-semibold text-slate-500 pt-1">Bank & UPI (optional)</div>
+            <div><Label>Bank Name</Label><Input value={form.bank_name || ""} onChange={e => setForm({ ...form, bank_name: e.target.value })} data-testid="ret-bank-name" /></div>
+            <div><Label>Account No.</Label><Input value={form.bank_account || ""} onChange={e => setForm({ ...form, bank_account: e.target.value })} /></div>
+            <div><Label>IFSC</Label><Input value={form.bank_ifsc || ""} onChange={e => setForm({ ...form, bank_ifsc: e.target.value })} /></div>
+            <div><Label>UPI ID</Label><Input value={form.upi_id || ""} onChange={e => setForm({ ...form, upi_id: e.target.value })} placeholder="name@bank" data-testid="ret-upi" /></div>
+            <div className="col-span-2">
+              <Label>Payment QR (image)</Label>
+              <div className="flex items-center gap-2 mt-1">
+                {form.qr_url ? <img src={form.qr_url} alt="qr" className="h-10 w-10 object-contain border rounded" /> : null}
+                <input type="file" accept="image/*" data-testid="ret-qr" onChange={(e) => {
+                  const f = e.target.files?.[0]; if (!f) return;
+                  const rd = new FileReader(); rd.onload = () => setForm(v => ({ ...v, qr_url: rd.result })); rd.readAsDataURL(f);
+                }} className="text-xs" />
+              </div>
+            </div>
             <div className="col-span-2">
               <LocationDocumentsBlock
                 lat={form.gps_lat ?? ""}
@@ -147,10 +162,16 @@ export function DistRetailerDetailPage() {
       {tab === "info" && (
         <Card className="p-6">
           <div className="grid grid-cols-2 gap-x-8 gap-y-2 text-sm">
-            {[["Name", r.name], ["Phone", r.phone], ["Address", r.address], ["Region", r.region], ["GSTIN", r.kyc?.gstin], ["Shop License", r.kyc?.shop_license], ["Credit Limit", inr(r.credit_limit)], ["GPS", r.gps_lat ? `${r.gps_lat.toFixed(4)}, ${r.gps_lng.toFixed(4)}` : "—"]].map(([k, v]) => (
+            {[["Name", r.name], ["Phone", r.phone], ["Address", r.address], ["Region", r.region], ["GSTIN", r.kyc?.gstin], ["Shop License", r.kyc?.shop_license], ["Credit Limit", inr(r.credit_limit)], ["GPS", r.gps_lat ? `${r.gps_lat.toFixed(4)}, ${r.gps_lng.toFixed(4)}` : "—"], ["Bank", r.bank?.bank_name], ["Account No.", r.bank?.bank_account], ["IFSC", r.bank?.bank_ifsc], ["UPI ID", r.bank?.upi_id]].map(([k, v]) => (
               <div key={k} className="flex justify-between border-b border-slate-100 py-1.5"><span className="text-slate-500">{k}</span><span className="text-slate-900 font-medium">{v || "—"}</span></div>
             ))}
           </div>
+          {r.bank?.qr_url && (
+            <div className="mt-4">
+              <div className="text-xs uppercase tracking-wider text-slate-500 mb-1 font-semibold">Payment QR</div>
+              <img src={r.bank.qr_url} alt="Payment QR" className="h-32 w-32 object-contain border rounded" data-testid="ret-qr-view" />
+            </div>
+          )}
           <div className="mt-4">
             <DocumentsGallery documents={r.documents || []} locationLink={r.location_link} lat={r.gps_lat} lng={r.gps_lng} />
           </div>
