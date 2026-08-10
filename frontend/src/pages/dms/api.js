@@ -136,6 +136,7 @@ export const dms = {
   trackingLive: () => api.get("/dms/tracking/live").then(r => r.data),
   trackingSalesperson: (sid, date) => api.get(`/dms/tracking/salesperson/${sid}`, { params: date ? { date } : {} }).then(r => r.data),
   trackingHistory: (sid, days = 30) => api.get(`/dms/tracking/salesperson/${sid}/history`, { params: { days } }).then(r => r.data),
+  trackingRoutes: (sid, days = 7) => api.get(`/dms/tracking/salesperson/${sid}/routes`, { params: { days } }).then(r => r.data),
   // AI copilot report export (PDF / Excel) — returns a Blob
   aiExport: (body) => api.post("/ai/copilot/export", body, { responseType: "blob" }).then(r => r.data),
   // Owner: wipe demo/business data to a clean production state

@@ -3389,6 +3389,44 @@ def build_dms_router(db, get_current_user):
             })
         return {"data": out}
 
+    @router.get("/tracking/salesperson/{sid}/routes")
+    async def tracking_multi_routes(
+        sid: str,
+        days: int = Query(7, ge=1, le=31),
+        user: dict = Depends(get_current_user),
+    ):
+        """Per-day full routes for the last N days — for multi-day route comparison/playback."""
+        allowed = await _sp_visible_ids_for(user)
+        if sid not in allowed:
+            raise HTTPException(status_code=403, detail="Not permitted")
+        start = datetime.now(timezone.utc) - timedelta(days=days)
+        # all pings in window, ordered
+        pings = await db.dms_sp_pings.find(
+            {"salesperson_id": sid, "created_at": {"$gte": start.isoformat()}},
+            {"_id": 0, "lat": 1, "lng": 1, "created_at": 1, "date": 1},
+        ).sort("created_at", 1).to_list(20000)
+        punches = {p["date"]: p async for p in db.dms_punch.find(
+            {"salesperson_id": sid, "date": {"$gte": start.strftime("%Y-%m-%d")}}, {"_id": 0})}
+        by_date: Dict[str, list] = {}
+        for p in pings:
+            by_date.setdefault(p["date"], []).append(p)
+        out = []
+        for date_str in sorted(by_date.keys(), reverse=True):
+            pts = by_date[date_str]
+            dist = 0.0
+            for i in range(1, len(pts)):
+                dist += _haversine_km(pts[i-1]["lat"], pts[i-1]["lng"], pts[i]["lat"], pts[i]["lng"])
+            pk = punches.get(date_str) or {}
+            out.append({
+                "date": date_str,
+                "points": pts,
+                "distance_km": _round(dist, 2),
+                "in_at": pk.get("in_at"),
+                "out_at": pk.get("out_at"),
+            })
+        sp = await db.users.find_one({"id": sid}, {"_id": 0, "name": 1, "phone": 1})
+        return {"salesperson": sp or {"name": ""}, "days": days, "data": out}
+
     # =========================================================================
     # OWNER — Complete User Management + Impersonation (Phase 1)
     # =========================================================================

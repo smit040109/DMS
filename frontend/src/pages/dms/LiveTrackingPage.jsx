@@ -41,6 +41,9 @@ const ICON_TL_OFF = makeIcon("#94a3b8", "T");   // slate for offline TL
 // India centre default
 const INDIA_CENTER = [22.5, 79.5];
 
+// Distinct colors for multi-day route comparison (index 0 = most recent day)
+const DAY_COLORS = ["#e11d48", "#2563eb", "#059669", "#d97706", "#7c3aed", "#0891b2", "#db2777"];
+
 // Helper — recentre the map when a salesperson is picked
 function FlyTo({ target }) {
   const map = useMap();
@@ -94,6 +97,9 @@ export function LiveTrackingPage() {
   const [flyTarget, setFlyTarget] = useState(null);
   const [playIdx, setPlayIdx] = useState(0);   // route playback cursor
   const [playing, setPlaying] = useState(false);
+  const [multiDay, setMultiDay] = useState(false);   // compare last 7 days
+  const [routes, setRoutes] = useState([]);          // [{date, points, distance_km, in_at, out_at}]
+  const [hiddenDays, setHiddenDays] = useState({});  // { date: true } => hidden
   const timerRef = useRef();
 
   const refresh = useCallback(async () => {
@@ -101,7 +107,6 @@ export function LiveTrackingPage() {
       const d = await dms.trackingLive();
       setLive(d);
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.warn("tracking/live failed", e);
     } finally {
       setLoading(false);
@@ -150,6 +155,21 @@ export function LiveTrackingPage() {
     }, 700);
     return () => clearInterval(t);
   }, [playing, detail]);
+
+  // Multi-day: fetch last 7 days of routes when enabled / salesperson changes
+  useEffect(() => {
+    if (!multiDay || !selectedSp) { setRoutes([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await dms.trackingRoutes(selectedSp, 7);
+        if (!cancelled) { setRoutes(r.data || []); setHiddenDays({}); }
+      } catch (e) {
+        if (!cancelled) toast.error(e?.response?.data?.detail || "Failed to load 7-day routes");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [multiDay, selectedSp]);
 
   const selectedSpMeta = useMemo(
     () => live.salespersons.find(s => s.id === selectedSp),
@@ -301,6 +321,42 @@ export function LiveTrackingPage() {
                 </div>
               )}
 
+              {/* Multi-Day Route Comparison (last 7 days) */}
+              <div className="rounded-lg border border-slate-200 p-3">
+                <label className="flex items-center justify-between cursor-pointer select-none">
+                  <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold flex items-center gap-1">
+                    <RouteIcon size={12} /> Compare Last 7 Days
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={multiDay}
+                    onChange={e => setMultiDay(e.target.checked)}
+                    data-testid="multiday-toggle"
+                    className="h-5 w-9 appearance-none rounded-full bg-slate-300 checked:bg-[#c9a227] relative cursor-pointer transition-colors before:content-[''] before:absolute before:top-0.5 before:left-0.5 before:h-4 before:w-4 before:rounded-full before:bg-white before:transition-transform checked:before:translate-x-4"
+                  />
+                </label>
+                {multiDay && (
+                  <div className="mt-2 space-y-1 max-h-44 overflow-y-auto" data-testid="multiday-list">
+                    {routes.length === 0 && (
+                      <div className="text-[11px] text-slate-400 py-2 text-center">No route data in last 7 days</div>
+                    )}
+                    {routes.map((r, i) => (
+                      <label key={r.date} className="flex items-center gap-2 text-xs px-1.5 py-1 rounded hover:bg-slate-50 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={!hiddenDays[r.date]}
+                          onChange={() => setHiddenDays(h => ({ ...h, [r.date]: !h[r.date] }))}
+                          className="accent-[#c9a227]"
+                        />
+                        <span className="h-2.5 w-2.5 rounded-full shrink-0" style={{ background: DAY_COLORS[i % DAY_COLORS.length] }} />
+                        <span className="flex-1 truncate">{r.date}{i === 0 ? " (today)" : ""}</span>
+                        <span className="text-slate-500">{r.distance_km} km · {r.points?.length || 0}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {history.length > 0 && (
                 <div>
                   <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1 mt-2">Recent 30 days</div>
@@ -398,15 +454,14 @@ export function LiveTrackingPage() {
                 </Marker>
               ))}
 
-              {/* Route for selected salesperson — faint full route + bold played segment */}
-              {fullPolyline.length > 1 && isPartial && (
+              {/* Single-day route (faint full + bold played + playback marker) */}
+              {!multiDay && fullPolyline.length > 1 && isPartial && (
                 <Polyline positions={fullPolyline} color="#e11d48" weight={2} opacity={0.25} dashArray="4 6" />
               )}
-              {playedPolyline.length > 1 && (
+              {!multiDay && playedPolyline.length > 1 && (
                 <Polyline positions={playedPolyline} color="#e11d48" weight={4} opacity={0.9} />
               )}
-              {/* Playback position marker */}
-              {playPoint && routeLen > 1 && (
+              {!multiDay && playPoint && routeLen > 1 && (
                 <AnimatedMarker position={[playPoint.lat, playPoint.lng]} icon={ICON_SP}>
                   <Popup>
                     <b>{selectedSpMeta?.name || "Salesperson"}</b><br/>
@@ -415,6 +470,26 @@ export function LiveTrackingPage() {
                   </Popup>
                 </AnimatedMarker>
               )}
+
+              {/* Multi-day comparison — one coloured polyline per day */}
+              {multiDay && routes.map((r, i) => {
+                if (hiddenDays[r.date] || !(r.points?.length > 1)) return null;
+                const pos = r.points.map(p => [p.lat, p.lng]);
+                return (
+                  <Polyline
+                    key={`route-${r.date}`}
+                    positions={pos}
+                    color={DAY_COLORS[i % DAY_COLORS.length]}
+                    weight={i === 0 ? 5 : 3}
+                    opacity={i === 0 ? 0.95 : 0.7}
+                  >
+                    <Popup>
+                      <b>{r.date}{i === 0 ? " (today)" : ""}</b><br/>
+                      <span className="text-xs">{r.distance_km} km · {r.points.length} pings</span>
+                    </Popup>
+                  </Polyline>
+                );
+              })}
 
               {/* CONTINUATION v6: ALL other punched-in field staff (distributor / dist-accountant /
                   regional-manager / retailer) — live GPS while on duty. */}

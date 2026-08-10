@@ -69,18 +69,17 @@ async def main():
     await S._seed_godowns_with_stock(db)
     print("[seed] core business data seeded")
 
-    # 4. Salesperson PUNCH-IN + GPS TRAIL across Delhi (for Live Tracking)
+    # 4. Salesperson PUNCH-IN + GPS TRAIL across Delhi (Live Tracking + multi-day)
     sp = ids.get("salesperson@gooil.com")
     if sp:
         now = datetime.now(timezone.utc)
-        today = now.strftime("%Y-%m-%d")
 
         def iso(dt):
             return dt.isoformat()
 
-        # Route: distributor1 -> retailer1 (Karol Bagh) -> retailer2 (Rohini)
-        # Coordinates chosen to pass within 200m of each shop so "visited" registers.
-        route = [
+        # Base route: distributor1 -> retailer1 (Karol Bagh) -> retailer2 (Rohini).
+        # Passes within 200m of each shop so "visited" registers on the latest day.
+        base_route = [
             (28.6139, 77.2090),  # distributor1 (Delhi) — start
             (28.6180, 77.2110),
             (28.6250, 77.2135),
@@ -90,46 +89,60 @@ async def main():
             (28.6850, 77.1350),
             (28.7100, 77.1000),
             (28.7300, 77.0750),
-            (28.7495, 77.0567),  # retailer2 — Verma Motors (Rohini) — latest
+            (28.7495, 77.0567),  # retailer2 — Verma Motors (Rohini)
         ]
-        n = len(route)
-        in_at = now - timedelta(hours=3)
 
-        await db.dms_punch.insert_one({
-            "id": S._nid("pn"),
-            "tenant_id": DMS,
-            "salesperson_id": sp,
-            "date": today,
-            "in_at": iso(in_at),
-            "out_at": None,
-            "gps_in": {"lat": route[0][0], "lng": route[0][1]},
-            "gps_out": None,
-        })
+        total_pings = 0
+        # Seed the last 7 days. Day 0 = today (exact base route so "visited" is clean),
+        # older days get a small per-day offset so the routes differ for comparison.
+        for day_ago in range(0, 7):
+            day_dt = now - timedelta(days=day_ago)
+            day = day_dt.strftime("%Y-%m-%d")
+            # per-day drift (0 for today)
+            off_lat = 0.0 if day_ago == 0 else (0.004 * day_ago * (1 if day_ago % 2 else -1))
+            off_lng = 0.0 if day_ago == 0 else (0.006 * day_ago * (-1 if day_ago % 2 else 1))
+            route = [(lat + off_lat, lng + off_lng) for (lat, lng) in base_route]
+            n = len(route)
 
-        pings = []
-        for i, (lat, lng) in enumerate(route):
-            # evenly spread pings from in_at .. now
-            t = in_at + timedelta(seconds=int((now - in_at).total_seconds() * i / max(1, n - 1)))
-            pings.append({
-                "id": S._nid("png"),
+            in_at = day_dt.replace(hour=9, minute=0, second=0, microsecond=0)
+            out_at = None if day_ago == 0 else day_dt.replace(hour=17, minute=30, second=0, microsecond=0)
+            end_ping = now if day_ago == 0 else in_at + timedelta(hours=8, minutes=30)
+
+            await db.dms_punch.insert_one({
+                "id": S._nid("pn"),
                 "tenant_id": DMS,
                 "salesperson_id": sp,
-                "lat": float(lat),
-                "lng": float(lng),
-                "accuracy": 12.0,
-                "speed": 18.0,
-                "date": today,
-                "created_at": iso(t),
+                "date": day,
+                "in_at": iso(in_at),
+                "out_at": iso(out_at) if out_at else None,
+                "gps_in": {"lat": route[0][0], "lng": route[0][1]},
+                "gps_out": ({"lat": route[-1][0], "lng": route[-1][1]} if out_at else None),
             })
-        await db.dms_sp_pings.insert_many(pings)
 
-        # mark salesperson live at last point
-        last = route[-1]
+            pings = []
+            for i, (lat, lng) in enumerate(route):
+                t = in_at + timedelta(seconds=int((end_ping - in_at).total_seconds() * i / max(1, n - 1)))
+                pings.append({
+                    "id": S._nid("png"),
+                    "tenant_id": DMS,
+                    "salesperson_id": sp,
+                    "lat": float(lat),
+                    "lng": float(lng),
+                    "accuracy": 12.0,
+                    "speed": 18.0,
+                    "date": day,
+                    "created_at": iso(t),
+                })
+            await db.dms_sp_pings.insert_many(pings)
+            total_pings += len(pings)
+
+        # mark salesperson live at last point of today's route
+        last = base_route[-1]
         await db.users.update_one({"id": sp}, {"$set": {
             "last_active_at": iso(now),
             "last_gps": {"lat": last[0], "lng": last[1], "at": iso(now)},
         }})
-        print(f"[seed] salesperson punch + {len(pings)} GPS pings seeded (route across Delhi)")
+        print(f"[seed] salesperson punch + {total_pings} GPS pings seeded across 7 days")
     else:
         print("[seed] WARN: salesperson user not found — skipped tracking seed")
 
