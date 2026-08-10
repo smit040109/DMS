@@ -10,7 +10,7 @@ import re
 from io import BytesIO
 
 # Get backend URL from environment
-BACKEND_URL = os.getenv("REACT_APP_BACKEND_URL", "https://gooil-dms.preview.emergentagent.com")
+BACKEND_URL = os.getenv("REACT_APP_BACKEND_URL", "https://transport-bill-3.preview.emergentagent.com")
 BASE_URL = f"{BACKEND_URL}/api"
 
 # Test credentials

@@ -129,6 +129,16 @@ async def _seed_users(raw_db):
     ]
     ids: dict = {}
     for email, name, role, phone in users_spec:
+        existing = await raw_db.users.find_one({"email": email})
+        if existing:
+            if existing.get("tenant_id") == DMS_TENANT_ID:
+                # Already a DMS demo account — keep as-is (don't clobber owner edits).
+                ids[email] = existing["id"]
+                continue
+            # Stale account from another tenant's seed sharing this email
+            # (the `email` unique index is global) — remove so we can create
+            # the authoritative DMS demo account.
+            await raw_db.users.delete_one({"email": email})
         uid = _nid("usr")
         ids[email] = uid
         await raw_db.users.insert_one({
@@ -712,10 +722,11 @@ async def seed_dms(raw_db):
     except Exception:
         pass
 
-    # Bootstrap login accounts ONLY if none exist for this tenant (never wipe/reseed).
-    user_count = await raw_db.users.count_documents({"tenant_id": DMS_TENANT_ID})
-    if user_count == 0:
-        await _seed_users(raw_db)
+    # Bootstrap login accounts. `_seed_users` is idempotent: it keeps any
+    # existing DMS demo accounts untouched and only creates the ones that are
+    # missing (also clearing stale cross-tenant email collisions). This makes
+    # startup self-healing if a previous run partially seeded users.
+    await _seed_users(raw_db)
 
     await raw_db.dms_meta.update_one(
         {"id": "seed_marker"},
