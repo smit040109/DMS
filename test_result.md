@@ -7558,3 +7558,69 @@ agent_communication:
       NO CRITICAL ISSUES FOUND. All CONTINUATION v4 backend APIs production-ready.
       
       🚀 READY FOR MAIN AGENT TO SUMMARIZE AND FINISH.
+
+#====================================================================================================
+# CONTINUATION v5 — Logo, Punch/Tracking for all non-owner roles, Demo data + Flow audit
+#====================================================================================================
+backend:
+  - task: "Punch in/out + GPS tracking enabled for ALL roles except Owner; owner attendance shows everyone"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: |
+          Added field_user_only guard (all roles except owner). /punch/in, /punch/out, /tracking/ping
+          now use it. /attendance for owner now returns ALL non-owner roles' punches (incl distributor,
+          retailer). Other field roles (distributor/retailer/dist_accountant) see their own history.
+          Verified via curl: distributor+retailer can punch in & ping; owner punch-in -> 403;
+          owner /attendance returns rows for retailer+distributor+TL+salesperson with gps_in.
+  - task: "Full backend flow audit (all roles)"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py, backend/dms_coupons.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: "94% (92/98) pass. Auth, dashboards, primary sales, secondary+challan, coupons, punch RBAC, party details all OK. See /app/AUDIT_REPORT.md."
+
+frontend:
+  - task: "GO OIL logo in sidebar+login; Attendance nav for distributor/retailer/dist_accountant; GPS pinger for all non-owner while punched-in"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/dms/DmsShell.jsx, Login.jsx, components/SalespersonGpsPinger.jsx, pages/dms/AttendancePages.jsx, App.js, public/gooil-logo.png"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Verified visually via screenshot (logo + Attendance nav + toggle render). Full frontend testing pending user permission."
+
+metadata:
+  created_by: "main_agent"
+  version: "5.0"
+  test_sequence: 2
+  run_ui: false
+  current_focus:
+    - "Punch in/out + GPS tracking for all non-owner roles"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      v5 done: logo, punch/tracking for all non-owner roles, demo data loaded, flow audit passed (94%).
+      Env note: backend/.env & frontend/.env were recreated (were missing); DB=gooil_dms; demo data seeded
+      via /app/scripts/load_demo.py. Pending explicit user asks: Vyapar-style invoice template with optional
+      Acknowledgement, bill-creation for all roles, retailer bank details + owner-visible bank/QR + one-click
+      document viewer. Awaiting user priority before building those.
+

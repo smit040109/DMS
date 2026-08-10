@@ -110,7 +110,7 @@ export function AttendancePage() {
   return (
     <div>
       <PageHeader title="Attendance" subtitle={subtitle} />
-      {(role === "salesperson" || role === "team_leader") && <PunchCard role={role} onChange={refresh} />}
+      {!isOwner && <PunchCard role={role} onChange={refresh} />}
 
       <Card className="p-3 mb-3">
         <div className="relative max-w-sm">

@@ -89,6 +89,7 @@ const NAV_BY_ROLE = {
     { label: "My Stock",          to: "/dms/distributor/stock",          icon: "Warehouse" },
     { label: "My Retailers",      to: "/dms/distributor/retailers",      icon: "Store" },
     { label: "Retailer Orders",   to: "/dms/distributor/retail-orders",  icon: "ShoppingCart" },
+    { label: "Attendance",        to: "/dms/attendance-me",              icon: "ClipboardList" },
     // Phase 2C — direct sales + documents
     { label: "+Add Sales",        to: "/dms/direct-sales",               icon: "Receipt" },
     { label: "Documents",         to: "/dms/documents",                  icon: "FileText" },
@@ -107,6 +108,7 @@ const NAV_BY_ROLE = {
     { label: "Primary Orders",    to: "/dms/distributor/my-orders",      icon: "ClipboardList" },
     { label: "+Add Sales",        to: "/dms/direct-sales",               icon: "Receipt" },
     { label: "Documents",         to: "/dms/documents",                  icon: "FileText" },
+    { label: "Attendance",        to: "/dms/attendance-me",              icon: "ClipboardList" },
     { label: "Expenses",          to: "/dms/expenses",                   icon: "Receipt" },
     { label: "Reports",           to: "/dms/reports",                    icon: "TrendingUp" },
   ],
@@ -115,6 +117,7 @@ const NAV_BY_ROLE = {
     { label: "Browse & Order",  to: "/dms/retailer/browse",    icon: "ShoppingCart" },
     { label: "My Orders",       to: "/dms/retailer/my-orders", icon: "ClipboardList" },
     { label: "My Wallet",       to: "/dms/retailer/wallet",    icon: "Wallet" },
+    { label: "Attendance",      to: "/dms/attendance-me",      icon: "ClipboardList" },
   ],
   salesperson: [
     { label: "Dashboard",       to: "/dms",                            icon: "LayoutDashboard" },
@@ -178,8 +181,8 @@ const ROLE_LABEL = {
 function BrandMark({ small }) {
   return (
     <div className="flex items-center gap-2.5">
-      <div className={`${small ? "h-8 w-8" : "h-9 w-9"} rounded-xl bg-gradient-to-br from-[#c9a227] to-[#a67c00] flex items-center justify-center shadow-md shadow-[#c9a227]/25`}>
-        <Droplet size={small ? 16 : 18} className="text-white" />
+      <div className={`${small ? "h-8 w-8" : "h-9 w-9"} rounded-xl bg-[#1a1a1a] flex items-center justify-center shadow-md shadow-black/25 overflow-hidden`}>
+        <img src="/gooil-logo.png" alt="GO OIL" className="h-full w-full object-contain p-0.5" />
       </div>
       <div>
         <div className="font-display font-extrabold text-slate-900 leading-none">GO OIL</div>

@@ -166,6 +166,7 @@ function AppRoutes() {
       <Route path="/dms/regional-manager/retailers"     element={<DmsPage Component={RmRetailersPage} />} />
       <Route path="/dms/regional-manager/attendance"    element={<DmsPage Component={AttendancePage} />} />
       <Route path="/dms/owner/attendance"               element={<DmsPage Component={AttendancePage} />} />
+      <Route path="/dms/attendance-me"                  element={<DmsPage Component={AttendancePage} />} />
       <Route path="/dms/owner/retailer-access"          element={<DmsPage Component={RetailerAccessPage} />} />      <Route path="/dms/salesperson/attendance"         element={<DmsPage Component={AttendancePage} />} />
 
       {/* Distributor */}

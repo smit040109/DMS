@@ -3,24 +3,31 @@ import { useAuth } from "@/context/AuthContext";
 import { dms } from "@/pages/dms/api";
 
 /**
- * SalespersonGpsPinger — mounts inside DmsShell.
- * If the current user is a salesperson AND the browser supports geolocation,
- * post the location every 60s so the Owner / TL / RM see them live on the map.
- * Silent on error (no toasts, no console spam).
+ * FieldGpsPinger — mounts inside DmsShell.
+ * For EVERY role except the Company Owner: while the user is currently
+ * PUNCHED IN, post the location every 60s so the Owner / TL / RM can see them
+ * live on the map. Stops pinging once they punch out. Silent on error.
  */
 export default function SalespersonGpsPinger() {
   const { user, impersonation } = useAuth();
   const timerRef = useRef();
 
   useEffect(() => {
-    // Only ping when the *effective* user is a salesperson
-    if (!user || user.role !== "salesperson") return;
+    // Everyone except the owner is a field user; owner is office-only.
+    if (!user || user.role === "owner") return;
     // Don't ping while owner is impersonating (their real position would leak)
     if (impersonation) return;
     if (!("geolocation" in navigator)) return;
 
     let cancelled = false;
-    const send = () => {
+    const send = async () => {
+      // Only track between punch-in and punch-out
+      let punchedIn = false;
+      try {
+        const p = await dms.punchToday();
+        punchedIn = !!p?.punched_in;
+      } catch { punchedIn = false; }
+      if (!punchedIn || cancelled) return;
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           if (cancelled) return;
@@ -32,7 +39,6 @@ export default function SalespersonGpsPinger() {
       );
     };
 
-    // Send immediately on login, then every 60s
     send();
     timerRef.current = setInterval(send, 60_000);
     return () => {

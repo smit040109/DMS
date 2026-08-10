@@ -54,8 +54,8 @@ export default function Login() {
         <div className="absolute -top-24 -right-24 h-96 w-96 rounded-full bg-[#c9a227]/20 blur-3xl" />
         <div className="absolute -bottom-20 -left-20 h-80 w-80 rounded-full bg-[#a67c00]/10 blur-3xl" />
         <div className="relative z-10 flex items-center gap-3">
-          <div className="h-12 w-12 rounded-2xl bg-gradient-to-br from-[#c9a227] to-[#a67c00] flex items-center justify-center shadow-lg shadow-[#c9a227]/30">
-            <Droplet size={22} className="text-white" />
+          <div className="h-12 w-12 rounded-2xl bg-[#1a1a1a] flex items-center justify-center shadow-lg shadow-black/30 overflow-hidden">
+            <img src="/gooil-logo.png" alt="GO OIL" className="h-full w-full object-contain p-1" />
           </div>
           <div>
             <div className="font-display font-extrabold text-2xl leading-none text-slate-900">GO OIL</div>

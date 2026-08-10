@@ -66,6 +66,16 @@ def build_dms_router(db, get_current_user):
     regional_manager_only = _guard("regional_manager")
     dist_or_dacct = _guard("distributor", "distributor_accountant")
 
+    # Field-staff guard — EVERY logged-in role EXCEPT the Company Owner may
+    # punch in/out and be GPS-tracked (owner is office-only).
+    def _field_user_guard():
+        async def _dep(user: dict = Depends(get_current_user)) -> dict:
+            if user.get("role") == "owner":
+                raise HTTPException(status_code=403, detail="Owner does not punch in/out")
+            return user
+        return _dep
+    field_user_only = _field_user_guard()
+
     # =========================================================================
     # Notifications (simple in-app)
     # =========================================================================
@@ -2070,7 +2080,7 @@ def build_dms_router(db, get_current_user):
 
     # ── punch in / out ──
     @router.post("/punch/in")
-    async def punch_in(body: Dict[str, Any] = Body(...), user: dict = Depends(salesperson_only)):
+    async def punch_in(body: Dict[str, Any] = Body(...), user: dict = Depends(field_user_only)):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         existing = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today, "out_at": None})
         if existing:
@@ -2092,7 +2102,7 @@ def build_dms_router(db, get_current_user):
         return {"ok": True, "punch": _clean(doc)}
 
     @router.post("/punch/out")
-    async def punch_out(body: Dict[str, Any] = Body(...), user: dict = Depends(salesperson_only)):
+    async def punch_out(body: Dict[str, Any] = Body(...), user: dict = Depends(field_user_only)):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         p = await db.dms_punch.find_one({"salesperson_id": user["id"], "date": today, "out_at": None})
         if not p:
@@ -2193,9 +2203,13 @@ def build_dms_router(db, get_current_user):
             sp_ids = list({a["salesperson_id"] async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": dids}}, {"_id": 0, "salesperson_id": 1})})
             ids = [user["id"]] + tlids + sp_ids
         elif role in ("owner", "super_admin", "owner_accountant"):
-            ids = [u["id"] async for u in db.users.find({"role": {"$in": ["salesperson", "team_leader", "regional_manager"]}}, {"_id": 0, "id": 1})]
+            # Owner sees ALL field staff attendance (everyone except owner logins)
+            ids = [u["id"] async for u in db.users.find(
+                {"role": {"$nin": ["owner", "super_admin", "owner_accountant"]}},
+                {"_id": 0, "id": 1})]
         else:
-            raise HTTPException(status_code=403, detail="Attendance not available for this role")
+            # distributor / retailer / distributor_accountant → own history only
+            ids = [user["id"]]
         rows = await _attendance_rows(ids)
         return {"data": rows}
 
@@ -2876,8 +2890,8 @@ def build_dms_router(db, get_current_user):
         return []
 
     @router.post("/tracking/ping")
-    async def tracking_ping(body: Dict[str, Any] = Body(...), user: dict = Depends(salesperson_only)):
-        """Salesperson posts current GPS every 60s."""
+    async def tracking_ping(body: Dict[str, Any] = Body(...), user: dict = Depends(field_user_only)):
+        """Any field user (non-owner) posts current GPS while punched in."""
         lat = body.get("lat"); lng = body.get("lng")
         if lat is None or lng is None:
             raise HTTPException(status_code=400, detail="lat and lng required")
