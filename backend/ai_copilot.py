@@ -45,38 +45,91 @@ except Exception as e:
 DEFAULT_PROVIDER = os.environ.get("AI_PROVIDER", "openai")
 DEFAULT_MODEL = os.environ.get("AI_MODEL", "gpt-5.4")
 
-SYSTEM_PROMPT = """You are the GO OIL DMS Business Analyst Copilot.
+SYSTEM_PROMPT = """You are the GO OIL DMS Assistant — an in-app helper for a Distribution
+Management System covering oil & lubricant sales across owner, distributors, retailers,
+salespersons and managers.
 
-Your role: an executive-grade business analyst for a Distribution Management System covering
-oil & lubricant sales across branches, distributors, retailers and end customers.
+WHO YOU ARE TALKING TO:
+- User: {user_name} (role: {user_role}). Current date: {today}.
+- The CONTEXT block below contains ONLY this user's own data, already scoped to what their
+  role is allowed to see. Answer strictly from it. Never reveal or infer other users' private data.
 
 RULES:
-1. Speak like a seasoned CFO / COO — direct, quantified, concise. No pleasantries or filler.
-2. Every material claim MUST cite a number from the CONTEXT block below.
-3. Never invent numbers. If the context doesn't contain what's needed, say so and suggest which report to run.
-4. Round money to Naira (₦) with commas. Round percentages to one decimal.
-5. Use bullet lists for scans. Use paragraphs for narrative diagnoses.
-6. When asked "why" questions, list top-3 root causes ordered by impact, each with the supporting metric.
-7. When asked "which" questions, return a ranked list of at most 5 items with the deciding metric.
-8. Close every answer with a one-line "Next Best Action" prescription.
-
-You are speaking to: {user_role} ({user_name}).
-Current date: {today}.
+1. Be helpful and friendly, like a smart colleague. Plain language. If the user writes in Hindi
+   or Hinglish, reply in the same style.
+2. Two kinds of questions:
+   a) "How do I…/what is…" app-usage questions → give clear step-by-step guidance about the app.
+   b) "My numbers / reports" questions → answer using ONLY the numbers in CONTEXT.
+3. Never invent numbers. If CONTEXT lacks something, say so plainly and point to the exact page/report
+   in the app where they can find it.
+4. Money in Indian Rupees (₹) with commas (e.g. ₹1,25,000). Percentages to one decimal.
+5. When asked for a "report" or "summary", produce a compact, well-structured report: a short
+   headline, then bullet KPIs, then a small ranked list if relevant. Keep it accurate to CONTEXT.
+6. Use bullet lists for scans; short paragraphs for explanations.
+7. Close data answers with a one-line "Next best action:" suggestion. Skip that for pure how-to answers.
 """
 
 # Canned executive suggestions the frontend can display.
 SUGGESTIONS = [
-    "Why are sales decreasing this month?",
-    "Which distributor has the highest outstanding?",
-    "Which products are near expiry in the next 30 days?",
-    "Which branch has the lowest inventory turnover?",
-    "Which retailer has the most returns?",
-    "How many approvals are pending and who is blocked?",
-    "Give me a daily executive summary.",
-    "What's our biggest cash risk this week?",
-    "Which SKUs generated the highest gross margin last month?",
-    "Which distributor is under-performing and why?",
+    "Give me today's summary",
+    "How do I add a new sale?",
+    "Which retailers haven't ordered recently?",
+    "What is my outstanding amount?",
+    "Show my top selling products",
+    "How do I download a report?",
 ]
+
+# Role-aware starter questions (mix of "how do I" + "my data").
+ROLE_SUGGESTIONS = {
+    "owner": [
+        "Give me today's business summary",
+        "Which distributor has the highest outstanding?",
+        "Which products are low on stock?",
+        "How much did we collect this month?",
+        "How do I create a new price circular?",
+    ],
+    "owner_accountant": [
+        "What is total outstanding across distributors?",
+        "Show this month's expenses summary",
+        "How do I record a payment?",
+        "Which cheques are pending?",
+    ],
+    "distributor": [
+        "Kitna maal maine is mahine order kiya?",
+        "Mera outstanding kitna hai?",
+        "Which of my retailers order the most?",
+        "How do I add a sale bill?",
+        "How do I update my bank / UPI details?",
+    ],
+    "distributor_accountant": [
+        "Show my primary and secondary ledger summary",
+        "What is my current outstanding?",
+        "How do I record a retailer payment?",
+    ],
+    "retailer": [
+        "What is my wallet balance?",
+        "Show my recent orders",
+        "How do I place a new order?",
+        "How do I redeem my coupons?",
+    ],
+    "salesperson": [
+        "Aaj maine kitni visit ki?",
+        "Show my attendance for today",
+        "How much did I collect today?",
+        "How do I add a new retailer?",
+        "Which retailers should I visit next?",
+    ],
+    "team_leader": [
+        "How is my team performing today?",
+        "Which salesperson has the best sales?",
+        "Show today's attendance of my team",
+    ],
+    "regional_manager": [
+        "Give me my region's performance summary",
+        "Which team leader is underperforming?",
+        "Show attendance across my region",
+    ],
+}
 
 # Intent → analytics-context to fetch.
 INTENT_MATRIX = {
@@ -142,7 +195,7 @@ class AskIn(BaseModel):
     model: Optional[str] = None
 
 
-def build_ai_copilot_router(db, get_current_user, analytics_router):
+def build_ai_copilot_router(db, get_current_user, analytics_router, dms_router=None):
     router = APIRouter(prefix="/ai/copilot", tags=["ai-copilot"])
 
     # Locate the ai-context callable on the analytics router — cheaper than HTTP loopback.
@@ -151,6 +204,48 @@ def build_ai_copilot_router(db, get_current_user, analytics_router):
         if getattr(r, "path", "").endswith("/ai-context/{scope}"):
             _ai_context_endpoint = r.endpoint
             break
+
+    # Locate DMS dashboard callables so the copilot can answer using the logged-in
+    # user's OWN role-scoped DMS data (accurate, reuses tested dashboard logic).
+    _dms_dash = {}
+    if dms_router is not None:
+        for r in dms_router.routes:
+            p = getattr(r, "path", "")
+            if "/dashboard/" in p:
+                _dms_dash[p.split("/dashboard/")[-1]] = r.endpoint
+
+    # role -> list of dashboard keys to pull for that user
+    _ROLE_DASH = {
+        "owner": ["owner", "finance-snapshot"],
+        "owner_accountant": ["owner", "finance-snapshot"],
+        "super_admin": ["owner", "finance-snapshot"],
+        "company_admin": ["owner", "finance-snapshot"],
+        "distributor": ["distributor"],
+        "distributor_accountant": ["distributor"],
+        "retailer": ["retailer"],
+        "salesperson": ["salesperson"],
+        "team_leader": ["team-leader"],
+        "regional_manager": ["regional-manager"],
+    }
+
+    async def _gather_dms_context(user: dict) -> List[dict]:
+        """Pull the logged-in user's own role-scoped DMS snapshot(s)."""
+        collected: List[dict] = []
+        role = user.get("role", "")
+        for key in _ROLE_DASH.get(role, ["owner"]):
+            fn = _dms_dash.get(key)
+            if not fn:
+                continue
+            try:
+                data = await fn(user=user)
+                collected.append({
+                    "scope": f"dms:{key}",
+                    "endpoint": f"/api/dms/dashboard/{key}",
+                    "context": data,
+                })
+            except Exception as e:
+                logger.warning(f"dms dashboard/{key} failed: {e}")
+        return collected
 
     async def _gather_context(intents: List[str], user: dict) -> List[dict]:
         collected: List[dict] = []
@@ -204,7 +299,7 @@ def build_ai_copilot_router(db, get_current_user, analytics_router):
 
     @router.get("/suggestions")
     async def suggestions(user: dict = Depends(get_current_user)):
-        return {"data": SUGGESTIONS}
+        return {"data": ROLE_SUGGESTIONS.get(user.get("role", ""), SUGGESTIONS)}
 
     @router.get("/status")
     async def status(user: dict = Depends(get_current_user)):
@@ -257,10 +352,14 @@ def build_ai_copilot_router(db, get_current_user, analytics_router):
         provider = (body.provider or DEFAULT_PROVIDER).lower()
         model = body.model or DEFAULT_MODEL
 
-        # 1. Gather structured context from our analytics layer
+        # 1. Gather structured context — prefer the user's OWN DMS data.
         intent = _detect_intent(question)
-        scopes = INTENT_MATRIX.get(intent, INTENT_MATRIX["executive"])
-        gathered = await _gather_context(scopes, user)
+        gathered = []
+        if _dms_dash:
+            gathered = await _gather_dms_context(user)
+        if not gathered:
+            scopes = INTENT_MATRIX.get(intent, INTENT_MATRIX["executive"])
+            gathered = await _gather_context(scopes, user)
         context_bundle = {
             "user": {"name": user.get("name"), "role": user.get("role"),
                         "email": user.get("email")},

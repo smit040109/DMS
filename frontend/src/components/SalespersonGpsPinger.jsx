@@ -13,8 +13,10 @@ export default function SalespersonGpsPinger() {
   const timerRef = useRef();
 
   useEffect(() => {
-    // Everyone except the owner is a field user; owner is office-only.
-    if (!user || user.role === "owner") return;
+    // Only field staff are GPS-tracked. Owner is office-only; distributors and
+    // retailers do not punch in/out and are never tracked.
+    const FIELD_ROLES = ["salesperson", "team_leader", "regional_manager"];
+    if (!user || !FIELD_ROLES.includes(user.role)) return;
     // Don't ping while owner is impersonating (their real position would leak)
     if (impersonation) return;
     if (!("geolocation" in navigator)) return;

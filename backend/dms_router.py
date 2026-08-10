@@ -171,12 +171,14 @@ def build_dms_router(db, get_current_user):
     regional_manager_only = _guard("regional_manager")
     dist_or_dacct = _guard("distributor", "distributor_accountant")
 
-    # Field-staff guard — EVERY logged-in role EXCEPT the Company Owner may
-    # punch in/out and be GPS-tracked (owner is office-only).
+    # Field-staff guard — ONLY field roles (salesperson / team leader / regional
+    # manager) may punch in/out and be GPS-tracked. Owner is office-only, and
+    # distributors / retailers do not punch at all.
     def _field_user_guard():
+        FIELD_ROLES = ("salesperson", "team_leader", "regional_manager")
         async def _dep(user: dict = Depends(get_current_user)) -> dict:
-            if user.get("role") == "owner":
-                raise HTTPException(status_code=403, detail="Owner does not punch in/out")
+            if user.get("role") not in FIELD_ROLES:
+                raise HTTPException(status_code=403, detail="Punch in/out is for field staff only")
             return user
         return _dep
     field_user_only = _field_user_guard()

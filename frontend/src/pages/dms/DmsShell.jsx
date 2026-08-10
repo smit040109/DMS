@@ -4,8 +4,9 @@ import { useAuth } from "@/context/AuthContext";
 import { dms } from "./api";
 import { ImpersonationBanner } from "./OwnerUsersPage";
 import SalespersonGpsPinger from "@/components/SalespersonGpsPinger";
+import AiAssistant from "@/components/ai/AiAssistant";
 import ThemeToggle from "@/components/common/ThemeToggle";
-import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight, Ticket, ShieldAlert, ScanLine, Droplet, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity, AlertTriangle } from "lucide-react";
+import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight, Ticket, ShieldAlert, ScanLine, Droplet, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity, AlertTriangle, Sparkles } from "lucide-react";
 
 const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, Ticket, ShieldAlert, ScanLine, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity, AlertTriangle };
 
@@ -89,7 +90,6 @@ const NAV_BY_ROLE = {
     { label: "My Stock",          to: "/dms/distributor/stock",          icon: "Warehouse" },
     { label: "My Retailers",      to: "/dms/distributor/retailers",      icon: "Store" },
     { label: "Retailer Orders",   to: "/dms/distributor/retail-orders",  icon: "ShoppingCart" },
-    { label: "Attendance",        to: "/dms/attendance-me",              icon: "ClipboardList" },
     // Phase 2C — direct sales + documents
     { label: "+Add Sales",        to: "/dms/direct-sales",               icon: "Receipt" },
     { label: "Documents",         to: "/dms/documents",                  icon: "FileText" },
@@ -110,7 +110,6 @@ const NAV_BY_ROLE = {
     { label: "+Add Sales",        to: "/dms/direct-sales",               icon: "Receipt" },
     { label: "Documents",         to: "/dms/documents",                  icon: "FileText" },
     { label: "Payment Details",   to: "/dms/my-bank",                    icon: "Wallet" },
-    { label: "Attendance",        to: "/dms/attendance-me",              icon: "ClipboardList" },
     { label: "Expenses",          to: "/dms/expenses",                   icon: "Receipt" },
     { label: "Reports",           to: "/dms/reports",                    icon: "TrendingUp" },
   ],
@@ -121,7 +120,6 @@ const NAV_BY_ROLE = {
     { label: "+Add Sales",      to: "/dms/direct-sales",       icon: "Receipt" },
     { label: "Payment Details", to: "/dms/my-bank",            icon: "Wallet" },
     { label: "My Wallet",       to: "/dms/retailer/wallet",    icon: "Wallet" },
-    { label: "Attendance",      to: "/dms/attendance-me",      icon: "ClipboardList" },
   ],
   salesperson: [
     { label: "Dashboard",       to: "/dms",                            icon: "LayoutDashboard" },
@@ -263,6 +261,7 @@ export default function DmsShell({ children }) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const role = user?.role || "owner";
   const baseItems = NAV_BY_ROLE[role] || NAV_BY_ROLE.owner;
   const [retailerScanEnabled, setRetailerScanEnabled] = useState(false);
@@ -370,6 +369,14 @@ export default function DmsShell({ children }) {
           <button className="lg:hidden p-2" onClick={() => setMobileOpen(true)}><Menu size={22} /></button>
           <div className="flex-1" />
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAiOpen(true)}
+              className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-gradient-to-r from-[#faf0cf] to-[#f7edd0] text-[#8a6600] hover:from-[#f7e9c0] hover:to-[#f3e6c2] border border-[#eadfb0] transition"
+              data-testid="ask-ai-btn"
+              title="Ask the AI assistant about your data"
+            >
+              <Sparkles size={15} className="text-[#a67c00]" /> Ask AI
+            </button>
             <ThemeToggle />
             <NotificationsBell />
           </div>
@@ -377,6 +384,19 @@ export default function DmsShell({ children }) {
         <main className="flex-1 p-4 lg:p-6">{children}</main>
       </div>
       </div>
+
+      {/* Floating AI button (mobile + always available) */}
+      <button
+        onClick={() => setAiOpen(true)}
+        className="sm:hidden fixed bottom-5 right-5 z-40 h-14 w-14 rounded-full bg-gradient-to-br from-[#c9a227] to-[#a67c00] text-white shadow-lg flex items-center justify-center active:scale-95 transition"
+        data-testid="ask-ai-fab"
+        aria-label="Ask AI"
+      >
+        <Sparkles size={22} />
+      </button>
+
+      {/* AI Assistant drawer — available in every DMS login, scoped to own data */}
+      <AiAssistant open={aiOpen} onOpenChange={setAiOpen} />
     </div>
   );
 }
