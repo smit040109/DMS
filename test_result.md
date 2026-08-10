@@ -7835,3 +7835,125 @@ agent_communication:
       - LiveTrackingPage.jsx: renders field_staff + legend count.
       Route note: Settings at /dms/owner/settings. Task 5 (crisp logo) pending user PNG/SVG.
       Awaiting user go-ahead for automated FRONTEND testing.
+
+
+# CONTINUATION v7 — Self Bank + Transport on Direct-Sales
+backend:
+  - task: "CONTINUATION v7 — Self Bank endpoints (/my/bank) + Transport on direct-sales + invoice"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          NEW in this run (all under /api/dms):
+          1) SELF BANK ENDPOINTS (/my/bank):
+             - GET /my/bank — distributor/retailer can fetch their own bank details. Returns
+               {party_type:"distributor"|"retailer", id, name, bank:{bank_name,bank_account,bank_ifsc,
+               bank_branch,upi_id,upi_name,gstin,qr_url}}. Owner/salesperson/TL/RM → 403 (no own party).
+             - PUT /my/bank — distributor/retailer can update their own bank details. Body: {bank:{...}}.
+               Returns {ok:true, party_type, bank}. Changes are visible to owner via GET /distributors/{id}
+               or GET /retailers/{id}.
+          2) TRANSPORT ON DIRECT-SALES + INVOICE:
+             - POST /direct-sales now accepts optional `transport` object: {mode, vehicle_no, transporter, lr_no}.
+             - Bill document stores transport{} (all fields normalized to strings).
+             - GET /print/retailer-bill/{id} now includes transport in the invoice object:
+               invoice.transport = {mode, vehicle_no, transporter, lr_no}.
+             - Existing invoice fields (seller, bill_to, items, totals, amount_in_words) unchanged.
+          
+          Please test:
+          - As distributor1: GET /my/bank → 200 party_type="distributor", PUT /my/bank with bank object → 200,
+            GET /my/bank verify persisted, GET /distributors/{id} as owner verify same bank visible.
+          - As retailer1: GET /my/bank → 200 party_type="retailer", PUT /my/bank → 200, verify persisted.
+          - As owner/salesperson: GET /my/bank → 403.
+          - As distributor1: POST /direct-sales with transport:{mode:"Road", vehicle_no:"DL01AB1234",
+            transporter:"Blue Dart", lr_no:"LR-99"} → 200, capture bill_id.
+          - GET /print/retailer-bill/{bill_id} as owner → 200, verify invoice.transport equals sent transport,
+            and invoice still has seller/bill_to/items/totals/amount_in_words.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL CONTINUATION v7 BACKEND TESTS PASSED (2/2 — 100%)
+          
+          Comprehensive backend API testing completed for CONTINUATION v7 changes.
+          All endpoints working correctly with proper RBAC, data validation, and business logic.
+          
+          **TEST 1: SELF BANK ENDPOINTS (/api/dms/my/bank) — 9/9 PASSED ✅**
+          - GET /my/bank as distributor1 → 200 ✅
+            * party_type: "distributor"
+            * id: dist-17da9d2dec
+            * name: "Anil Distributor — Delhi"
+            * bank: {} (empty initially)
+          - PUT /my/bank as distributor1 with bank details → 200, ok:true ✅
+            * bank_name: ICICI
+            * bank_account: 111222
+            * bank_ifsc: ICIC0001
+            * bank_branch: Karol Bagh
+            * upi_id: anil@icici
+            * upi_name: Anil Dist
+            * gstin: 07AAACD1234M1Z5
+            * qr_url: data:image/png;base64,AAA
+          - GET /my/bank as distributor1 → All bank fields persisted correctly ✅
+          - GET /distributors/{dist1_id} as owner → Bank object matches (owner can see distributor's bank) ✅
+          - GET /my/bank as retailer1 → 200, party_type:"retailer" ✅
+          - PUT /my/bank as retailer1 with bank details → 200 ✅
+          - GET /my/bank as retailer1 → Bank persisted correctly (bank_name:HDFC, upi_id:retailer1@hdfc) ✅
+          - GET /my/bank as owner → 403 (correct, owner has no own party bank) ✅
+          - GET /my/bank as salesperson → 403 (correct, salesperson has no own party bank) ✅
+          
+          **TEST 2: TRANSPORT ON DIRECT-SALES + INVOICE — 6/6 PASSED ✅**
+          - POST /direct-sales as distributor1 with transport object → 200 ✅
+            * bill_id: rb-2a7807b56f
+            * bill_no: DS-260810064813
+            * transport in response: {mode:"Road", vehicle_no:"DL01AB1234", transporter:"Blue Dart", lr_no:"LR-99"}
+          - GET /print/retailer-bill/{bill_id} as owner → 200 ✅
+          - invoice.transport matches sent transport object ✅
+            * mode: Road
+            * vehicle_no: DL01AB1234
+            * transporter: Blue Dart
+            * lr_no: LR-99
+          - invoice object has all required fields ✅
+            * seller: "Anil Distributor — Delhi" (distributor, not GO OIL)
+            * bill_to: Retailer details
+            * items: 1 item with all fields (name, hsn, qty_label, rate, taxable, gst_pct, gst_amt, amount)
+            * totals: {subtotal:500.0, grand_total:590.0, sgst, cgst, igst, is_interstate, round_off}
+            * amount_in_words: "Rupees Five Hundred Ninety Only"
+          
+          🎯 CRITICAL FLOWS VERIFIED:
+          - Self bank GET: Distributor and retailer can fetch their own bank details (party_type correct)
+          - Self bank PUT: Distributor and retailer can update their own bank details (all 8 fields persisted)
+          - Self bank visibility: Owner can see distributor/retailer bank via GET /distributors/{id} or /retailers/{id}
+          - Self bank RBAC: Owner and salesperson correctly blocked (403) from GET /my/bank
+          - Transport on direct-sales: POST /direct-sales accepts transport object, stores in bill document
+          - Transport in invoice: GET /print/retailer-bill includes transport in invoice object
+          - Invoice structure: All existing fields (seller, bill_to, items, totals, amount_in_words) intact
+          - RBAC: All role-based access controls working (403 for unauthorized access)
+          
+          📊 TEST COVERAGE:
+          - Total: 15/15 individual tests passed (100%)
+          - Self Bank Endpoints: 9/9 ✅
+          - Transport on Direct-Sales + Invoice: 6/6 ✅
+          
+          NO CRITICAL ISSUES FOUND.
+          All CONTINUATION v7 backend APIs production-ready.
+
+agent_communication:
+  - agent: "testing"
+    message: |
+      ✅ CONTINUATION v7 BACKEND TESTING COMPLETE — ALL 2 TESTS PASSED (100%)
+      
+      Tested two NEW backend additions:
+      1. SELF BANK endpoints (/api/dms/my/bank) — 9/9 tests passed
+      2. TRANSPORT on direct-sales + invoice — 6/6 tests passed
+      
+      All endpoints working correctly with proper RBAC, data validation, and business logic.
+      
+      **ACTION ITEMS FOR MAIN AGENT:**
+      - All CONTINUATION v7 backend tests passed with no issues
+      - Please summarize and finish
+      
+      YOU MUST ASK USER BEFORE DOING FRONTEND TESTING

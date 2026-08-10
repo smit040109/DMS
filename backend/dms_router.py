@@ -948,6 +948,55 @@ def build_dms_router(db, get_current_user):
         return {"data": docs}
 
     # =========================================================================
+    # MY BANK / PAYMENT DETAILS — self-service for distributor & retailer
+    # =========================================================================
+    async def _my_party(user: dict):
+        role = user.get("role")
+        if role in ("distributor", "distributor_accountant"):
+            did = user.get("distributor_id")
+            if not did:
+                raise HTTPException(status_code=400, detail="No distributor linked to this account")
+            doc = await db.dms_distributors.find_one({"id": did}, {"_id": 0})
+            return ("distributor", db.dms_distributors, did, doc)
+        if role == "retailer":
+            rid = user.get("retailer_id")
+            if not rid:
+                raise HTTPException(status_code=400, detail="No retailer linked to this account")
+            doc = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+            return ("retailer", db.dms_retailers, rid, doc)
+        raise HTTPException(status_code=403, detail="Only distributor or retailer can manage own bank details")
+
+    @router.get("/my/bank")
+    async def get_my_bank(user: dict = Depends(get_current_user)):
+        party_type, _coll, pid, doc = await _my_party(user)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        return {
+            "party_type": party_type, "id": pid, "name": doc.get("name"),
+            "bank": doc.get("bank") or {},
+        }
+
+    @router.put("/my/bank")
+    async def update_my_bank(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        party_type, coll, pid, doc = await _my_party(user)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Profile not found")
+        src = body.get("bank") if isinstance(body.get("bank"), dict) else body
+        bank = {
+            "gstin": str(src.get("gstin") or "").strip(),
+            "bank_name": str(src.get("bank_name") or "").strip(),
+            "bank_account": str(src.get("bank_account") or "").strip(),
+            "bank_ifsc": str(src.get("bank_ifsc") or "").strip(),
+            "bank_branch": str(src.get("bank_branch") or "").strip(),
+            "upi_id": str(src.get("upi_id") or "").strip(),
+            "upi_name": str(src.get("upi_name") or "").strip(),
+            "qr_url": src.get("qr_url") or "",
+        }
+        await coll.update_one({"id": pid}, {"$set": {"bank": bank, "updated_at": _now()}})
+        return {"ok": True, "party_type": party_type, "bank": bank}
+
+
+    # =========================================================================
     # PRIMARY LEDGER (owner ↔ distributor)
     # =========================================================================
     @router.get("/ledger/primary")
@@ -3783,6 +3832,7 @@ def build_dms_router(db, get_current_user):
             gst_total=b.get("gst_total", 0),
             total=b.get("total", 0),
             settings=s,
+            transport=b.get("transport") or {},
         )
         return b
 
@@ -5661,6 +5711,9 @@ def build_dms_router(db, get_current_user):
         customer = body.get("customer") or {}
         if not isinstance(customer, dict):
             customer = {}
+        transport = body.get("transport") or {}
+        if not isinstance(transport, dict):
+            transport = {}
         bill = {
             "id": _nid("rb"), "bill_no": bill_no, "date": date,
             "order_id": None, "order_no": None,
@@ -5672,6 +5725,12 @@ def build_dms_router(db, get_current_user):
                 "phone": str(customer.get("phone") or "").strip(),
                 "address": str(customer.get("address") or "").strip(),
                 "gstin": str(customer.get("gstin") or "").strip(),
+            },
+            "transport": {
+                "mode": str(transport.get("mode") or "").strip(),
+                "vehicle_no": str(transport.get("vehicle_no") or "").strip(),
+                "transporter": str(transport.get("transporter") or "").strip(),
+                "lr_no": str(transport.get("lr_no") or "").strip(),
             },
             "notes": str(body.get("notes") or "").strip(),
             "created_by": user["id"], "created_by_name": user.get("name"),

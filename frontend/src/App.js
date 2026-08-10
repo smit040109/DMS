@@ -53,7 +53,7 @@ import {
   OwnerScanAuditPage,
 } from "@/pages/dms/CouponsV2";
 import { PrintEbillPage, PrintRetailerBillPage, PrintPurchaseOrderPage, PrintDocumentPage, PrintChallanPage } from "@/pages/dms/PrintPages";
-import { ImportExportPage, DirectSalesPage, DocumentsPage } from "@/pages/dms/Phase2CPages";
+import { ImportExportPage, DirectSalesPage, DocumentsPage, MyBankPage } from "@/pages/dms/Phase2CPages";
 import { ReportsHubPage, GenericReportPage } from "@/pages/dms/ReportsPages";
 import { PriceCircularsPage, PriceCircularDetailPage, NewPriceCircularPage, SettingsPage } from "@/pages/dms/PriceCircularPages";
 import { ExpensesPage } from "@/pages/dms/ExpensesPage";
@@ -143,6 +143,7 @@ function AppRoutes() {
       {/* Phase 2C */}
       <Route path="/dms/import-export"             element={<DmsPage Component={ImportExportPage} />} />
       <Route path="/dms/direct-sales"              element={<DmsPage Component={DirectSalesPage} />} />
+      <Route path="/dms/my-bank"                   element={<DmsPage Component={MyBankPage} />} />
       <Route path="/dms/documents"                 element={<DmsPage Component={DocumentsPage} />} />
       {/* Phase 3 — Reports */}
       <Route path="/dms/reports"                   element={<DmsPage Component={ReportsHubPage} />} />

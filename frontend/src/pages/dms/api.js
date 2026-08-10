@@ -316,6 +316,10 @@ export const dms = {
   getSettings: () => api.get("/dms/settings").then(r => r.data),
   updateSettings: (body) => api.put("/dms/settings", body).then(r => r.data),
 
+  // My bank / payment details (distributor + retailer self-service)
+  getMyBank: () => api.get("/dms/my/bank").then(r => r.data),
+  updateMyBank: (bank) => api.put("/dms/my/bank", { bank }).then(r => r.data),
+
   // Phase 2A: Financial Year close
   fyClose: (lock_date) => api.post("/dms/finance/fy-close", { lock_date }).then(r => r.data),
 

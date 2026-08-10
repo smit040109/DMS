@@ -174,6 +174,7 @@ export function DirectSalesPage() {
     bill_no: "",
     notes: "",
     customer: { name: "", phone: "", address: "", gstin: "" },
+    transport: { mode: "", vehicle_no: "", transporter: "", lr_no: "" },
     items: [{ product_id: "", qty_boxes: 1, box_price: 0 }],
   });
   const [busy, setBusy] = useState(false);
@@ -231,11 +232,11 @@ export function DirectSalesPage() {
     setBusy(true);
     try {
       const payload = isRetailer
-        ? { date: form.date, bill_no: form.bill_no, notes: form.notes, customer: form.customer, items }
+        ? { date: form.date, bill_no: form.bill_no, notes: form.notes, customer: form.customer, transport: form.transport, items }
         : { ...form, items };
       const bill = await dms.createDirectSale(payload);
       setLastBill(bill); toast.success(`Bill ${bill.bill_no} created`);
-      setForm({ distributor_id: form.distributor_id, retailer_id: "", date: today(), bill_no: "", notes: "", customer: { name: "", phone: "", address: "", gstin: "" }, items: [{ product_id: "", qty_boxes: 1, box_price: 0 }] });
+      setForm({ distributor_id: form.distributor_id, retailer_id: "", date: today(), bill_no: "", notes: "", customer: { name: "", phone: "", address: "", gstin: "" }, transport: { mode: "", vehicle_no: "", transporter: "", lr_no: "" }, items: [{ product_id: "", qty_boxes: 1, box_price: 0 }] });
     } catch (e) { toast.error(e?.response?.data?.detail || "Save failed"); }
     setBusy(false);
   };
@@ -291,6 +292,16 @@ export function DirectSalesPage() {
               <div className="col-span-1"><Button size="sm" variant="outline" className="text-rose-600" onClick={() => rmLine(i)}><Trash2 className="w-3 h-3" /></Button></div>
             </div>
           ))}
+        </div>
+
+        <div className="border rounded p-3 bg-slate-50 mt-4">
+          <div className="font-medium text-sm mb-2">Transportation Details (optional)</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div><Label>Mode</Label><Input value={form.transport.mode} onChange={e => setForm({ ...form, transport: { ...form.transport, mode: e.target.value } })} placeholder="Road / Rail" data-testid="ds-transport-mode" /></div>
+            <div><Label>Vehicle No.</Label><Input value={form.transport.vehicle_no} onChange={e => setForm({ ...form, transport: { ...form.transport, vehicle_no: e.target.value } })} placeholder="DL01AB1234" /></div>
+            <div><Label>Transporter</Label><Input value={form.transport.transporter} onChange={e => setForm({ ...form, transport: { ...form.transport, transporter: e.target.value } })} /></div>
+            <div><Label>LR / Docket No.</Label><Input value={form.transport.lr_no} onChange={e => setForm({ ...form, transport: { ...form.transport, lr_no: e.target.value } })} /></div>
+          </div>
         </div>
 
         <div className="grid md:grid-cols-2 gap-3 mt-4">
@@ -668,6 +679,72 @@ export function DocumentPrintPage() {
           <Printer className="w-4 h-4 mr-2" />Print
         </Button>
       </div>
+    </div>
+  );
+}
+
+// =====================================================================
+// My Bank / Payment Details — self-service for distributor & retailer
+// =====================================================================
+export function MyBankPage() {
+  const [bank, setBank] = useState({ bank_name: "", bank_account: "", bank_ifsc: "", bank_branch: "", upi_id: "", upi_name: "", qr_url: "", gstin: "" });
+  const [meta, setMeta] = useState({ name: "", party_type: "" });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await dms.getMyBank();
+        setMeta({ name: r.name, party_type: r.party_type });
+        setBank({ bank_name: "", bank_account: "", bank_ifsc: "", bank_branch: "", upi_id: "", upi_name: "", qr_url: "", gstin: "", ...(r.bank || {}) });
+      } catch (e) { toast.error(e?.response?.data?.detail || "Failed to load"); }
+      setLoading(false);
+    })();
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await dms.updateMyBank(bank);
+      toast.success("Payment details saved");
+    } catch (e) { toast.error(e?.response?.data?.detail || "Save failed"); }
+    setSaving(false);
+  };
+
+  if (loading) return <div className="p-8 text-center text-sm text-slate-500">Loading…</div>;
+
+  return (
+    <div className="space-y-4">
+      <PageHeader title="My Payment Details" subtitle="Your bank account + UPI QR — shown on invoices and visible to the owner" />
+      <Card className="p-6 max-w-3xl">
+        <div className="text-sm text-slate-500 mb-3">Profile: <span className="font-semibold text-slate-800">{meta.name}</span></div>
+        <div className="grid md:grid-cols-2 gap-3">
+          <div><Label>GSTIN</Label><Input value={bank.gstin} onChange={e => setBank({ ...bank, gstin: e.target.value })} data-testid="mybank-gstin" /></div>
+          <div><Label>Bank Name</Label><Input value={bank.bank_name} onChange={e => setBank({ ...bank, bank_name: e.target.value })} data-testid="mybank-name" /></div>
+          <div><Label>Account No.</Label><Input value={bank.bank_account} onChange={e => setBank({ ...bank, bank_account: e.target.value })} data-testid="mybank-account" /></div>
+          <div><Label>IFSC</Label><Input value={bank.bank_ifsc} onChange={e => setBank({ ...bank, bank_ifsc: e.target.value })} /></div>
+          <div><Label>Branch</Label><Input value={bank.bank_branch} onChange={e => setBank({ ...bank, bank_branch: e.target.value })} /></div>
+          <div><Label>UPI ID</Label><Input value={bank.upi_id} onChange={e => setBank({ ...bank, upi_id: e.target.value })} placeholder="name@bank" data-testid="mybank-upi" /></div>
+          <div><Label>UPI Payee Name</Label><Input value={bank.upi_name} onChange={e => setBank({ ...bank, upi_name: e.target.value })} /></div>
+          <div>
+            <Label>Payment QR (image)</Label>
+            <div className="flex items-center gap-2 mt-1">
+              {bank.qr_url ? <img src={bank.qr_url} alt="qr" className="h-14 w-14 object-contain border rounded" /> : <div className="h-14 w-14 border rounded flex items-center justify-center text-[10px] text-slate-400">No QR</div>}
+              <input type="file" accept="image/*" data-testid="mybank-qr" onChange={(e) => {
+                const f = e.target.files?.[0]; if (!f) return;
+                const rd = new FileReader(); rd.onload = () => setBank(v => ({ ...v, qr_url: rd.result })); rd.readAsDataURL(f);
+              }} className="text-xs" />
+              {bank.qr_url && <Button variant="outline" size="sm" onClick={() => setBank(v => ({ ...v, qr_url: "" }))}>Remove</Button>}
+            </div>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end">
+          <Button onClick={save} disabled={saving} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="mybank-save">
+            {saving ? "Saving…" : "Save Payment Details"}
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 }
