@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { dms } from "./api";
 import { ImpersonationBanner } from "./OwnerUsersPage";
 import SalespersonGpsPinger from "@/components/SalespersonGpsPinger";
+import ThemeToggle from "@/components/common/ThemeToggle";
 import { Bell, LogOut, Menu, X, Package, Boxes, Handshake, ShoppingCart, LayoutDashboard, Receipt, Warehouse, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, ChevronRight, Ticket, ShieldAlert, ScanLine, Droplet, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity, AlertTriangle } from "lucide-react";
 
 const ICONS = { LayoutDashboard, Boxes, Package, Handshake, ShoppingCart, Warehouse, Receipt, ScrollText, Store, MapPin, ClipboardList, Users, TrendingUp, Ticket, ShieldAlert, ScanLine, Settings, FileText, Landmark, Coins, FileSignature, PiggyBank, ArrowLeftRight, Building2, Wallet, Truck, Award, Activity, AlertTriangle };
@@ -31,6 +32,7 @@ const NAV_BY_ROLE = {
     { label: "Stock Transfers", to: "/dms/warehouse/transfers",   icon: "ArrowLeftRight" },
     { label: "Retailer Prices", to: "/dms/owner/retailer-prices", icon: "TrendingUp" },
     { label: "User Management", to: "/dms/owner/users",           icon: "Users" },
+    { label: "Assign Salespersons", to: "/dms/owner/sales-assignments", icon: "Users" },
     { label: "Hierarchy",       to: "/dms/owner/hierarchy",       icon: "Building2" },
     { label: "Live Tracking",   to: "/dms/owner/live-tracking",   icon: "MapPin" },
     { label: "Attendance",      to: "/dms/owner/attendance",      icon: "ClipboardList" },
@@ -360,6 +362,7 @@ export default function DmsShell({ children }) {
           <button className="lg:hidden p-2" onClick={() => setMobileOpen(true)}><Menu size={22} /></button>
           <div className="flex-1" />
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <NotificationsBell />
           </div>
         </header>

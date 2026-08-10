@@ -1,5 +1,9 @@
 import React, { Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { initTheme } from "@/lib/theme";
+
+initTheme();
+
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
 import Login from "@/pages/Login";
@@ -21,7 +25,7 @@ import {
 import {
   SpDistributorsPage, SpRetailersPage, SpNewRetailerPage, SpNewOrderPage,
   SpOrdersPage, SpCollectPaymentPage,
-  TlDistributorsPage,
+  TlDistributorsPage, OwnerSalesAssignmentsPage,
 } from "@/pages/dms/SalesTeamPages";
 import { SuperAdminUsersPage } from "@/pages/dms/SuperAdminPages";
 import { OwnerUsersPage } from "@/pages/dms/OwnerUsersPage";
@@ -48,7 +52,7 @@ import {
   DistributorScanPage,
   OwnerScanAuditPage,
 } from "@/pages/dms/CouponsV2";
-import { PrintEbillPage, PrintRetailerBillPage, PrintPurchaseOrderPage, PrintDocumentPage } from "@/pages/dms/PrintPages";
+import { PrintEbillPage, PrintRetailerBillPage, PrintPurchaseOrderPage, PrintDocumentPage, PrintChallanPage } from "@/pages/dms/PrintPages";
 import { ImportExportPage, DirectSalesPage, DocumentsPage } from "@/pages/dms/Phase2CPages";
 import { ReportsHubPage, GenericReportPage } from "@/pages/dms/ReportsPages";
 import { PriceCircularsPage, PriceCircularDetailPage, NewPriceCircularPage, SettingsPage } from "@/pages/dms/PriceCircularPages";
@@ -107,6 +111,7 @@ function AppRoutes() {
       <Route path="/dms/owner/retailer-prices"     element={<DmsPage Component={CategoriesPage} />} />
       <Route path="/dms/owner/users"               element={<DmsPage Component={OwnerUsersPage} />} />
       <Route path="/dms/owner/hierarchy"           element={<DmsPage Component={OwnerHierarchyPage} />} />
+      <Route path="/dms/owner/sales-assignments"   element={<DmsPage Component={OwnerSalesAssignmentsPage} />} />
       <Route path="/dms/owner/live-tracking"       element={<DmsPage Component={LiveTrackingPage} />} />
       <Route path="/dms/owner/tl-performance"      element={<DmsPage Component={OwnerTlPerformancePage} />} />
       <Route path="/dms/owner/distributor-sales"   element={<DmsPage Component={OwnerDistributorSalesListPage} />} />
@@ -198,6 +203,7 @@ function AppRoutes() {
       {/* Print pages (no shell) */}
       <Route path="/dms/print/ebill/:id"          element={<PrintPage Component={PrintEbillPage} />} />
       <Route path="/dms/print/retailer-bill/:id"  element={<PrintPage Component={PrintRetailerBillPage} />} />
+      <Route path="/dms/print/challan/:id"        element={<PrintPage Component={PrintChallanPage} />} />
       <Route path="/dms/print/purchase-order/:id" element={<PrintPage Component={PrintPurchaseOrderPage} />} />
       <Route path="/dms/print/document/:id"       element={<PrintPage Component={PrintDocumentPage} />} />
 

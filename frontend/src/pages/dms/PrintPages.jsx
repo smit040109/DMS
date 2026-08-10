@@ -158,6 +158,65 @@ export function PrintRetailerBillPage() {
   );
 }
 
+export function PrintChallanPage() {
+  const { id } = useParams();
+  const [c, setC] = useState(null);
+  useEffect(() => { dms.printChallan(id).then(setC).catch(() => setC(false)); }, [id]);
+  if (c === false) return <div className="p-8 text-center text-rose-500">Challan not found</div>;
+  if (!c) return <div className="p-8 text-center text-slate-500">Loading…</div>;
+  const items = c.items || [];
+  return (
+    <PrintFrame title={`Delivery Challan ${c.challan_no}`}>
+      <div className="border-b-2 border-[#a67c00] pb-4 mb-6">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-2xl font-bold text-slate-900">DELIVERY CHALLAN</div>
+            <div className="text-sm text-slate-500">Not a Tax Invoice</div>
+          </div>
+          <div className="text-right">
+            <div className="text-lg font-bold text-[#a67c00]">{c.distributor?.name || c.company_name}</div>
+            <div className="text-xs text-slate-500">{c.distributor?.address}</div>
+            {c.distributor?.kyc?.gstin && <div className="text-xs text-slate-500">GSTIN: {c.distributor.kyc.gstin}</div>}
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-8 mb-6">
+        <div>
+          <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Deliver To</div>
+          <div className="font-semibold text-slate-900">{c.retailer?.name}</div>
+          <div className="text-xs text-slate-600">{c.retailer?.address}</div>
+          <div className="text-xs text-slate-600">Ph: {c.retailer?.phone}</div>
+        </div>
+        <div>
+          <Row label="Challan #" value={c.challan_no} />
+          <Row label="Date" value={niceDate(c.created_at)} />
+          <Row label="Order Ref" value={c.order_no} />
+          {c.invoice_no && <Row label="Invoice #" value={c.invoice_no} />}
+        </div>
+      </div>
+      <table className="w-full text-sm border border-slate-200 mb-6">
+        <thead><tr className="bg-slate-50 text-left"><th className="p-2">#</th><th className="p-2">Product</th><th className="p-2 text-right">Boxes</th><th className="p-2 text-right">Pcs</th></tr></thead>
+        <tbody>
+          {items.map((it, i) => (
+            <tr key={i} className="border-t border-slate-100">
+              <td className="p-2">{i + 1}</td>
+              <td className="p-2"><div className="font-medium">{it.product_name}</div><div className="text-xs font-mono text-slate-500">{it.sku_code}</div></td>
+              <td className="p-2 text-right">{it.qty_boxes || 0}</td>
+              <td className="p-2 text-right">{it.qty_pcs || 0}</td>
+            </tr>
+          ))}
+          {items.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-slate-400">No items</td></tr>}
+        </tbody>
+      </table>
+      <div className="grid grid-cols-2 gap-8 mt-12 text-xs text-slate-500">
+        <div className="border-t border-slate-300 pt-2 text-center">Received By</div>
+        <div className="border-t border-slate-300 pt-2 text-center">Authorised Signatory</div>
+      </div>
+    </PrintFrame>
+  );
+}
+
+
 
 export function PrintPurchaseOrderPage() {
   const { id } = useParams();

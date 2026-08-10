@@ -11,7 +11,7 @@ import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Fingerprint, MapPin, Play, Square, ShoppingCart, Users, Handshake, Store, Plus, Navigation, Search, LayoutGrid, List as ListIcon, ClipboardList, Edit, Ban, Wallet, IndianRupee, Filter as FilterIcon } from "lucide-react";
+import { Fingerprint, MapPin, Play, Square, ShoppingCart, Users, Handshake, Store, Plus, Navigation, Search, LayoutGrid, List as ListIcon, ClipboardList, Edit, Ban, Wallet, IndianRupee, Filter as FilterIcon, RefreshCw } from "lucide-react";
 
 // ============================================================================
 // Salesperson Dashboard with punch in/out — Phase 1: all cards clickable
@@ -690,6 +690,76 @@ export function TlAssignmentsPage() {
     </div>
   );
 }
+
+// ============================================================================
+// Owner: Assign Salespersons to Distributors (matrix) — assignment right lives
+// with the Owner (removed from Team Leader per requirement).
+// ============================================================================
+export function OwnerSalesAssignmentsPage() {
+  const [dists, setDists] = useState([]);
+  const [sps, setSps] = useState([]);
+  const [assigns, setAssigns] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    setBusy(true);
+    try {
+      const [d, s, a] = await Promise.all([dms.listDistributors(), dms.listUsers("salesperson"), dms.listSpDistributors()]);
+      setDists(d.data || []); setSps(s.data || []); setAssigns(a.data || []);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed to load"); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { load(); }, []);
+  const assign = async (spId, dId) => { try { await dms.assignSpDist({ salesperson_id: spId, distributor_id: dId }); toast.success("Assigned"); load(); } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); } };
+  const unassign = async (spId, dId) => { try { await dms.unassignSpDist(spId, dId); toast.success("Removed"); load(); } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); } };
+  const isAssigned = (spId, dId) => assigns.some(a => a.salesperson_id === spId && a.distributor_id === dId);
+  return (
+    <div>
+      <PageHeader title="Assign Salespersons to Distributors" subtitle="Grant each salesperson access to specific distributors"
+        action={<Button variant="outline" size="sm" onClick={load} disabled={busy}><RefreshCw size={14} className={busy ? "animate-spin mr-1" : "mr-1"} /> Refresh</Button>} />
+      {/* Mobile-friendly: card list on small screens, matrix on large */}
+      <div className="lg:hidden space-y-3">
+        {sps.length === 0 && <Card className="p-8 text-center text-sm text-slate-500">No salespersons found</Card>}
+        {sps.map(sp => (
+          <Card key={sp.id} className="p-4">
+            <div className="font-medium text-slate-900">{sp.name}</div>
+            <div className="text-xs text-slate-500 mb-3">{sp.email}</div>
+            <div className="flex flex-wrap gap-2">
+              {dists.map(d => {
+                const a = isAssigned(sp.id, d.id);
+                return (
+                  <button key={d.id} onClick={() => a ? unassign(sp.id, d.id) : assign(sp.id, d.id)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium ${a ? "bg-[#faf0cf] text-[#8a6600]" : "bg-slate-100 text-slate-600"}`}
+                    data-testid={`owner-assign-${sp.id}-${d.id}`}>
+                    {a ? "✓ " : ""}{d.name}
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+        ))}
+      </div>
+      <Card className="hidden lg:block overflow-x-auto">
+        <Table><TableHeader><TableRow><TableHead>Salesperson</TableHead>{dists.map(d => <TableHead key={d.id}>{d.name}</TableHead>)}</TableRow></TableHeader><TableBody>
+          {sps.map(sp => (
+            <TableRow key={sp.id}>
+              <TableCell className="font-medium">{sp.name}<div className="text-xs text-slate-500">{sp.email}</div></TableCell>
+              {dists.map(d => {
+                const a = isAssigned(sp.id, d.id);
+                return (
+                  <TableCell key={d.id}>
+                    <button onClick={() => a ? unassign(sp.id, d.id) : assign(sp.id, d.id)} className={`px-3 py-1 rounded text-xs font-medium ${a ? "bg-[#faf0cf] text-[#8a6600] hover:bg-[#faf0cf]" : "bg-slate-100 text-slate-600 hover:bg-slate-200"}`} data-testid={`owner-assign-mx-${sp.id}-${d.id}`}>{a ? "✓ Assigned" : "Assign"}</button>
+                  </TableCell>
+                );
+              })}
+            </TableRow>
+          ))}
+        </TableBody></Table>
+        {sps.length === 0 && <div className="p-8 text-center text-sm text-slate-500">No salespersons found</div>}
+      </Card>
+    </div>
+  );
+}
+
 
 export function RegionalManagerDashboardPage() {
   const [kpis, setKpis] = useState(null);

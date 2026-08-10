@@ -124,6 +124,8 @@ export function OwnerCouponsPage() {
   const [batches, setBatches] = useState([]);
   const [busy, setBusy] = useState(false);
   const [genOpen, setGenOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [history, setHistory] = useState([]);
   const [scanPerm, setScanPerm] = useState(false);
   const [permBusy, setPermBusy] = useState(false);
   const nav = useNavigate();
@@ -150,6 +152,7 @@ export function OwnerCouponsPage() {
         dms.cpnListBatches().catch(() => ({ data: [] })),
       ]);
       setSummary(s); setBatches(b.data || []);
+      dms.cpnPrintHistory().then(h => setHistory(h.data || [])).catch(() => {});
     } finally { setBusy(false); }
   }, []);
 
@@ -172,9 +175,12 @@ export function OwnerCouponsPage() {
         title="Coupon Management"
         subtitle="Generate batches, activate, print sheets and monitor lifecycle end-to-end"
         action={
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button variant="outline" onClick={load} disabled={busy} data-testid="cpn-refresh">
               <RefreshCw size={14} className={busy ? "animate-spin" : ""} />
+            </Button>
+            <Button variant="outline" onClick={() => setSheetOpen(true)} data-testid="cpn-sheet-pdf-btn">
+              <Printer size={16} className="mr-2" /> Sheet PDF
             </Button>
             <Button className={GOLD_BTN} onClick={() => setGenOpen(true)} data-testid="cpn-gen-btn">
               <Plus size={16} className="mr-2" /> Generate Batch
@@ -312,9 +318,238 @@ export function OwnerCouponsPage() {
       </Card>
 
       <GenerateBatchDialog open={genOpen} onClose={() => setGenOpen(false)} onDone={(bid) => { load(); nav(`/dms/owner/coupons/batches/${bid}`); }} />
+      <PrintSheetDialog open={sheetOpen} onClose={() => setSheetOpen(false)} batches={batches} onPrinted={load} />
+
+      {/* Print History */}
+      <Card className="mt-5 overflow-x-auto" data-testid="cpn-print-history">
+        <div className="px-4 py-3 border-b border-slate-100 font-semibold text-slate-900 flex items-center gap-2">
+          <Clock size={16} /> Print History
+          <span className="ml-auto text-xs text-slate-500">{history.length} print{history.length === 1 ? "" : "s"}</span>
+        </div>
+        <Table>
+          <TableHeader><TableRow>
+            <TableHead>Selection</TableHead>
+            <TableHead className="text-right">Coupons</TableHead>
+            <TableHead className="text-right">Sheets</TableHead>
+            <TableHead>Printed</TableHead>
+            <TableHead className="text-right">Actions</TableHead>
+          </TableRow></TableHeader>
+          <TableBody>
+            {history.length === 0 && (
+              <TableRow><TableCell colSpan={5} className="text-center py-8 text-slate-400">
+                No prints yet — use “Sheet PDF” above to print coupons
+              </TableCell></TableRow>
+            )}
+            {history.map(h => (
+              <TableRow key={h.id} className="hover:bg-amber-50/30">
+                <TableCell className="max-w-[360px]"><div className="text-sm text-slate-800 truncate" title={h.label}>{h.label}</div><div className="text-[11px] text-slate-400 uppercase">{h.side}</div></TableCell>
+                <TableCell className="text-right font-semibold">{h.coupon_count?.toLocaleString?.() || h.coupon_count}</TableCell>
+                <TableCell className="text-right">{h.sheet_count}</TableCell>
+                <TableCell className="text-xs text-slate-500">{niceDate(h.created_at)}<div className="text-[11px] text-slate-400">{h.created_by_name}</div></TableCell>
+                <TableCell className="text-right whitespace-nowrap">
+                  <Button size="sm" variant="outline" className="mr-2"
+                    onClick={async () => {
+                      try { toast.info("Preparing PDF…"); await dms.cpnPrintHistoryDownload(h.id, `GOOIL_reprint_${h.coupon_count}.pdf`); toast.success("Downloaded"); }
+                      catch (e) { toast.error(e?.response?.data?.detail || "Download failed"); }
+                    }}
+                    data-testid={`print-hist-dl-${h.id}`}>
+                    <Download size={14} className="mr-1" /> Download
+                  </Button>
+                  <Button size="sm" variant="outline" className="text-rose-600 hover:bg-rose-50"
+                    onClick={async () => {
+                      if (!window.confirm("Delete this print history record? (Coupons are NOT affected.)")) return;
+                      try { await dms.cpnPrintHistoryDelete(h.id); toast.success("History deleted"); load(); }
+                      catch (e) { toast.error(e?.response?.data?.detail || "Delete failed"); }
+                    }}
+                    data-testid={`print-hist-del-${h.id}`}>
+                    <XCircle size={14} className="mr-1" /> Delete
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </Card>
     </div>
   );
 }
+
+// ═══════════ Print Sheet Dialog — multi-batch / serial-range printing ════════
+// 77 coupons per 12x18in sheet. Auto sheet calculation. Saves to Print History.
+function PrintSheetDialog({ open, onClose, batches, onPrinted }) {
+  const printable = useMemo(
+    () => (batches || []).filter(b => ["activated", "printed", "generated"].includes(b.status)),
+    [batches]
+  );
+  const [mode, setMode] = useState("batch"); // "batch" | "range"
+  const [selBatches, setSelBatches] = useState({}); // {batchId: true}
+  const [rangeBatch, setRangeBatch] = useState("");
+  const [fromSerial, setFromSerial] = useState("");
+  const [toSerial, setToSerial] = useState("");
+  const [side, setSide] = useState("both");
+  const [preview, setPreview] = useState(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setMode("batch"); setSelBatches({}); setRangeBatch("");
+      setFromSerial(""); setToSerial(""); setSide("both"); setPreview(null);
+    }
+  }, [open]);
+
+  const buildBody = useCallback(() => {
+    if (mode === "batch") {
+      const ids = Object.keys(selBatches).filter(k => selBatches[k]);
+      return ids.length ? { batch_ids: ids, side } : null;
+    }
+    if (!rangeBatch) return null;
+    const item = { batch_id: rangeBatch };
+    if (fromSerial.trim() && toSerial.trim()) {
+      item.from_serial = fromSerial.trim();
+      item.to_serial = toSerial.trim();
+    }
+    return { items: [item], side };
+  }, [mode, selBatches, rangeBatch, fromSerial, toSerial, side]);
+
+  // live preview (debounced)
+  useEffect(() => {
+    if (!open) return;
+    const body = buildBody();
+    if (!body) { setPreview(null); return; }
+    let alive = true;
+    setPreviewing(true);
+    const t = setTimeout(() => {
+      dms.cpnPrintMixedPreview(body)
+        .then(p => { if (alive) setPreview(p); })
+        .catch(() => { if (alive) setPreview(null); })
+        .finally(() => { if (alive) setPreviewing(false); });
+    }, 350);
+    return () => { alive = false; clearTimeout(t); };
+  }, [open, buildBody]);
+
+  const toggleBatch = (id) => setSelBatches(s => ({ ...s, [id]: !s[id] }));
+  const selectedCount = Object.values(selBatches).filter(Boolean).length;
+
+  const download = async () => {
+    const body = buildBody();
+    if (!body) { toast.error("Select at least one batch or a serial range"); return; }
+    setDownloading(true);
+    try {
+      toast.info("Building 12×18 sheet (77 per sheet)…");
+      await dms.cpnPrintMixed(body, `GOOIL_coupons_${preview?.coupon_count || ""}.pdf`);
+      toast.success("Sheet PDF downloaded & saved to history");
+      onPrinted?.();
+      onClose?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Print failed");
+    } finally { setDownloading(false); }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose?.()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader><DialogTitle className="flex items-center gap-2"><Printer size={18} /> Print Coupon Sheets</DialogTitle></DialogHeader>
+
+        {/* Mode switch */}
+        <div className="flex gap-2 mb-2">
+          <button onClick={() => setMode("batch")}
+            className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border ${mode === "batch" ? "border-[#c9a227] bg-[#faf6e6] text-[#8a6600]" : "border-slate-200 text-slate-600"}`}
+            data-testid="print-mode-batch">
+            By Batch
+          </button>
+          <button onClick={() => setMode("range")}
+            className={`flex-1 px-3 py-2 rounded-lg text-sm font-medium border ${mode === "range" ? "border-[#c9a227] bg-[#faf6e6] text-[#8a6600]" : "border-slate-200 text-slate-600"}`}
+            data-testid="print-mode-range">
+            By Serial Range
+          </button>
+        </div>
+
+        {mode === "batch" ? (
+          <div className="space-y-2">
+            <Label>Select one or more batches (mix allowed)</Label>
+            <div className="max-h-64 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+              {printable.length === 0 && <div className="p-4 text-sm text-slate-400 text-center">No printable batches</div>}
+              {printable.map(b => (
+                <label key={b.id} className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-slate-50" data-testid={`print-pick-${b.batch_label}`}>
+                  <input type="checkbox" checked={!!selBatches[b.id]} onChange={() => toggleBatch(b.id)} className="h-4 w-4 accent-[#a67c00]" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-slate-900">{b.batch_label} · {b.title}</div>
+                    <div className="text-[11px] text-slate-500">{b.coupon_type === "cash" ? inr(b.coupon_value) : `${b.coupon_value} pts`} · {b.count} coupons · {b.status}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <div className="text-xs text-slate-500">{selectedCount} batch{selectedCount === 1 ? "" : "es"} selected</div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div>
+              <Label>Batch</Label>
+              <Select value={rangeBatch} onValueChange={setRangeBatch}>
+                <SelectTrigger data-testid="print-range-batch"><SelectValue placeholder="Select a batch" /></SelectTrigger>
+                <SelectContent>
+                  {printable.map(b => <SelectItem key={b.id} value={b.id}>{b.batch_label} · {b.title} ({b.count})</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label>From Serial</Label>
+                <Input value={fromSerial} onChange={e => setFromSerial(e.target.value)} placeholder="e.g. ABC001" data-testid="print-from-serial" />
+              </div>
+              <div>
+                <Label>To Serial</Label>
+                <Input value={toSerial} onChange={e => setToSerial(e.target.value)} placeholder="e.g. ABC077" data-testid="print-to-serial" />
+              </div>
+            </div>
+            <div className="text-[11px] text-slate-500">Leave From/To empty to print the entire batch.</div>
+          </div>
+        )}
+
+        {/* Side selector */}
+        <div className="flex items-center gap-2 mt-1">
+          <Label className="mb-0">Sides:</Label>
+          {["both", "front", "back"].map(s => (
+            <button key={s} onClick={() => setSide(s)}
+              className={`px-3 py-1 rounded-full text-xs font-medium capitalize border ${side === s ? "border-[#c9a227] bg-[#faf6e6] text-[#8a6600]" : "border-slate-200 text-slate-500"}`}>
+              {s}
+            </button>
+          ))}
+        </div>
+
+        {/* Live calculation */}
+        <div className="mt-2 rounded-lg bg-[#faf6e6] border border-[#c9a227]/30 p-3" data-testid="print-preview">
+          {previewing ? (
+            <div className="text-sm text-slate-500 flex items-center gap-2"><RefreshCw size={14} className="animate-spin" /> Calculating…</div>
+          ) : preview && preview.coupon_count > 0 ? (
+            <div>
+              <div className="text-sm text-slate-800">
+                <span className="font-bold">{preview.coupon_count.toLocaleString("en-IN")}</span> coupons →
+                <span className="font-bold"> {preview.sheet_count}</span> sheet{preview.sheet_count === 1 ? "" : "s"}
+                <span className="text-slate-500"> ({preview.per_sheet}/sheet)</span>
+              </div>
+              <div className="text-xs text-slate-600 mt-1">
+                {preview.breakdown.map((n, i) => `Sheet ${i + 1} → ${n}`).join("  •  ")}
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-slate-500">Select batches or a serial range to see the sheet calculation.</div>
+          )}
+        </div>
+
+        <DialogFooter className="mt-2">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button className={GOLD_BTN} onClick={download} disabled={downloading || !preview || !preview.coupon_count} data-testid="print-download-btn">
+            {downloading ? <RefreshCw size={16} className="mr-2 animate-spin" /> : <Download size={16} className="mr-2" />}
+            Download PDF
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 
 function Stat({ label, v, sub }) {
   return (

@@ -1220,29 +1220,15 @@ def build_coupons_router(db, get_current_user, notify=None):
         )
 
     # ─── MIXED PRINTING — many batches / selected coupons on shared sheets ──
-    @router.post("/print-mixed")
-    async def print_mixed(body: Dict[str, Any] = Body(...),
-                           user: dict = Depends(owner_or_accountant)):
-        """
-        Commercial print-ready PDF mixing DIFFERENT coupon values/types on the
-        SAME 12x18in sheet (35mm round, 77/sheet, auto sheet calculation).
+    COUPONS_PER_SHEET = 77  # matches approved 12x18in / 35mm artwork
 
-        Body (any ONE of):
-          { "coupon_ids": ["cpn_..", ...] }
-          { "batch_ids":  ["cbt_..", ...] }
-          { "items": [ {"batch_id": "cbt_..", "from_serial": "AB001",
-                        "to_serial": "AB050"}, ... ] }
-        Optional: { "side": "front"|"back"|"both" }
-        """
-        import coupon_template
-        side = (body.get("side") or "both").strip().lower()
-        if side not in ("front", "back", "both"):
-            side = "both"
-
+    async def _resolve_mixed_coupons(body: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Resolve a mixed-print selection body into a de-duplicated, sorted
+        list of coupon docs. Supports coupon_ids / batch_ids / items(range)."""
         coupons: List[Dict[str, Any]] = []
         seen: set[str] = set()
 
-        async def _add(cursor_docs):
+        def _add(cursor_docs):
             for cp in cursor_docs:
                 if cp["id"] not in seen:
                     seen.add(cp["id"])
@@ -1252,12 +1238,12 @@ def build_coupons_router(db, get_current_user, notify=None):
             docs = await db.dms_v2_coupons.find(
                 {"id": {"$in": list(body["coupon_ids"])}}, {"_id": 0}
             ).sort("visible_serial", 1).to_list(200_000)
-            await _add(docs)
+            _add(docs)
         if body.get("batch_ids"):
             docs = await db.dms_v2_coupons.find(
                 {"batch_id": {"$in": list(body["batch_ids"])}}, {"_id": 0}
             ).sort("visible_serial", 1).to_list(200_000)
-            await _add(docs)
+            _add(docs)
         for item in (body.get("items") or []):
             q: Dict[str, Any] = {"batch_id": item.get("batch_id")}
             fs, ts = item.get("from_serial"), item.get("to_serial")
@@ -1265,21 +1251,148 @@ def build_coupons_router(db, get_current_user, notify=None):
                 q["visible_serial"] = {"$gte": str(fs), "$lte": str(ts)}
             docs = await db.dms_v2_coupons.find(q, {"_id": 0})\
                 .sort("visible_serial", 1).to_list(200_000)
-            await _add(docs)
+            _add(docs)
+        return coupons
 
+    async def _label_for_selection(body: Dict[str, Any]) -> str:
+        """Human-readable description of a print selection for the history log."""
+        parts: List[str] = []
+        b_ids = list(body.get("batch_ids") or [])
+        if b_ids:
+            docs = await db.dms_v2_coupon_batches.find(
+                {"id": {"$in": b_ids}}, {"_id": 0, "batch_label": 1}).to_list(500)
+            labels = [d.get("batch_label", "?") for d in docs]
+            parts.append("Batches: " + ", ".join(labels))
+        for item in (body.get("items") or []):
+            bdoc = await db.dms_v2_coupon_batches.find_one(
+                {"id": item.get("batch_id")}, {"_id": 0, "batch_label": 1})
+            bl = (bdoc or {}).get("batch_label", "?")
+            fs, ts = item.get("from_serial"), item.get("to_serial")
+            if fs and ts:
+                parts.append(f"{bl} [{fs} → {ts}]")
+            else:
+                parts.append(f"{bl} (all)")
+        if body.get("coupon_ids"):
+            parts.append(f"{len(body['coupon_ids'])} selected coupons")
+        return " · ".join(parts) or "Custom selection"
+
+    @router.post("/print-mixed")
+    async def print_mixed(body: Dict[str, Any] = Body(...),
+                           user: dict = Depends(owner_or_accountant)):
+        """
+        Commercial print-ready PDF mixing DIFFERENT coupon values/types on the
+        SAME 12x18in sheet (35mm round, 77/sheet, auto sheet calculation).
+        Every successful print is saved to the Print History (re-downloadable).
+
+        Body (any combination of):
+          { "coupon_ids": ["cpn_..", ...] }
+          { "batch_ids":  ["cbt_..", ...] }
+          { "items": [ {"batch_id": "cbt_..", "from_serial": "AB001",
+                        "to_serial": "AB050"}, ... ] }
+        Optional: { "side": "front"|"back"|"both" }
+        """
+        import coupon_template
+        import math
+        side = (body.get("side") or "both").strip().lower()
+        if side not in ("front", "back", "both"):
+            side = "both"
+
+        coupons = await _resolve_mixed_coupons(body)
         if not coupons:
             raise HTTPException(400, "No coupons matched the selection")
 
-        pdf_bytes = coupon_template.build_print_pdf(
-            coupons, side=side, title="mixed")
-        await _audit(user, "coupons.print_mixed", "coupon", "mixed",
-                     {"count": len(coupons), "side": side})
+        count = len(coupons)
+        sheets = max(1, math.ceil(count / COUPONS_PER_SHEET))
+        pdf_bytes = coupon_template.build_print_pdf(coupons, side=side, title="mixed")
+
+        # save print-history record (selection criteria only — small footprint,
+        # re-resolved on re-download so it always reflects current QR/serials)
+        selection = {
+            "coupon_ids": list(body.get("coupon_ids") or []),
+            "batch_ids": list(body.get("batch_ids") or []),
+            "items": list(body.get("items") or []),
+            "side": side,
+        }
+        hist = {
+            "id": _nid("prh"),
+            "label": await _label_for_selection(body),
+            "selection": selection,
+            "coupon_count": count,
+            "sheet_count": sheets,
+            "per_sheet": COUPONS_PER_SHEET,
+            "side": side,
+            "created_at": _now(),
+            "created_by": user.get("id"),
+            "created_by_name": user.get("name") or user.get("email"),
+        }
+        await db.dms_v2_coupon_print_history.insert_one({**hist})
+        await _audit(user, "coupons.print_mixed", "coupon", hist["id"],
+                     {"count": count, "sheets": sheets, "side": side})
         return Response(
             content=pdf_bytes,
             media_type="application/pdf",
             headers={"Content-Disposition":
-                     f'attachment; filename="GOOIL_mixed_{len(coupons)}_coupons_{side}.pdf"'},
+                     f'attachment; filename="GOOIL_mixed_{count}_coupons_{side}.pdf"'},
         )
+
+    @router.post("/print-mixed/preview")
+    async def print_mixed_preview(body: Dict[str, Any] = Body(...),
+                                   user: dict = Depends(owner_or_accountant)):
+        """Compute count + sheet breakdown for a selection WITHOUT generating a PDF."""
+        import math
+        coupons = await _resolve_mixed_coupons(body)
+        count = len(coupons)
+        sheets = max(1, math.ceil(count / COUPONS_PER_SHEET)) if count else 0
+        # per-sheet breakdown, e.g. [77, 77, 46]
+        breakdown: List[int] = []
+        remaining = count
+        while remaining > 0:
+            take = min(COUPONS_PER_SHEET, remaining)
+            breakdown.append(take)
+            remaining -= take
+        return {
+            "coupon_count": count,
+            "sheet_count": sheets,
+            "per_sheet": COUPONS_PER_SHEET,
+            "breakdown": breakdown,
+            "label": await _label_for_selection(body),
+        }
+
+    # ─── PRINT HISTORY — list / re-download / delete ──────────────────────────
+    @router.get("/print-history")
+    async def list_print_history(user: dict = Depends(owner_or_accountant)):
+        docs = await db.dms_v2_coupon_print_history.find({}, {"_id": 0})\
+            .sort("created_at", -1).to_list(1000)
+        return {"data": docs}
+
+    @router.get("/print-history/{hid}/download")
+    async def reprint_history(hid: str, user: dict = Depends(owner_or_accountant)):
+        h = _clean(await db.dms_v2_coupon_print_history.find_one({"id": hid}))
+        if not h:
+            raise HTTPException(404, "Print history record not found")
+        import coupon_template
+        sel = h.get("selection") or {}
+        coupons = await _resolve_mixed_coupons(sel)
+        if not coupons:
+            raise HTTPException(400, "The coupons for this print no longer exist")
+        side = sel.get("side") or h.get("side") or "both"
+        pdf_bytes = coupon_template.build_print_pdf(coupons, side=side, title="mixed")
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={"Content-Disposition":
+                     f'attachment; filename="GOOIL_reprint_{len(coupons)}_coupons_{side}.pdf"'},
+        )
+
+    @router.delete("/print-history/{hid}")
+    async def delete_print_history(hid: str, user: dict = Depends(owner_or_accountant)):
+        h = await db.dms_v2_coupon_print_history.find_one({"id": hid}, {"_id": 0})
+        if not h:
+            raise HTTPException(404, "Print history record not found")
+        await db.dms_v2_coupon_print_history.delete_one({"id": hid})
+        await _audit(user, "coupons.print_history_deleted", "coupon", hid,
+                     {"label": h.get("label"), "coupon_count": h.get("coupon_count")})
+        return {"ok": True}
 
 
     # ─── Public share link (for sending PDF to printer via WhatsApp) ──────

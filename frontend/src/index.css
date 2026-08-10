@@ -129,3 +129,121 @@ h1, h2, h3, h4, h5 {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+/* ============================================================================
+   NIGHT MODE — black + gold theme (toggled via .dark on <html>)
+   The app uses many hard-coded Tailwind utilities (bg-white, text-slate-*,
+   etc.) so we remap the common ones globally here. Gold gradient buttons are
+   intentionally left untouched — they look great on dark.
+   ========================================================================== */
+.dark {
+  --gold: #d8b13a;
+  --gold-dark: #c9a227;
+  --gold-tint: rgba(201, 162, 39, 0.14);
+  --bg: #0d0d0f;
+  --surface: #17171a;
+  --text: #f2ede1;
+  --muted: #a9a290;
+  --border: #2c2c31;
+
+  /* shadcn tokens (dark) */
+  --background: 240 6% 6%;
+  --foreground: 40 30% 92%;
+  --card: 240 5% 10%;
+  --card-foreground: 40 30% 92%;
+  --popover: 240 5% 10%;
+  --popover-foreground: 40 30% 92%;
+  --primary: 45 60% 52%;
+  --primary-foreground: 0 0% 8%;
+  --secondary: 240 4% 16%;
+  --secondary-foreground: 40 20% 88%;
+  --muted: 240 4% 16%;
+  --muted-foreground: 40 8% 65%;
+  --accent: 45 45% 22%;
+  --accent-foreground: 45 80% 80%;
+  --destructive: 0 63% 45%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 240 4% 20%;
+  --input: 240 4% 22%;
+  --ring: 45 68% 47%;
+}
+
+.dark body { background: var(--bg); color: var(--text); }
+.dark h1, .dark h2, .dark h3, .dark h4, .dark h5 { color: var(--text); }
+
+.dark ::-webkit-scrollbar-thumb { background: #33333a; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #444450; }
+
+/* ---- Surfaces ---- */
+.dark .bg-white,
+.dark .bg-white\/80,
+.dark .bg-white\/90,
+.dark .bg-white\/40 { background-color: var(--surface) !important; }
+
+.dark .bg-\[\#fafaf8\] { background-color: var(--bg) !important; }
+.dark .bg-\[\#faf6e6\],
+.dark .bg-\[\#faf0cf\],
+.dark .bg-\[\#f7efd4\] { background-color: var(--gold-tint) !important; }
+
+.dark .bg-slate-50 { background-color: #16161a !important; }
+.dark .bg-slate-100 { background-color: #202027 !important; }
+.dark .bg-slate-200 { background-color: #2a2a31 !important; }
+
+/* Light color tints -> subtle dark tinted chips */
+.dark .bg-emerald-50, .dark .bg-emerald-100 { background-color: rgba(16,185,129,0.14) !important; }
+.dark .bg-amber-50, .dark .bg-amber-100 { background-color: rgba(217,177,58,0.16) !important; }
+.dark .bg-blue-50 { background-color: rgba(59,130,246,0.14) !important; }
+.dark .bg-indigo-50 { background-color: rgba(99,102,241,0.14) !important; }
+.dark .bg-rose-50 { background-color: rgba(244,63,94,0.14) !important; }
+.dark .bg-purple-50 { background-color: rgba(168,85,247,0.14) !important; }
+.dark .bg-fuchsia-50 { background-color: rgba(217,70,239,0.14) !important; }
+.dark .bg-orange-50 { background-color: rgba(249,115,22,0.14) !important; }
+.dark .bg-sky-50 { background-color: rgba(14,165,233,0.14) !important; }
+.dark .bg-teal-50 { background-color: rgba(20,184,166,0.14) !important; }
+.dark .bg-red-50 { background-color: rgba(239,68,68,0.14) !important; }
+.dark .bg-green-50 { background-color: rgba(34,197,94,0.14) !important; }
+.dark .bg-yellow-50 { background-color: rgba(234,179,8,0.14) !important; }
+
+/* Amber/gold hover backgrounds used on rows */
+.dark .hover\:bg-amber-50\/30:hover { background-color: rgba(217,177,58,0.10) !important; }
+.dark .hover\:bg-slate-50:hover { background-color: #1e1e24 !important; }
+.dark .hover\:bg-slate-100:hover { background-color: #26262e !important; }
+.dark .hover\:bg-slate-200:hover { background-color: #2e2e37 !important; }
+
+/* Active nav gradient */
+.dark .from-\[\#faf0cf\] { --tw-gradient-from: rgba(201,162,39,0.22) var(--tw-gradient-from-position) !important; }
+.dark .to-\[\#faf6e6\] { --tw-gradient-to: rgba(201,162,39,0.10) var(--tw-gradient-to-position) !important; }
+
+/* ---- Text ---- */
+.dark .text-slate-900, .dark .text-slate-800, .dark .text-gray-900, .dark .text-gray-800 { color: #f2ede1 !important; }
+.dark .text-slate-700, .dark .text-gray-700 { color: #ddd6c6 !important; }
+.dark .text-slate-600, .dark .text-gray-600 { color: #b9b2a1 !important; }
+.dark .text-slate-500, .dark .text-gray-500 { color: #9c957f !important; }
+.dark .text-slate-400, .dark .text-gray-400 { color: #7e7869 !important; }
+.dark .text-slate-300 { color: #6a6558 !important; }
+.dark .text-\[\#8a6600\], .dark .text-\[\#a67c00\] { color: #e9c85a !important; }
+
+/* ---- Borders ---- */
+.dark .border-slate-50, .dark .border-slate-100 { border-color: #232329 !important; }
+.dark .border-slate-200, .dark .border-slate-300 { border-color: #33333b !important; }
+.dark .divide-slate-100 > :not([hidden]) ~ :not([hidden]) { border-color: #232329 !important; }
+
+/* Inputs / selects that hardcode white */
+.dark input, .dark textarea, .dark select { background-color: #1c1c21 !important; color: #f2ede1 !important; border-color: #33333b !important; }
+.dark input::placeholder, .dark textarea::placeholder { color: #7e7869 !important; }
+
+/* Overlays / modals backdrops keep dark */
+.dark .bg-slate-900\/40 { background-color: rgba(0,0,0,0.6) !important; }
+.dark .bg-slate-900\/50 { background-color: rgba(0,0,0,0.65) !important; }
+
+/* Shadows softer on dark */
+.dark .shadow, .dark .shadow-sm, .dark .shadow-md, .dark .shadow-lg, .dark .shadow-2xl { box-shadow: 0 1px 3px rgba(0,0,0,0.6) !important; }
+
+/* Login hero gradient panel -> dark gold */
+.dark .from-white { --tw-gradient-from: #141310 var(--tw-gradient-from-position) !important; }
+.dark .via-\[\#faf6e6\] { --tw-gradient-via: #1a1710 var(--tw-gradient-via-position) !important; }
+.dark .to-\[\#f2e6b8\] { --tw-gradient-to: #241f12 var(--tw-gradient-to-position) !important; }
+
+/* Toggle button border on dark */
+.dark .dark-toggle-btn { border-color: #33333b; }
+.dark .dark-toggle-btn:hover { background-color: var(--gold-tint); border-color: var(--gold-dark); }

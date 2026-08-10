@@ -103,21 +103,8 @@ export function TlDistributorsMonitoringPage() {
 // ============================================================================
 export function TlSalespersonsPage() {
   const [rows, setRows] = useState([]);
-  const [dists, setDists] = useState([]);
-  const [assignFor, setAssignFor] = useState(null); // sp obj
-  const [pickDist, setPickDist] = useState("");
   const refresh = () => dms.tlSalespersons().then(d => setRows(d.data || [])).catch(() => {});
-  useEffect(() => { refresh(); dms.tlDistributors().then(d => setDists(d.data || [])).catch(() => {}); }, []);
-
-  const doAssign = async () => {
-    if (!assignFor || !pickDist) return;
-    try {
-      await dms.assignSpDist({ salesperson_id: assignFor.id, distributor_id: pickDist });
-      toast.success(`Assigned ${assignFor.name} to distributor`);
-      setAssignFor(null); setPickDist("");
-      refresh();
-    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
-  };
+  useEffect(() => { refresh(); }, []);
 
   return (
     <div>
@@ -145,30 +132,9 @@ export function TlSalespersonsPage() {
               <Row icon={ShoppingCart} label="Orders Collected" value={s.orders_today} />
               <Row icon={Users}  label="New Retailers"  value={s.new_retailers_today} />
             </div>
-            <Button size="sm" variant="outline" onClick={() => setAssignFor(s)} className="mt-3 w-full" data-testid={`assign-sp-${s.id}`}>
-              Assign to Distributor
-            </Button>
           </Card>
         ))}
       </div>
-
-      {assignFor && (
-        <div className="fixed inset-0 bg-slate-900/40 flex items-center justify-center z-50" onClick={() => setAssignFor(null)}>
-          <Card className="p-5 w-96" onClick={e => e.stopPropagation()}>
-            <div className="font-semibold text-slate-900 mb-3">Assign {assignFor.name} to Distributor</div>
-            <Select value={pickDist} onValueChange={setPickDist}>
-              <SelectTrigger data-testid="assign-dist-picker"><SelectValue placeholder="Select distributor" /></SelectTrigger>
-              <SelectContent>
-                {dists.map(d => <SelectItem key={d.id} value={d.id}>{d.name} · {d.region}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <div className="flex gap-2 mt-4">
-              <Button variant="outline" className="flex-1" onClick={() => setAssignFor(null)}>Cancel</Button>
-              <Button className="flex-1 bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" onClick={doAssign} disabled={!pickDist} data-testid="confirm-assign">Assign</Button>
-            </div>
-          </Card>
-        </div>
-      )}
     </div>
   );
 }

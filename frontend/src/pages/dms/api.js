@@ -195,6 +195,22 @@ export const dms = {
   },
   cpnCreateShareLink: (bid, body = {}) =>
     api.post(`/dms/coupons/batches/${bid}/share-link`, body).then(r => r.data),
+  // Mixed print (multiple batches / serial range) + Print History
+  cpnPrintMixedPreview: (body) => api.post(`/dms/coupons/print-mixed/preview`, body).then(r => r.data),
+  cpnPrintMixed: async (body, filename) => {
+    const r = await api.post(`/dms/coupons/print-mixed`, body, { responseType: "blob" });
+    const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+    const a = document.createElement("a"); a.href = url; a.download = filename || `coupons.pdf`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  },
+  cpnPrintHistory: () => api.get(`/dms/coupons/print-history`).then(r => r.data),
+  cpnPrintHistoryDownload: async (hid, filename) => {
+    const r = await api.get(`/dms/coupons/print-history/${hid}/download`, { responseType: "blob" });
+    const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+    const a = document.createElement("a"); a.href = url; a.download = filename || `reprint.pdf`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  },
+  cpnPrintHistoryDelete: (hid) => api.delete(`/dms/coupons/print-history/${hid}`).then(r => r.data),
   cpnExportXlsx: async (bid, filename) => {
     const r = await api.get(`/dms/coupons/batches/${bid}/export-xlsx`, { responseType: "blob" });
     const url = URL.createObjectURL(new Blob([r.data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
@@ -294,6 +310,7 @@ export const dms = {
   // print
   printEbill: (id) => api.get(`/dms/print/ebill/${id}`).then(r => r.data),
   printRetailerBill: (id) => api.get(`/dms/print/retailer-bill/${id}`).then(r => r.data),
+  printChallan: (id) => api.get(`/dms/print/challan/${id}`).then(r => r.data),
 
   // settings (global — GST %)
   getSettings: () => api.get("/dms/settings").then(r => r.data),

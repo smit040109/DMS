@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, Loader2, Droplet, Users, ShoppingCart, TrendingUp } from "lucide-react";
+import ThemeToggle from "@/components/common/ThemeToggle";
 
 const DEMO = [
   { role: "owner",                   email: "owner@gooil.com",          label: "Company Owner",           tag: "Owner"       },
@@ -46,7 +47,8 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-5 bg-[#fafaf8]" data-testid="login-page">
+    <div className="min-h-screen grid lg:grid-cols-5 bg-[#fafaf8] relative" data-testid="login-page">
+      <div className="absolute top-4 right-4 z-20"><ThemeToggle /></div>
       {/* Left brand — premium White + Gold */}
       <div className="relative hidden lg:flex lg:col-span-2 flex-col justify-between p-10 bg-gradient-to-br from-white via-[#faf6e6] to-[#f2e6b8] overflow-hidden">
         <div className="absolute -top-24 -right-24 h-96 w-96 rounded-full bg-[#c9a227]/20 blur-3xl" />
