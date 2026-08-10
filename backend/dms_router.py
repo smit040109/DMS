@@ -11,6 +11,8 @@ Tenant scope: `tnt-dms-oil` (dedicated tenant so existing tenancy wrapper isolat
 from __future__ import annotations
 
 import uuid
+import io
+import base64
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -40,6 +42,109 @@ def _round(v: Any, n: int = 2) -> float:
         return round(float(v), n)
     except Exception:
         return 0.0
+
+
+# ──────────────────────── Invoice helpers (Vyapar-style) ────────────────────────
+def _num_to_words_inr(amount: Any) -> str:
+    """Indian numbering-system amount in words. Returns e.g.
+    'Rupees One Lakh Twenty Three Thousand Four Hundred Fifty & Fifty Paise Only'."""
+    try:
+        amount = float(amount or 0)
+    except Exception:
+        amount = 0.0
+    rupees = int(amount)
+    paise = int(round((amount - rupees) * 100))
+    if paise == 100:
+        rupees += 1
+        paise = 0
+
+    ones = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+            "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+            "Seventeen", "Eighteen", "Nineteen"]
+    tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"]
+
+    def two(n: int) -> str:
+        if n < 20:
+            return ones[n]
+        return (tens[n // 10] + (" " + ones[n % 10] if n % 10 else "")).strip()
+
+    def three(n: int) -> str:
+        # 0..999
+        h = n // 100
+        r = n % 100
+        out = ""
+        if h:
+            out += ones[h] + " Hundred"
+            if r:
+                out += " "
+        if r:
+            out += two(r)
+        return out
+
+    if rupees == 0:
+        words = "Zero"
+    else:
+        crore = rupees // 10000000
+        rem = rupees % 10000000
+        lakh = rem // 100000
+        rem = rem % 100000
+        thousand = rem // 1000
+        rem = rem % 1000
+        hundred = rem
+        parts: List[str] = []
+        if crore:
+            parts.append(three(crore) + " Crore")
+        if lakh:
+            parts.append(three(lakh) + " Lakh")
+        if thousand:
+            parts.append(three(thousand) + " Thousand")
+        if hundred:
+            parts.append(three(hundred))
+        words = " ".join([p for p in parts if p]).strip()
+
+    result = f"Rupees {words}"
+    if paise:
+        result += f" & {two(paise)} Paise"
+    result += " Only"
+    return result
+
+
+def _make_upi_qr_dataurl(upi_id: str, name: str = "", amount: Any = None) -> str:
+    """Generate a UPI payment QR as a base64 PNG data URL. Empty string on failure/no upi."""
+    upi_id = (upi_id or "").strip()
+    if not upi_id:
+        return ""
+    try:
+        import qrcode  # local import to avoid hard dependency at import time
+        params = [f"pa={upi_id}"]
+        if name:
+            params.append(f"pn={name}")
+        params.append("cu=INR")
+        try:
+            if amount and float(amount) > 0:
+                params.append(f"am={float(amount):.2f}")
+        except Exception:
+            pass
+        payload = "upi://pay?" + "&".join(params)
+        img = qrcode.make(payload)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{b64}"
+    except Exception:
+        return ""
+
+
+def _gst_breakup(gst_total: float, seller_state_code: str = "", buyer_state_code: str = "") -> Dict[str, Any]:
+    """Split total GST into SGST+CGST (intra-state) or IGST (inter-state)."""
+    gst_total = _round(gst_total)
+    ss = (seller_state_code or "").strip()
+    bs = (buyer_state_code or "").strip()
+    interstate = bool(ss and bs and ss != bs)
+    if interstate:
+        return {"is_interstate": True, "igst": gst_total, "sgst": 0.0, "cgst": 0.0}
+    half = _round(gst_total / 2.0)
+    return {"is_interstate": False, "igst": 0.0, "sgst": half, "cgst": _round(gst_total - half)}
 
 
 # ────────────────────────────── router builder ──────────────────────────────
@@ -416,6 +521,19 @@ def build_dms_router(db, get_current_user):
                 "bank_ifsc": body.get("bank_ifsc", ""),
                 "notes": body.get("kyc_notes", ""),
             },
+            # Bank + UPI (used on retailer/direct-sale invoice "Pay To")
+            "bank": body.get("bank") or {
+                "gstin": body.get("gstin", ""),
+                "bank_name": body.get("bank_name", ""),
+                "bank_account": body.get("bank_account", ""),
+                "bank_ifsc": body.get("bank_ifsc", ""),
+                "bank_branch": body.get("bank_branch", ""),
+                "upi_id": body.get("upi_id", ""),
+                "upi_name": body.get("upi_name", ""),
+                "qr_url": body.get("qr_url", ""),
+            },
+            "state": body.get("state", ""),
+            "state_code": body.get("state_code", ""),
             "credit_limit": _round(body.get("credit_limit", 0)),
             "documents": body.get("documents", []),
             "active": True,
@@ -435,7 +553,8 @@ def build_dms_router(db, get_current_user):
     async def update_distributor(did: str, body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
         upd: Dict[str, Any] = {}
         for k in ["name", "phone", "address", "region", "credit_limit", "active",
-                  "location_link", "gps_lat", "gps_lng", "documents"]:
+                  "location_link", "gps_lat", "gps_lng", "documents",
+                  "bank", "state", "state_code"]:
             if k in body:
                 upd[k] = body[k]
         if "kyc" in body:
@@ -1147,6 +1266,18 @@ def build_dms_router(db, get_current_user):
                 "shop_license": body.get("shop_license", ""),
                 "notes": body.get("kyc_notes", ""),
             },
+            # Bank + UPI (retailer's own — visible to owner; used when retailer bills a customer)
+            "bank": body.get("bank") or {
+                "bank_name": body.get("bank_name", ""),
+                "bank_account": body.get("bank_account", ""),
+                "bank_ifsc": body.get("bank_ifsc", ""),
+                "bank_branch": body.get("bank_branch", ""),
+                "upi_id": body.get("upi_id", ""),
+                "upi_name": body.get("upi_name", ""),
+                "qr_url": body.get("qr_url", ""),
+            },
+            "state": body.get("state", ""),
+            "state_code": body.get("state_code", ""),
             "documents": body.get("documents", []),
             "credit_limit": _round(body.get("credit_limit", 0)),
             "active": True,
@@ -1165,7 +1296,7 @@ def build_dms_router(db, get_current_user):
     @router.put("/retailers/{rid}")
     async def update_retailer(rid: str, body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
         upd: Dict[str, Any] = {}
-        for k in ["name", "phone", "address", "region", "gps_lat", "gps_lng", "location_link", "credit_limit", "active", "documents"]:
+        for k in ["name", "phone", "address", "region", "gps_lat", "gps_lng", "location_link", "credit_limit", "active", "documents", "bank", "state", "state_code"]:
             if k in body:
                 upd[k] = body[k]
         if "kyc" in body:
@@ -3002,7 +3133,59 @@ def build_dms_router(db, get_current_user):
                     "last_ping_at": last_at, "online": online,
                 })
 
-        return {"salespersons": sps, "distributors": dists, "retailers": rets, "team_leaders": tls}
+        # CONTINUATION v6 (Task 4): ALL punched-in field staff on the map.
+        # Every non-owner role can punch-in + GPS-ping, so surface them all.
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        open_ids = [p["salesperson_id"] async for p in db.dms_punch.find(
+            {"date": today_str, "out_at": None}, {"_id": 0, "salesperson_id": 1})]
+        field_staff: List[Dict[str, Any]] = []
+        if open_ids:
+            # scope allowed ids for TL / RM (owner + super_admin see everyone)
+            allowed: Optional[set] = None
+            if role in ("team_leader", "regional_manager"):
+                allowed = set(sp_ids)
+                allowed.update(tl_query_ids)
+                allowed.add(user["id"])
+                scoped_dids = dq.get("id", {}).get("$in") if isinstance(dq.get("id"), dict) else None
+                dfilter = {"id": {"$in": scoped_dids}} if scoped_dids is not None else {}
+                async for d in db.dms_distributors.find(dfilter, {"_id": 0, "user_id": 1, "accountant_user_id": 1, "id": 1}):
+                    if d.get("user_id"):
+                        allowed.add(d["user_id"])
+                    if d.get("accountant_user_id"):
+                        allowed.add(d["accountant_user_id"])
+                    rf = {"distributor_id": d["id"]}
+                    async for r in db.dms_retailers.find(rf, {"_id": 0, "user_id": 1}):
+                        if r.get("user_id"):
+                            allowed.add(r["user_id"])
+            role_labels = {
+                "salesperson": "Salesperson", "team_leader": "Team Leader",
+                "regional_manager": "Regional Manager", "distributor": "Distributor",
+                "distributor_accountant": "Distributor Accountant", "retailer": "Retailer",
+                "owner_accountant": "Owner Accountant",
+            }
+            async for u in db.users.find({"id": {"$in": open_ids}}, {"_id": 0, "password_hash": 0}):
+                if u.get("role") == "owner":
+                    continue
+                if allowed is not None and u["id"] not in allowed:
+                    continue
+                gps = u.get("last_gps") or {}
+                last_at = gps.get("at") or u.get("last_active_at")
+                online = False
+                try:
+                    if last_at:
+                        dt = datetime.fromisoformat(last_at.replace("Z", "+00:00"))
+                        online = (datetime.now(timezone.utc) - dt).total_seconds() < 300
+                except Exception:
+                    pass
+                field_staff.append({
+                    "id": u["id"], "name": u.get("name"), "phone": u.get("phone"),
+                    "role": u.get("role"), "role_label": role_labels.get(u.get("role"), u.get("role")),
+                    "lat": gps.get("lat"), "lng": gps.get("lng"),
+                    "last_ping_at": last_at, "online": online, "punched_in": True,
+                })
+
+        return {"salespersons": sps, "distributors": dists, "retailers": rets,
+                "team_leaders": tls, "field_staff": field_staff}
 
     @router.get("/tracking/salesperson/{sid}")
     async def tracking_salesperson_detail(
@@ -3402,8 +3585,133 @@ def build_dms_router(db, get_current_user):
         return {"token": tok, "user": target}
 
     # =========================================================================
-    # PRINTABLE E-BILL / RETAILER BILL data
+    # PRINTABLE E-BILL / RETAILER BILL data  (Vyapar-style unified invoice)
     # =========================================================================
+    def _company_seller_block(s: Dict[str, Any]) -> Dict[str, Any]:
+        """GO OIL company as seller (from global settings)."""
+        return {
+            "name": s.get("company_name") or "GO OIL Lubricants",
+            "gstin": s.get("company_gstin") or "",
+            "address": s.get("company_address") or "",
+            "state": s.get("company_state") or "",
+            "state_code": s.get("company_state_code") or "",
+            "phone": s.get("company_phone") or "",
+            "email": s.get("company_email") or "",
+            "logo_url": s.get("company_logo_url") or "",
+            "bank_name": s.get("company_bank_name") or "",
+            "bank_account": s.get("company_bank_account") or "",
+            "bank_ifsc": s.get("company_bank_ifsc") or "",
+            "bank_branch": s.get("company_bank_branch") or "",
+            "upi_id": s.get("company_upi_id") or "",
+            "upi_name": s.get("company_upi_name") or (s.get("company_name") or ""),
+            "qr_url": "",
+            "signatory": s.get("invoice_signatory") or (s.get("company_name") or ""),
+        }
+
+    def _distributor_seller_block(d: Dict[str, Any], s: Dict[str, Any]) -> Dict[str, Any]:
+        """Distributor as seller (for retailer / direct-sale bills)."""
+        d = d or {}
+        kyc = d.get("kyc") or {}
+        bank = d.get("bank") or {}
+        return {
+            "name": d.get("name") or "",
+            "gstin": bank.get("gstin") or kyc.get("gstin") or "",
+            "address": d.get("address") or "",
+            "state": d.get("state") or d.get("region") or "",
+            "state_code": d.get("state_code") or "",
+            "phone": d.get("phone") or "",
+            "email": d.get("email") or "",
+            "logo_url": s.get("company_logo_url") or "",
+            "bank_name": bank.get("bank_name") or kyc.get("bank_name") or "",
+            "bank_account": bank.get("bank_account") or kyc.get("bank_account") or "",
+            "bank_ifsc": bank.get("bank_ifsc") or kyc.get("bank_ifsc") or "",
+            "bank_branch": bank.get("bank_branch") or "",
+            "upi_id": bank.get("upi_id") or "",
+            "upi_name": bank.get("upi_name") or d.get("name") or "",
+            "qr_url": bank.get("qr_url") or "",
+            "signatory": d.get("name") or "",
+        }
+
+    def _party_buyer_block(p: Dict[str, Any]) -> Dict[str, Any]:
+        p = p or {}
+        kyc = p.get("kyc") or {}
+        return {
+            "name": p.get("name") or "",
+            "gstin": kyc.get("gstin") or "",
+            "address": p.get("address") or "",
+            "state": p.get("state") or p.get("region") or "",
+            "state_code": p.get("state_code") or "",
+            "phone": p.get("phone") or "",
+        }
+
+    def _assemble_invoice(*, doc_title: str, doc_no: str, date: str,
+                          seller: Dict[str, Any], buyer: Dict[str, Any],
+                          ship_to: Optional[Dict[str, Any]],
+                          items: List[Dict[str, Any]], subtotal: float, gst_total: float,
+                          total: float, settings: Dict[str, Any],
+                          transport: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        inv_items = []
+        for it in (items or []):
+            qb = it.get("billed_qty_boxes")
+            if qb is None:
+                qb = it.get("dispatched_qty_boxes", it.get("qty_boxes_dispatched", it.get("qty_boxes_fulfilled", it.get("qty_boxes", 0))))
+            qp = it.get("dispatched_qty_pcs", it.get("qty_pcs_dispatched", it.get("qty_pcs", 0)))
+            try:
+                qb = int(qb or 0); qp = int(qp or 0)
+            except Exception:
+                qb, qp = 0, 0
+            qty_bits = []
+            if qb:
+                qty_bits.append(f"{qb} Box")
+            if qp:
+                qty_bits.append(f"{qp} Pcs")
+            rate = it.get("box_price", it.get("unit_price", 0))
+            inv_items.append({
+                "name": it.get("product_name") or it.get("name") or "",
+                "sku_code": it.get("sku_code") or "",
+                "hsn": it.get("hsn") or it.get("hsn_sac") or "27101980",
+                "qty_boxes": qb,
+                "qty_pcs": qp,
+                "qty_label": " + ".join(qty_bits) or "-",
+                "rate": _round(rate),
+                "taxable": _round(it.get("line_subtotal", 0)),
+                "gst_pct": _round(it.get("gst_pct", 0)),
+                "gst_amt": _round(it.get("line_gst", 0)),
+                "amount": _round(it.get("line_total", 0)),
+            })
+        breakup = _gst_breakup(gst_total, seller.get("state_code", ""), buyer.get("state_code", ""))
+        grand = _round(total)
+        grand_rounded = float(round(grand))
+        round_off = _round(grand_rounded - grand)
+        upi_qr = seller.get("qr_url") or _make_upi_qr_dataurl(
+            seller.get("upi_id", ""), seller.get("upi_name") or seller.get("name", ""), grand_rounded)
+        return {
+            "doc_title": doc_title,
+            "doc_no": doc_no,
+            "date": date,
+            "seller": seller,
+            "bill_to": buyer,
+            "ship_to": ship_to or buyer,
+            "transport": transport or {},
+            "items": inv_items,
+            "totals": {
+                "subtotal": _round(subtotal),
+                "gst_total": _round(gst_total),
+                "sgst": breakup["sgst"],
+                "cgst": breakup["cgst"],
+                "igst": breakup["igst"],
+                "is_interstate": breakup["is_interstate"],
+                "round_off": round_off,
+                "grand_total": grand_rounded,
+            },
+            "amount_in_words": _num_to_words_inr(grand_rounded),
+            "terms": settings.get("invoice_terms") or "",
+            "message": settings.get("invoice_message") or "",
+            "signatory": seller.get("signatory") or seller.get("name", ""),
+            "upi_qr": upi_qr,
+            "acknowledgement_enabled": bool(settings.get("invoice_show_acknowledgement")),
+        }
+
     @router.get("/print/ebill/{ebill_id}")
     async def print_ebill(ebill_id: str, user: dict = Depends(get_current_user)):
         eb = await db.dms_ebills.find_one({"id": ebill_id}, {"_id": 0})
@@ -3415,11 +3723,24 @@ def build_dms_router(db, get_current_user):
             raise HTTPException(status_code=403, detail="Forbidden")
         dist = await db.dms_distributors.find_one({"id": eb["distributor_id"]}, {"_id": 0})
         eb["distributor"] = dist
-        # Phase 2A: expose invoice T&C / message from global settings
-        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0, "invoice_terms": 1, "invoice_message": 1, "company_name": 1}) or {}
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0}) or {}
         eb["invoice_terms"] = s.get("invoice_terms") or ""
         eb["invoice_message"] = s.get("invoice_message") or ""
         eb["company_name"] = s.get("company_name") or "GO OIL Lubricants"
+        # Vyapar-style unified invoice: seller = GO OIL, buyer = distributor
+        eb["invoice"] = _assemble_invoice(
+            doc_title="TAX INVOICE",
+            doc_no=eb.get("ebill_no") or eb.get("id"),
+            date=(eb.get("created_at") or "")[:10],
+            seller=_company_seller_block(s),
+            buyer=_party_buyer_block(dist or {}),
+            ship_to=_party_buyer_block(dist or {}),
+            items=eb.get("items") or [],
+            subtotal=eb.get("subtotal", 0),
+            gst_total=eb.get("gst_total", 0),
+            total=eb.get("total", 0),
+            settings=s,
+        )
         return eb
 
     @router.get("/print/retailer-bill/{bill_id}")
@@ -3436,11 +3757,33 @@ def build_dms_router(db, get_current_user):
         distributor = await db.dms_distributors.find_one({"id": b["distributor_id"]}, {"_id": 0})
         b["retailer"] = retailer
         b["distributor"] = distributor
-        # Phase 2A: expose invoice T&C / message from global settings
-        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0, "invoice_terms": 1, "invoice_message": 1, "company_name": 1}) or {}
+        s = await db.dms_settings.find_one({"id": "global"}, {"_id": 0}) or {}
         b["invoice_terms"] = s.get("invoice_terms") or ""
         b["invoice_message"] = s.get("invoice_message") or ""
         b["company_name"] = s.get("company_name") or "GO OIL Lubricants"
+        # Vyapar-style unified invoice: seller = distributor, buyer = retailer OR walk-in customer
+        cust = b.get("customer") or {}
+        if cust and cust.get("name"):
+            buyer_block = {
+                "name": cust.get("name") or "", "gstin": cust.get("gstin") or "",
+                "address": cust.get("address") or "", "state": "", "state_code": "",
+                "phone": cust.get("phone") or "",
+            }
+        else:
+            buyer_block = _party_buyer_block(retailer or {})
+        b["invoice"] = _assemble_invoice(
+            doc_title="TAX INVOICE",
+            doc_no=b.get("bill_no") or b.get("id"),
+            date=b.get("date") or (b.get("created_at") or "")[:10],
+            seller=_distributor_seller_block(distributor or {}, s),
+            buyer=buyer_block,
+            ship_to=buyer_block,
+            items=b.get("items") or [],
+            subtotal=b.get("subtotal", 0),
+            gst_total=b.get("gst_total", 0),
+            total=b.get("total", 0),
+            settings=s,
+        )
         return b
 
     # =========================================================================
@@ -3495,6 +3838,18 @@ def build_dms_router(db, get_current_user):
         # Phase 2B: Stop Sale on Negative Stock toggle
         if "stop_sale_on_negative" in body:
             upd["stop_sale_on_negative"] = bool(body.get("stop_sale_on_negative"))
+        # CONTINUATION v6: Company profile + invoice options (Vyapar-style invoice)
+        _company_str_fields = [
+            "company_gstin", "company_address", "company_state", "company_state_code",
+            "company_phone", "company_email", "company_logo_url",
+            "company_bank_name", "company_bank_account", "company_bank_ifsc", "company_bank_branch",
+            "company_upi_id", "company_upi_name", "invoice_signatory",
+        ]
+        for k in _company_str_fields:
+            if k in body:
+                upd[k] = str(body.get(k) or "").strip()
+        if "invoice_show_acknowledgement" in body:
+            upd["invoice_show_acknowledgement"] = bool(body.get("invoice_show_acknowledgement"))
         upd["updated_at"] = _now()
         await db.dms_settings.update_one({"id": "global"}, {"$set": upd}, upsert=True)
         s = await _get_settings()
@@ -5187,23 +5542,48 @@ def build_dms_router(db, get_current_user):
     # =========================================================================
     @router.post("/direct-sales")
     async def create_direct_sale(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
-        """Directly create a retailer sale bill without a preceding secondary order.
-        RBAC: owner, distributor, distributor_accountant. Distributor can only bill own retailers."""
+        """Directly create a sale bill without a preceding secondary order.
+        RBAC (Task 3 — "bill for everyone"):
+          - owner / super_admin: any distributor+retailer
+          - distributor / distributor_accountant: own retailers only
+          - salesperson: retailers under an assigned distributor only
+          - retailer: counter-sale to a walk-in customer (self), optional customer{}
+        """
         role = user.get("role")
-        if role not in ("owner", "super_admin", "distributor", "distributor_accountant"):
+        if role not in ("owner", "super_admin", "distributor", "distributor_accountant",
+                        "salesperson", "team_leader", "retailer"):
             raise HTTPException(status_code=403, detail="Forbidden")
-        did = str(body.get("distributor_id") or user.get("distributor_id") or "").strip()
-        rid = str(body.get("retailer_id") or "").strip()
-        if not did or not rid:
-            raise HTTPException(status_code=400, detail="distributor_id and retailer_id required")
-        if role in ("distributor", "distributor_accountant") and did != user.get("distributor_id"):
-            raise HTTPException(status_code=403, detail="Cannot create bill for another distributor")
-        dist = await db.dms_distributors.find_one({"id": did}, {"_id": 0})
-        retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
-        if not dist or not retailer:
-            raise HTTPException(status_code=400, detail="Invalid distributor_id or retailer_id")
-        if retailer.get("distributor_id") != did:
-            raise HTTPException(status_code=400, detail="Retailer does not belong to this distributor")
+        skip_inventory = False
+        if role == "retailer":
+            # Retailer counter-sale: bill their own store's customer
+            rid = str(user.get("retailer_id") or "").strip()
+            if not rid:
+                raise HTTPException(status_code=400, detail="Retailer profile missing")
+            retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+            if not retailer:
+                raise HTTPException(status_code=400, detail="Retailer not found")
+            did = str(retailer.get("distributor_id") or "").strip()
+            dist = await db.dms_distributors.find_one({"id": did}, {"_id": 0}) if did else None
+            skip_inventory = True  # retailer already owns the stock; no distributor inventory move
+        else:
+            did = str(body.get("distributor_id") or user.get("distributor_id") or "").strip()
+            rid = str(body.get("retailer_id") or "").strip()
+            if not did or not rid:
+                raise HTTPException(status_code=400, detail="distributor_id and retailer_id required")
+            if role in ("distributor", "distributor_accountant") and did != user.get("distributor_id"):
+                raise HTTPException(status_code=403, detail="Cannot create bill for another distributor")
+            if role in ("salesperson", "team_leader"):
+                assigned = await db.dms_sp_assignments.find_one(
+                    {"salesperson_id": user["id"], "distributor_id": did}, {"_id": 0}) if role == "salesperson" else \
+                    await db.dms_tl_assignments.find_one({"team_leader_id": user["id"], "distributor_id": did}, {"_id": 0})
+                if not assigned:
+                    raise HTTPException(status_code=403, detail="You are not assigned to this distributor")
+            dist = await db.dms_distributors.find_one({"id": did}, {"_id": 0})
+            retailer = await db.dms_retailers.find_one({"id": rid}, {"_id": 0})
+            if not dist or not retailer:
+                raise HTTPException(status_code=400, detail="Invalid distributor_id or retailer_id")
+            if retailer.get("distributor_id") != did:
+                raise HTTPException(status_code=400, detail="Retailer does not belong to this distributor")
         date = str(body.get("date") or _now()[:10]).strip()
         try:
             datetime.strptime(date, "%Y-%m-%d")
@@ -5243,7 +5623,7 @@ def build_dms_router(db, get_current_user):
             line_gst = _round(line_sub * gst_default / 100)
             line_total = _round(line_sub + line_gst)
             # stock check
-            if stop_sale:
+            if stop_sale and not skip_inventory:
                 need_boxes = qb + (qp // max(box_qty, 1)) + (1 if qp % max(box_qty, 1) > 0 else 0)
                 inv = await db.dms_distributor_inventory.find_one({"distributor_id": did, "product_id": pid}, {"_id": 0, "qty_boxes": 1})
                 avail = int((inv or {}).get("qty_boxes", 0) or 0)
@@ -5251,15 +5631,16 @@ def build_dms_router(db, get_current_user):
                     raise HTTPException(status_code=400, detail=f"Insufficient distributor stock for {p['name']}: available {avail} boxes, need {need_boxes}")
             norm_items.append({
                 "product_id": pid, "product_name": p.get("name", ""), "sku_code": p.get("sku_code", ""),
+                "hsn": p.get("hsn", ""),
                 "box_qty": box_qty, "box_price": _round(box_price), "pcs_price": pcs_price,
                 "gst_pct": gst_default, "qty_boxes_dispatched": qb, "qty_pcs_dispatched": qp,
                 "dispatched_qty_boxes": qb, "dispatched_qty_pcs": qp,
                 "line_subtotal": line_sub, "line_gst": line_gst, "line_total": line_total,
             })
             subtotal += line_sub; gst_total += line_gst
-            # decrement inventory
+            # decrement inventory (skip for retailer counter-sale)
             need_boxes = qb + (qp // max(box_qty, 1)) + (1 if qp % max(box_qty, 1) > 0 else 0)
-            if need_boxes > 0:
+            if need_boxes > 0 and not skip_inventory:
                 await db.dms_distributor_inventory.update_one(
                     {"distributor_id": did, "product_id": pid},
                     {"$inc": {"qty_boxes": -need_boxes}, "$set": {"updated_at": _now()}},
@@ -5277,22 +5658,35 @@ def build_dms_router(db, get_current_user):
         dup = await db.dms_retailer_bills.find_one({"bill_no": bill_no}, {"_id": 0})
         if dup:
             raise HTTPException(status_code=400, detail=f"Bill number '{bill_no}' already exists")
+        customer = body.get("customer") or {}
+        if not isinstance(customer, dict):
+            customer = {}
         bill = {
             "id": _nid("rb"), "bill_no": bill_no, "date": date,
             "order_id": None, "order_no": None,
             "retailer_id": rid, "distributor_id": did,
             "items": norm_items, "subtotal": _round(subtotal), "gst_total": _round(gst_total), "total": total,
             "status": "issued", "source": "direct_sale",
+            "customer": {
+                "name": str(customer.get("name") or "").strip(),
+                "phone": str(customer.get("phone") or "").strip(),
+                "address": str(customer.get("address") or "").strip(),
+                "gstin": str(customer.get("gstin") or "").strip(),
+            },
             "notes": str(body.get("notes") or "").strip(),
             "created_by": user["id"], "created_by_name": user.get("name"),
+            "created_by_role": role,
             "created_at": _now(),
         }
         await db.dms_retailer_bills.insert_one(bill)
-        await db.dms_retailer_ledger.insert_one({
-            "id": _nid("rle"), "distributor_id": did, "retailer_id": rid,
-            "kind": "invoice", "reference_id": bill["id"], "reference_no": bill["bill_no"],
-            "amount": total, "description": f"Direct sale bill {bill_no}", "at": _now(),
-        })
+        # Retailer counter-sale is to a walk-in customer, NOT a purchase from the
+        # distributor — so it must NOT affect the retailer↔distributor ledger.
+        if role != "retailer":
+            await db.dms_retailer_ledger.insert_one({
+                "id": _nid("rle"), "distributor_id": did, "retailer_id": rid,
+                "kind": "invoice", "reference_id": bill["id"], "reference_no": bill["bill_no"],
+                "amount": total, "description": f"Direct sale bill {bill_no}", "at": _now(),
+            })
         bill.pop("_id", None)
         return _clean(bill)
 
