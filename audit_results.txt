@@ -1,0 +1,161 @@
+
+================================================================================
+GO OIL DMS — COMPREHENSIVE BACKEND FLOW AUDIT
+================================================================================
+Base URL: https://challan-print-fix.preview.emergentagent.com
+Testing 10 roles
+================================================================================
+
+================================================================================
+AREA 1: AUTH — Login for all 10 roles + /api/auth/me
+================================================================================
+✅ [1_AUTH] owner (owner@gooil.com) login successful
+✅ [1_AUTH] owner /auth/me → 200
+✅ [1_AUTH] accountant (accountant@gooil.com) login successful
+✅ [1_AUTH] accountant /auth/me → 200
+✅ [1_AUTH] distributor1 (distributor1@gooil.com) login successful
+✅ [1_AUTH] distributor1 /auth/me → 200
+✅ [1_AUTH] distributor2 (distributor2@gooil.com) login successful
+✅ [1_AUTH] distributor2 /auth/me → 200
+✅ [1_AUTH] distacct (distacct@gooil.com) login successful
+✅ [1_AUTH] distacct /auth/me → 200
+✅ [1_AUTH] retailer1 (retailer1@gooil.com) login successful
+✅ [1_AUTH] retailer1 /auth/me → 200
+✅ [1_AUTH] retailer2 (retailer2@gooil.com) login successful
+✅ [1_AUTH] retailer2 /auth/me → 200
+✅ [1_AUTH] salesperson (salesperson@gooil.com) login successful
+✅ [1_AUTH] salesperson /auth/me → 200
+✅ [1_AUTH] teamleader (teamleader@gooil.com) login successful
+✅ [1_AUTH] teamleader /auth/me → 200
+✅ [1_AUTH] regionalmgr (regionalmgr@gooil.com) login successful
+✅ [1_AUTH] regionalmgr /auth/me → 200
+
+================================================================================
+AREA 2: DASHBOARDS — Dashboard/KPI endpoints for each role
+================================================================================
+✅ [2_DASHBOARDS] owner dashboard → 200
+✅ [2_DASHBOARDS] owner dashboard has KPIs
+✅ [2_DASHBOARDS] accountant dashboard → 200
+✅ [2_DASHBOARDS] accountant dashboard has KPIs
+✅ [2_DASHBOARDS] distributor1 dashboard → 200
+✅ [2_DASHBOARDS] distributor1 dashboard has KPIs
+✅ [2_DASHBOARDS] distributor2 dashboard → 200
+✅ [2_DASHBOARDS] distributor2 dashboard has KPIs
+✅ [2_DASHBOARDS] distacct dashboard → 200
+✅ [2_DASHBOARDS] distacct dashboard has KPIs
+✅ [2_DASHBOARDS] retailer1 dashboard → 200
+✅ [2_DASHBOARDS] retailer1 dashboard has KPIs
+✅ [2_DASHBOARDS] retailer2 dashboard → 200
+✅ [2_DASHBOARDS] retailer2 dashboard has KPIs
+✅ [2_DASHBOARDS] salesperson dashboard → 200
+✅ [2_DASHBOARDS] salesperson dashboard has KPIs
+✅ [2_DASHBOARDS] teamleader dashboard → 200
+✅ [2_DASHBOARDS] teamleader dashboard has KPIs
+✅ [2_DASHBOARDS] regionalmgr dashboard → 200
+✅ [2_DASHBOARDS] regionalmgr dashboard has KPIs
+
+================================================================================
+AREA 3: PRIMARY SALES FLOW — Full lifecycle test
+================================================================================
+✅ [3_PRIMARY_SALES] Distributor1 browse products → 200
+✅ [3_PRIMARY_SALES] Found product: 10W30 COMBO (0.8 L)
+✅ [3_PRIMARY_SALES] Distributor1 place primary order → 200
+✅ [3_PRIMARY_SALES] Primary order created: po-b15002aa7a
+✅ [3_PRIMARY_SALES] Owner view primary order → 200
+✅ [3_PRIMARY_SALES] Owner can view order po-b15002aa7a
+✅ [3_PRIMARY_SALES] Owner fulfill line items → 200
+✅ [3_PRIMARY_SALES] Line items fulfilled: 100%
+✅ [3_PRIMARY_SALES] Owner mark ready (generate e-bill) → 200
+✅ [3_PRIMARY_SALES] E-bill generated: eb-1a5a17a8bc
+✅ [3_PRIMARY_SALES] Owner check primary ledger → 200
+✅ [3_PRIMARY_SALES] Primary ledger has invoice entry
+✅ [3_PRIMARY_SALES] Distributor1 mark received → 200
+✅ [3_PRIMARY_SALES] Distributor marked order as received
+✅ [3_PRIMARY_SALES] Distributor1 check inventory → 200
+✅ [3_PRIMARY_SALES] Distributor inventory incremented: 2702 boxes
+
+================================================================================
+AREA 4: SECONDARY SALES FLOW — Distributor → Retailer
+================================================================================
+✅ [4_SECONDARY_SALES] Retailer1 browse products → 200
+✅ [4_SECONDARY_SALES] Retailer can browse: POWER 4T 15W50 (2.5 L)
+✅ [4_SECONDARY_SALES] Distributor1 create secondary order → 200
+✅ [4_SECONDARY_SALES] Secondary order created: so-90b3a55b43
+❌ [4_SECONDARY_SALES] Distributor1 dispatch order → 400 (expected 200): {"detail":"Generate the Invoice before dispatching this order"}
+
+================================================================================
+AREA 5: DIRECT SALE / +Add Sales — Test POST /dms/direct-sales
+================================================================================
+✅ [5_DIRECT_SALE] Get products for direct sale → 200
+✅ [5_DIRECT_SALE] Distributor1 create direct sale → 200
+❌ [5_DIRECT_SALE] Owner create direct sale → 400 (expected 200): {"detail":"Bill number 'DS-260810053228' already exists"}
+✅ [5_DIRECT_SALE] Salesperson create direct sale (expect 403) → 403
+✅ [5_DIRECT_SALE] Salesperson correctly blocked from direct sale
+✅ [5_DIRECT_SALE] Retailer create direct sale (expect 403) → 403
+✅ [5_DIRECT_SALE] Retailer correctly blocked from direct sale
+
+================================================================================
+AREA 6: COUPON FLOW — Batch creation + scan
+================================================================================
+✅ [6_COUPON_FLOW] Owner create coupon batch → 200
+✅ [6_COUPON_FLOW] Coupon batch created: cbt-f09f8e33f580
+✅ [6_COUPON_FLOW] Owner activate batch → 200
+✅ [6_COUPON_FLOW] Batch activated
+✅ [6_COUPON_FLOW] Retailer1 check wallet → 200
+✅ [6_COUPON_FLOW] Retailer wallet: cash=0, reward=0
+✅ [6_COUPON_FLOW] Salesperson scan coupon (expect 400 for invalid QR) → 400
+✅ [6_COUPON_FLOW] Coupon scan endpoint accessible to salesperson
+
+================================================================================
+AREA 7: PUNCH/ATTENDANCE — Test punch-in endpoints
+================================================================================
+✅ [7_PUNCH_ATTENDANCE] Salesperson punch in → 200
+✅ [7_PUNCH_ATTENDANCE] Salesperson can punch in
+✅ [7_PUNCH_ATTENDANCE] Team leader punch in → 200
+✅ [7_PUNCH_ATTENDANCE] Team leader can punch in
+✅ [7_PUNCH_ATTENDANCE] Distributor punch in (expect 403) → 403
+✅ [7_PUNCH_ATTENDANCE] Distributor correctly has no punch capability
+✅ [7_PUNCH_ATTENDANCE] Retailer punch in (expect 403) → 403
+✅ [7_PUNCH_ATTENDANCE] Retailer correctly has no punch capability
+✅ [7_PUNCH_ATTENDANCE] Regional manager punch in (expect 403) → 403
+✅ [7_PUNCH_ATTENDANCE] Regional manager correctly has no punch capability
+✅ [7_PUNCH_ATTENDANCE] Distributor accountant punch in (expect 403) → 403
+✅ [7_PUNCH_ATTENDANCE] Distributor accountant correctly has no punch capability
+
+================================================================================
+AREA 8: PARTY DETAILS — Bank details and attachments
+================================================================================
+✅ [8_PARTY_DETAILS] Owner get distributors list → 200
+✅ [8_PARTY_DETAILS] Owner get distributor detail → 200
+✅ [8_PARTY_DETAILS] Distributor has bank details: State Bank of India
+⚠️ [8_PARTY_DETAILS] Distributor has no documents (may be expected for demo data)
+✅ [8_PARTY_DETAILS] Owner get retailers list → 200
+✅ [8_PARTY_DETAILS] Owner get retailer detail → 200
+✅ [8_PARTY_DETAILS] Retailer has KYC data: GSTIN=
+⚠️ [8_PARTY_DETAILS] Retailer has no documents (may be expected for demo data)
+
+================================================================================
+AUDIT SUMMARY
+================================================================================
+
+✅ PASS 1_AUTH: 20/20 passed, 0 failed, 0 notes
+
+✅ PASS 2_DASHBOARDS: 20/20 passed, 0 failed, 0 notes
+
+✅ PASS 3_PRIMARY_SALES: 16/16 passed, 0 failed, 0 notes
+
+❌ FAIL 4_SECONDARY_SALES: 4/5 passed, 1 failed, 0 notes
+  ❌ Distributor1 dispatch order → 400 (expected 200): {"detail":"Generate the Invoice before dispatching this order"}
+
+❌ FAIL 5_DIRECT_SALE: 6/7 passed, 1 failed, 0 notes
+  ❌ Owner create direct sale → 400 (expected 200): {"detail":"Bill number 'DS-260810053228' already exists"}
+
+✅ PASS 6_COUPON_FLOW: 8/8 passed, 0 failed, 0 notes
+
+✅ PASS 7_PUNCH_ATTENDANCE: 12/12 passed, 0 failed, 0 notes
+
+✅ PASS 8_PARTY_DETAILS: 6/8 passed, 0 failed, 2 notes
+
+================================================================================
+AUDIT COMPLETE
+================================================================================
