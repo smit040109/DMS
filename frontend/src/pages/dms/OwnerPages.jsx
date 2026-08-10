@@ -1236,6 +1236,22 @@ export function ExcelButtons({ onImported }) {
     if (!f) return;
     setBusy(true);
     try {
+      // 1) Preview — parse only, no DB writes
+      const p = await dms.importPreview(f);
+      if (!p.ok || p.product_count === 0) {
+        toast.error((p.warnings?.[0]) || "No products detected in this file. Check the format / use Template.");
+        return;
+      }
+      const catList = (p.categories || []).slice(0, 6).join(", ");
+      const ok = window.confirm(
+        `Preview of "${f.name}" (${p.source?.toUpperCase()})\n\n` +
+        `• Products found: ${p.product_count}\n` +
+        `• Categories found: ${p.category_count}${catList ? `  (${catList}${p.category_count > 6 ? "…" : ""})` : ""}\n` +
+        (p.sample?.[0] ? `\nExample: ${p.sample[0].material_description} — ${p.sample[0].pack_size} — DLP ₹${p.sample[0].dlp}\n` : "") +
+        `\nImport now? A new Price Circular batch will be created.`
+      );
+      if (!ok) return;
+      // 2) Actual import
       const r = await dms.importPriceCircular(f);
       toast.success(`Imported ${r.products_parsed} products (+${r.created} new, ${r.updated} updated) across ${r.categories} categories. Price Circular Batch ${r.circular_batch_no} created.`);
       if (r.warnings?.length) toast.warning(r.warnings.slice(0, 2).join("\n"));

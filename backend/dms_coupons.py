@@ -2497,6 +2497,21 @@ def build_coupons_router(db, get_current_user, notify=None):
         })
         await db.dms_v2_coupons.update_one({"id": cp["id"]},
             {"$set": {"wallet_transaction_id": tx_id, "updated_at": _now()}})
+        # Settlement: for CASH coupons, post a credit entry to the distributor's
+        # Primary Ledger so it reduces their payable/outstanding to the company.
+        if wallet_type == "cash":
+            await db.dms_primary_ledger.insert_one({
+                "id": _nid("le"),
+                "distributor_id": dist["id"],
+                "kind": "coupon_credit",
+                "reference_no": f"CPN-{cp['coupon_code']}",
+                "amount": _round(cp["coupon_value"]),
+                "method": "coupon_scan",
+                "description": f"Coupon {cp.get('visible_serial') or cp['coupon_code']} scanned — \u20b9{cp['coupon_value']:g} credit",
+                "at": _now(),
+                "recorded_by": user["id"],
+                "wallet_transaction_id": tx_id,
+            })
         await _audit(user, "coupon.claimed", "coupon", cp["id"],
                      {"coupon_code": cp["coupon_code"], "distributor_id": dist["id"],
                       "channel": "distributor_self_scan", "box_number": box_number,

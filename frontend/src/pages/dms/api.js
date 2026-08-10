@@ -128,6 +128,7 @@ export const dms = {
   ownerResetPassword: (uid, new_password) => api.post(`/dms/owner/users/${uid}/reset-password`, { new_password }).then(r => r.data),
   ownerDeleteUser: (uid) => api.delete(`/dms/owner/users/${uid}`).then(r => r.data),
   ownerHierarchy: () => api.get("/dms/owner/hierarchy").then(r => r.data),
+  bulkAssignRetailers: (retailer_ids, distributor_id) => api.post("/dms/owner/retailers/bulk-assign-distributor", { retailer_ids, distributor_id }).then(r => r.data),
   ownerImpersonate: (uid) => api.post(`/dms/owner/impersonate/${uid}`).then(r => r.data),
 
   // live tracking (Phase 2 + 3)
@@ -362,6 +363,10 @@ export const dms = {
     const fd = new FormData(); fd.append("file", file);
     if (title) fd.append("title", title);
     return api.post("/dms/owner/products/import-circular", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
+  },
+  importPreview: (file) => {
+    const fd = new FormData(); fd.append("file", file);
+    return api.post("/dms/owner/products/import-circular/preview", fd, { headers: { "Content-Type": "multipart/form-data" } }).then(r => r.data);
   },
   importTemplate: async () => {
     const r = await api.get("/dms/owner/products/import-template", { responseType: "blob" });

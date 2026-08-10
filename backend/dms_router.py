@@ -1922,6 +1922,25 @@ def build_dms_router(db, get_current_user):
         return {"ok": True}
 
     # ── consolidated hierarchy tree (owner view) ──
+    # ── bulk move retailers to another distributor ──
+    @router.post("/owner/retailers/bulk-assign-distributor")
+    async def bulk_assign_retailers(body: Dict[str, Any] = Body(...),
+                                    user: dict = Depends(owner_or_accountant)):
+        retailer_ids = body.get("retailer_ids") or []
+        distributor_id = body.get("distributor_id")
+        if not retailer_ids or not distributor_id:
+            raise HTTPException(status_code=400, detail="retailer_ids[] and distributor_id required")
+        dist = await db.dms_distributors.find_one({"id": distributor_id}, {"_id": 0, "id": 1})
+        if not dist:
+            raise HTTPException(status_code=404, detail="Distributor not found")
+        res = await db.dms_retailers.update_many(
+            {"id": {"$in": retailer_ids}},
+            {"$set": {"distributor_id": distributor_id, "updated_at": _now()}})
+        await db.users.update_many(
+            {"retailer_id": {"$in": retailer_ids}, "role": "retailer"},
+            {"$set": {"distributor_id": distributor_id}})
+        return {"ok": True, "moved": res.modified_count, "distributor_id": distributor_id}
+
     @router.get("/owner/hierarchy")
     async def owner_hierarchy(user: dict = Depends(owner_or_accountant)):
         """Full org tree: Regional Managers → Team Leaders → Distributors →
@@ -3930,6 +3949,36 @@ def build_dms_router(db, get_current_user):
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             headers={"Content-Disposition": 'attachment; filename="GO_OIL_price_list_template.xlsx"'},
         )
+
+    @router.post("/owner/products/import-circular/preview")
+    async def products_import_circular_preview(
+        file: UploadFile = File(...),
+        user: dict = Depends(owner_or_accountant),
+    ):
+        """Parse-only: return how many categories/products were detected (no DB writes)."""
+        import dms_price_import
+        raw = await file.read()
+        try:
+            parsed = dms_price_import.parse_price_list(raw, file.filename or "")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Could not read the file: {e}")
+        products = [i for i in parsed["items"] if i["type"] == "product"]
+        categories = [i["name"] for i in parsed["items"] if i["type"] == "category"]
+        sample = [{
+            "material_description": p["material_description"],
+            "grade_specs": p["grade_specs"], "pack_size": p["pack_size"],
+            "mrp": p["mrp"], "dlp": p["dlp"],
+            "distributor_margin_pct": p["distributor_margin_pct"],
+        } for p in products[:8]]
+        return {
+            "ok": parsed["product_count"] > 0,
+            "source": parsed["source"],
+            "product_count": parsed["product_count"],
+            "category_count": parsed["category_count"],
+            "categories": categories[:30],
+            "sample": sample,
+            "warnings": parsed.get("warnings", []),
+        }
 
     @router.post("/owner/products/import-circular")
     async def products_import_circular(

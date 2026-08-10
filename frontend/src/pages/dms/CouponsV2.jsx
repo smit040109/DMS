@@ -286,6 +286,20 @@ export function OwnerCouponsPage() {
                 <TableCell><StatusChip s={b.status} /></TableCell>
                 <TableCell className="text-xs text-slate-500">{niceDate(b.created_at)}</TableCell>
                 <TableCell className="text-right">
+                  {["activated", "printed"].includes(b.status) && (
+                    <Button size="sm" variant="outline" className="mr-2"
+                            onClick={async () => {
+                              try {
+                                toast.info("Preparing 12×18 sheet (77 per sheet)…");
+                                await dms.cpnExportPdf(b.id, `${b.batch_label}_sheet_35mm.pdf`, { side: "both" });
+                                toast.success("Sheet PDF downloaded");
+                                load();
+                              } catch (e) { toast.error(e?.response?.data?.detail || "PDF failed"); }
+                            }}
+                            data-testid={`cpn-batch-sheet-${b.batch_no}`}>
+                      <Printer size={14} className="mr-1" /> Sheet PDF
+                    </Button>
+                  )}
                   <Button size="sm" variant="outline" onClick={() => nav(`/dms/owner/coupons/batches/${b.id}`)}
                           data-testid={`cpn-batch-view-${b.batch_no}`}>
                     Open <ArrowRight size={14} className="ml-1" />

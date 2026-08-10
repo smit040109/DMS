@@ -62,10 +62,17 @@ export function OwnerHierarchyPage() {
   const [rmTl, setRmTl] = useState({ rm: "", tl: "" });
   const [tlDist, setTlDist] = useState({ tl: "", dist: "" });
   const [distSp, setDistSp] = useState({ dist: "", sp: "" });
+  const [retailers, setRetailers] = useState([]);
+  const [selRet, setSelRet] = useState({});
+  const [moveDist, setMoveDist] = useState("");
 
   const load = useCallback(async () => {
     setBusy(true);
-    try { setData(await dms.ownerHierarchy()); }
+    try {
+      const [h, rl] = await Promise.all([dms.ownerHierarchy(), dms.listRetailers().catch(() => ({ data: [] }))]);
+      setData(h);
+      setRetailers(rl.data || []);
+    }
     catch (e) { toast.error(e?.response?.data?.detail || "Failed to load hierarchy"); }
     finally { setBusy(false); }
   }, []);
@@ -95,6 +102,16 @@ export function OwnerHierarchyPage() {
   const unassignDistSp = async (sp, did) => {
     try { await dms.unassignSpDist(sp, did); toast.success("Removed"); load(); }
     catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+  };
+  const selectedRetailerIds = Object.keys(selRet).filter(k => selRet[k]);
+  const doBulkMove = async () => {
+    if (selectedRetailerIds.length === 0) return toast.error("Select at least one retailer");
+    if (!moveDist) return toast.error("Select the target distributor");
+    try {
+      const r = await dms.bulkAssignRetailers(selectedRetailerIds, moveDist);
+      toast.success(`Moved ${r.moved} retailer(s)`);
+      setSelRet({}); setMoveDist(""); load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Move failed"); }
   };
 
   const renderDist = (node, tlId) => (
@@ -135,6 +152,36 @@ export function OwnerHierarchyPage() {
           </div>
         </Card>
       </div>
+
+      {/* Bulk move retailers to another distributor */}
+      <Card className="p-4 mb-5">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+          <div className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
+            <Store size={14} className="text-[#a67c00]" /> Bulk Move Retailers
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-500">{selectedRetailerIds.length} selected →</span>
+            <Picker label="Target Distributor" options={all.distributors} value={moveDist} onChange={setMoveDist} />
+            <Button className={GOLD_BTN} size="sm" onClick={doBulkMove} disabled={selectedRetailerIds.length === 0 || !moveDist}>
+              Move
+            </Button>
+          </div>
+        </div>
+        {retailers.length === 0 ? (
+          <div className="text-xs text-slate-400">No retailers yet.</div>
+        ) : (
+          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
+            {retailers.map(r => (
+              <label key={r.id} className="flex items-center gap-2 text-sm border border-slate-200 rounded-md px-2 py-1.5 cursor-pointer hover:bg-amber-50/40">
+                <input type="checkbox" checked={!!selRet[r.id]}
+                  onChange={e => setSelRet(s => ({ ...s, [r.id]: e.target.checked }))} />
+                <span className="truncate">{r.name}</span>
+                <span className="ml-auto text-[10px] text-slate-400 truncate">{r.distributor_name || ""}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </Card>
 
       {/* Tree */}
       <Card className="p-4">
