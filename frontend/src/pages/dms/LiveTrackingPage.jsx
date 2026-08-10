@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Users, Store, Handshake, MapPin, LogIn, LogOut, Clock, Route as RouteIcon, RefreshCw, Calendar } from "lucide-react";
+import { Users, Store, Handshake, MapPin, LogIn, LogOut, Clock, Route as RouteIcon, RefreshCw, Calendar, Play, Pause } from "lucide-react";
 
 // ── Fix default marker icons (leaflet + webpack) ────────────────────────
 delete L.Icon.Default.prototype._getIconUrl;
@@ -52,6 +52,34 @@ function FlyTo({ target }) {
   return null;
 }
 
+// Smoothly animates a marker from its previous position to the new one so the
+// live dot appears to "move" across the map instead of jumping.
+function AnimatedMarker({ position, icon, eventHandlers, children }) {
+  const [pos, setPos] = useState(position);
+  const fromRef = useRef(position);
+  const rafRef = useRef();
+  const lat = position?.[0];
+  const lng = position?.[1];
+  useEffect(() => {
+    if (lat == null || lng == null) return;
+    const from = fromRef.current || [lat, lng];
+    const to = [lat, lng];
+    const dur = 1200;
+    const t0 = performance.now();
+    cancelAnimationFrame(rafRef.current);
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur);
+      setPos([from[0] + (to[0] - from[0]) * k, from[1] + (to[1] - from[1]) * k]);
+      if (k < 1) rafRef.current = requestAnimationFrame(step);
+      else fromRef.current = to;
+    };
+    rafRef.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [lat, lng]);
+  if (!pos) return null;
+  return <Marker position={pos} icon={icon} eventHandlers={eventHandlers}>{children}</Marker>;
+}
+
 // ============================================================================
 // Owner / TL / RM — Live Tracking Map
 // ============================================================================
@@ -64,6 +92,8 @@ export function LiveTrackingPage() {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [flyTarget, setFlyTarget] = useState(null);
+  const [playIdx, setPlayIdx] = useState(0);   // route playback cursor
+  const [playing, setPlaying] = useState(false);
   const timerRef = useRef();
 
   const refresh = useCallback(async () => {
@@ -78,10 +108,10 @@ export function LiveTrackingPage() {
     }
   }, []);
 
-  // Poll live positions every 30 seconds
+  // Poll live positions every 5 seconds for a real "live" feel
   useEffect(() => {
     refresh();
-    timerRef.current = setInterval(refresh, 30000);
+    timerRef.current = setInterval(refresh, 5000);
     return () => clearInterval(timerRef.current);
   }, [refresh]);
 
@@ -98,6 +128,8 @@ export function LiveTrackingPage() {
         if (cancelled) return;
         setDetail(d);
         setHistory(h.data || []);
+        setPlayIdx(Math.max(0, (d?.route?.length || 1) - 1)); // default: show full route
+        setPlaying(false);
       } catch (e) {
         if (!cancelled) toast.error(e?.response?.data?.detail || "Failed to load route");
       }
@@ -105,15 +137,37 @@ export function LiveTrackingPage() {
     return () => { cancelled = true; };
   }, [selectedSp, selectedDate]);
 
+  // Route playback auto-advance
+  useEffect(() => {
+    if (!playing) return;
+    const n = detail?.route?.length || 0;
+    if (n < 2) { setPlaying(false); return; }
+    const t = setInterval(() => {
+      setPlayIdx((i) => {
+        if (i >= n - 1) { setPlaying(false); return i; }
+        return i + 1;
+      });
+    }, 700);
+    return () => clearInterval(t);
+  }, [playing, detail]);
+
   const selectedSpMeta = useMemo(
     () => live.salespersons.find(s => s.id === selectedSp),
     [live.salespersons, selectedSp],
   );
 
-  const polyline = useMemo(() => {
+  const fullPolyline = useMemo(() => {
     if (!detail?.route?.length) return [];
     return detail.route.map(p => [p.lat, p.lng]);
   }, [detail]);
+
+  const routeLen = detail?.route?.length || 0;
+  const playedPolyline = useMemo(() => {
+    if (!detail?.route?.length) return [];
+    return detail.route.slice(0, playIdx + 1).map(p => [p.lat, p.lng]);
+  }, [detail, playIdx]);
+  const playPoint = detail?.route?.[playIdx] || null;
+  const isPartial = routeLen > 1 && playIdx < routeLen - 1;
 
   const onSelectSp = (sp) => {
     setSelectedSp(sp.id);
@@ -210,6 +264,43 @@ export function LiveTrackingPage() {
                 </div>
               )}
 
+              {/* Route Playback — scrub through the day's movement */}
+              {routeLen > 1 && (
+                <div className="rounded-lg border border-[#c9a227]/30 bg-[#faf8ef] p-3" data-testid="route-playback">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="text-[11px] uppercase tracking-wider text-[#8a6600] font-semibold flex items-center gap-1">
+                      <RouteIcon size={12} /> Route Playback
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (playIdx >= routeLen - 1) setPlayIdx(0);
+                        setPlaying(p => !p);
+                      }}
+                      className="flex items-center gap-1 text-xs px-2 py-1 rounded-md bg-[#c9a227] text-white hover:bg-[#a67c00]"
+                      data-testid="playback-toggle"
+                    >
+                      {playing ? <Pause size={12} /> : <Play size={12} />}
+                      {playing ? "Pause" : "Play"}
+                    </button>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={routeLen - 1}
+                    value={playIdx}
+                    onChange={e => { setPlaying(false); setPlayIdx(Number(e.target.value)); }}
+                    className="w-full accent-[#c9a227]"
+                    data-testid="playback-slider"
+                  />
+                  <div className="flex items-center justify-between text-[11px] text-slate-600 mt-1">
+                    <span>Point {playIdx + 1} / {routeLen}</span>
+                    <span className="font-medium text-slate-800">
+                      {playPoint?.created_at ? niceDate(playPoint.created_at) : "—"}
+                    </span>
+                  </div>
+                </div>
+              )}
+
               {history.length > 0 && (
                 <div>
                   <div className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold mb-1 mt-2">Recent 30 days</div>
@@ -278,9 +369,9 @@ export function LiveTrackingPage() {
                 </Marker>
               ))}
 
-              {/* Salespersons — live positions */}
+              {/* Salespersons — live positions (animated / moving marker) */}
               {live.salespersons.filter(s => s.lat && s.lng).map(s => (
-                <Marker key={`s-${s.id}`} position={[s.lat, s.lng]} icon={s.online ? ICON_SP : ICON_SP_OFF}
+                <AnimatedMarker key={`s-${s.id}`} position={[s.lat, s.lng]} icon={s.online ? ICON_SP : ICON_SP_OFF}
                         eventHandlers={{ click: () => setSelectedSp(s.id) }}>
                   <Popup>
                     <b>{s.name}</b><br/>
@@ -290,7 +381,7 @@ export function LiveTrackingPage() {
                     </span>
                     {s.last_ping_at && <><br/><span className="text-[11px] text-slate-500">Last: {niceDate(s.last_ping_at)}</span></>}
                   </Popup>
-                </Marker>
+                </AnimatedMarker>
               ))}
 
               {/* Team Leaders — live positions (Phase 1: for RSM view + Owner view) */}
@@ -307,9 +398,22 @@ export function LiveTrackingPage() {
                 </Marker>
               ))}
 
-              {/* Route polyline for selected salesperson */}
-              {polyline.length > 1 && (
-                <Polyline positions={polyline} color="#e11d48" weight={4} opacity={0.85} />
+              {/* Route for selected salesperson — faint full route + bold played segment */}
+              {fullPolyline.length > 1 && isPartial && (
+                <Polyline positions={fullPolyline} color="#e11d48" weight={2} opacity={0.25} dashArray="4 6" />
+              )}
+              {playedPolyline.length > 1 && (
+                <Polyline positions={playedPolyline} color="#e11d48" weight={4} opacity={0.9} />
+              )}
+              {/* Playback position marker */}
+              {playPoint && routeLen > 1 && (
+                <AnimatedMarker position={[playPoint.lat, playPoint.lng]} icon={ICON_SP}>
+                  <Popup>
+                    <b>{selectedSpMeta?.name || "Salesperson"}</b><br/>
+                    <span className="text-xs">Position {playIdx + 1} / {routeLen}</span><br/>
+                    <span className="text-[11px] text-slate-500">{playPoint.created_at ? niceDate(playPoint.created_at) : ""}</span>
+                  </Popup>
+                </AnimatedMarker>
               )}
 
               {/* CONTINUATION v6: ALL other punched-in field staff (distributor / dist-accountant /

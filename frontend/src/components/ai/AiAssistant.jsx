@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Sparkles, Send, Bot, Loader2, RotateCcw, AlertCircle, ChevronRight } from "lucide-react";
+import { Sparkles, Send, Bot, Loader2, RotateCcw, AlertCircle, ChevronRight, Download, FileSpreadsheet } from "lucide-react";
+import { toast } from "sonner";
 import api, { formatApiErrorDetail } from "@/lib/api";
 
 /**
@@ -70,6 +71,32 @@ export default function AiAssistant({ open, onOpenChange }) {
   const reset = () => {
     setMessages([]);
     persistSession(newSessionId());
+  };
+
+  const [exporting, setExporting] = useState(null); // `${idx}:${fmt}` while downloading
+
+  const exportReport = async (idx, text, fmt) => {
+    setExporting(`${idx}:${fmt}`);
+    try {
+      const { data } = await api.post(
+        "/ai/copilot/export",
+        { format: fmt, title: "GO OIL DMS — AI Report", content: text },
+        { responseType: "blob" }
+      );
+      const url = window.URL.createObjectURL(new Blob([data]));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = fmt === "excel" ? "ai_report.xlsx" : "ai_report.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      toast.success(`${fmt === "excel" ? "Excel" : "PDF"} downloaded`);
+    } catch (e) {
+      toast.error("Download failed. Please try again.");
+    } finally {
+      setExporting(null);
+    }
   };
 
   const send = async (text) => {
@@ -220,6 +247,26 @@ export default function AiAssistant({ open, onOpenChange }) {
                 {m.role === "assistant" && m.model && (
                   <div className="mt-1 text-[10px] text-ink-muted">
                     Model: {m.model}{m.intent ? ` · Intent: ${m.intent}` : ""}
+                  </div>
+                )}
+                {m.role === "assistant" && !m.error && m.text && m.text.length > 20 && (
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <button
+                      onClick={() => exportReport(i, m.text, "pdf")}
+                      disabled={exporting === `${i}:pdf`}
+                      className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-[#E5E7EB] text-ink-muted hover:bg-canvas hover:text-ink disabled:opacity-50"
+                      data-testid={`ai-export-pdf-${i}`}
+                    >
+                      {exporting === `${i}:pdf` ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />} PDF
+                    </button>
+                    <button
+                      onClick={() => exportReport(i, m.text, "excel")}
+                      disabled={exporting === `${i}:excel`}
+                      className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-md border border-[#E5E7EB] text-ink-muted hover:bg-canvas hover:text-ink disabled:opacity-50"
+                      data-testid={`ai-export-excel-${i}`}
+                    >
+                      {exporting === `${i}:excel` ? <Loader2 size={11} className="animate-spin" /> : <FileSpreadsheet size={11} />} Excel
+                    </button>
                   </div>
                 )}
               </div>

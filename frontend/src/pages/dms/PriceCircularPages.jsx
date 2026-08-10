@@ -386,6 +386,22 @@ export function SettingsPage() {
   });
   const [fyLockDate, setFyLockDate] = useState("");
   const [fyBusy, setFyBusy] = useState(false);
+  const [resetBusy, setResetBusy] = useState(false);
+
+  const doResetData = async () => {
+    const phrase = window.prompt(
+      "This permanently deletes ALL business data (distributors, retailers, products, orders, bills, ledgers, attendance/GPS). Login accounts and settings are kept.\n\nType RESET to confirm:"
+    );
+    if (phrase !== "RESET") { if (phrase !== null) toast.error("Cancelled — you must type RESET exactly"); return; }
+    setResetBusy(true);
+    try {
+      const r = await dms.resetDemoData();
+      toast.success(`Cleaned ${r.total || 0} records — app is now in a clean production state`);
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Reset failed");
+    } finally { setResetBusy(false); }
+  };
 
   useEffect(() => {
     (async () => {
@@ -644,6 +660,22 @@ export function SettingsPage() {
                 className="h-5 w-9 appearance-none rounded-full bg-slate-300 checked:bg-amber-600 relative cursor-pointer transition-colors before:content-[''] before:absolute before:top-0.5 before:left-0.5 before:h-4 before:w-4 before:rounded-full before:bg-white before:transition-transform checked:before:translate-x-4"
               />
             </label>
+          </div>
+        </Card>
+
+        {/* Danger Zone — reset to clean production state */}
+        <Card className="p-6 border-rose-300 shadow-sm md:col-span-2 bg-rose-50/40">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center"><Lock size={20} /></div>
+              <div>
+                <div className="font-display font-bold text-rose-900">Danger Zone — Reset Data</div>
+                <div className="text-xs text-rose-700/80 max-w-xl">Delete all demo/business data (distributors, retailers, products, orders, bills, ledgers, attendance &amp; GPS) and start clean for real operations. Login accounts &amp; settings are preserved. This cannot be undone.</div>
+              </div>
+            </div>
+            <Button disabled={resetBusy} onClick={doResetData} className="bg-rose-700 hover:bg-rose-800 text-white" data-testid="reset-data-btn">
+              {resetBusy ? "Resetting…" : "Reset to Clean State"}
+            </Button>
           </div>
         </Card>
       </div>

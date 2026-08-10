@@ -997,6 +997,41 @@ def build_dms_router(db, get_current_user):
         await coll.update_one({"id": pid}, {"$set": {"bank": bank, "updated_at": _now()}})
         return {"ok": True, "party_type": party_type, "bank": bank}
 
+    # =========================================================================
+    # OWNER — reset demo data to a clean production state
+    # =========================================================================
+    @router.post("/owner/reset-demo-data")
+    async def reset_demo_data(user: dict = Depends(get_current_user)):
+        if user.get("role") not in ("owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Only the Owner can reset data")
+        # Business collections wiped clean. Login users, global settings and the
+        # tenant record are preserved so nobody gets locked out.
+        BUSINESS = [
+            "dms_distributors", "dms_retailers", "dms_ret_mode", "dms_products", "dms_categories",
+            "dms_price_batches", "dms_price_circulars", "dms_owner_inventory", "dms_retailer_prices",
+            "dms_primary_orders", "dms_secondary_orders", "dms_secondary_sales", "dms_bills",
+            "dms_ebills", "dms_sp_assignments", "dms_tl_assignments", "dms_rm_assignments",
+            "dms_terms", "dms_godowns", "dms_godown_inventory", "dms_stock_transfers",
+            "dms_punch", "dms_sp_pings", "dms_punch_reopen",
+            "dms_primary_ledger", "dms_secondary_ledger",
+            "dms_bank_accounts", "dms_bank_transactions", "dms_cash_register",
+            "dms_cheques", "dms_loan_accounts", "dms_loan_transactions",
+            "dms_expenses", "dms_documents", "dms_attachments",
+        ]
+        removed = {}
+        for c in BUSINESS:
+            try:
+                r = await db[c].delete_many({})
+                if r.deleted_count:
+                    removed[c] = r.deleted_count
+            except Exception:
+                pass
+        # Unlink distributor/retailer references + clear any live GPS on users
+        await db.users.update_many({}, {"$unset": {
+            "distributor_id": "", "retailer_id": "", "last_gps": "", "last_active_at": "",
+        }})
+        return {"ok": True, "removed": removed, "total": sum(removed.values())}
+
 
     # =========================================================================
     # PRIMARY LEDGER (owner ↔ distributor)

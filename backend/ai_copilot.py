@@ -448,4 +448,70 @@ def build_ai_copilot_router(db, get_current_user, analytics_router, dms_router=N
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
 
+    @router.post("/export")
+    async def export_report(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        """Turn any AI answer/report into a downloadable PDF or Excel file."""
+        from fastapi.responses import StreamingResponse
+        import io, re as _re
+
+        fmt = (body.get("format") or "pdf").lower()
+        title = (body.get("title") or "GO OIL DMS — AI Report").strip()
+        content = (body.get("content") or "").strip()
+        if not content:
+            raise HTTPException(400, "content is required")
+
+        # strip simple markdown so exports read cleanly
+        def _plain(s: str) -> str:
+            s = _re.sub(r"\*\*(.+?)\*\*", r"\1", s)
+            s = _re.sub(r"[*`_#>]", "", s)
+            return s.strip()
+
+        lines = [_plain(ln) for ln in content.splitlines()]
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        who = f"{user.get('name','')} ({user.get('role','')})"
+
+        if fmt in ("excel", "xlsx"):
+            from openpyxl import Workbook
+            from openpyxl.styles import Font
+            wb = Workbook(); ws = wb.active; ws.title = "AI Report"
+            ws["A1"] = title; ws["A1"].font = Font(size=14, bold=True)
+            ws["A2"] = f"Generated for {who} · {stamp}"; ws["A2"].font = Font(size=9, italic=True)
+            r = 4
+            for ln in lines:
+                if ln.strip():
+                    ws.cell(row=r, column=1, value=ln)
+                r += 1
+            ws.column_dimensions["A"].width = 100
+            buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+            return StreamingResponse(
+                buf,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": 'attachment; filename="ai_report.xlsx"'},
+            )
+
+        # default: PDF
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18*mm, bottomMargin=18*mm,
+                                leftMargin=18*mm, rightMargin=18*mm)
+        styles = getSampleStyleSheet()
+        h = ParagraphStyle("h", parent=styles["Title"], fontSize=16, textColor="#8a6600")
+        meta = ParagraphStyle("meta", parent=styles["Normal"], fontSize=8, textColor="#888888")
+        body_s = ParagraphStyle("b", parent=styles["Normal"], fontSize=10.5, leading=15)
+        story = [Paragraph(title, h), Paragraph(f"Generated for {who} &middot; {stamp}", meta), Spacer(1, 8)]
+        for ln in lines:
+            if ln.strip():
+                story.append(Paragraph(ln.replace("&", "&amp;"), body_s))
+            else:
+                story.append(Spacer(1, 6))
+        doc.build(story)
+        buf.seek(0)
+        return StreamingResponse(
+            buf, media_type="application/pdf",
+            headers={"Content-Disposition": 'attachment; filename="ai_report.pdf"'},
+        )
+
     return router
