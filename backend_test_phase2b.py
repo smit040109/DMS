@@ -9,7 +9,7 @@ import json
 from datetime import datetime, timedelta
 
 # Base URL from frontend/.env
-BASE_URL = "https://challan-print-fix.preview.emergentagent.com/api"
+BASE_URL = "https://gooil-dms.preview.emergentagent.com/api"
 
 # Test credentials (all password: GoOil@2026)
 CREDENTIALS = {

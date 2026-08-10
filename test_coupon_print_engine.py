@@ -10,7 +10,7 @@ import io
 from datetime import datetime
 
 # Configuration
-BASE_URL = "https://challan-print-fix.preview.emergentagent.com/api"
+BASE_URL = "https://gooil-dms.preview.emergentagent.com/api"
 PASSWORD = "GoOil@2026"
 
 # Test credentials

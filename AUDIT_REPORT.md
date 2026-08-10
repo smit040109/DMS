@@ -1,7 +1,7 @@
 # GO OIL DMS — COMPREHENSIVE BACKEND FLOW AUDIT REPORT
 **Date:** 2026-08-10  
 **Auditor:** Testing Agent  
-**Base URL:** https://challan-print-fix.preview.emergentagent.com  
+**Base URL:** https://gooil-dms.preview.emergentagent.com  
 **API Prefix:** /api  
 
 ---
