@@ -78,7 +78,7 @@ export default function Login() {
             </div>
           </div>
           <h2 className="font-display font-bold text-3xl text-slate-900">Sign in</h2>
-          <p className="mt-1.5 text-sm text-slate-500">Owner access only. Enter your credentials to continue.</p>
+          <p className="mt-1.5 text-sm text-slate-500">Welcome back. Enter your credentials to continue.</p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div><Label htmlFor="email">Email</Label><Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} className="mt-1.5" required data-testid="login-email" /></div>

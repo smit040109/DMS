@@ -1223,6 +1223,71 @@ frontend:
           
           The reported issue "Something went wrong. Please try again." is RESOLVED.
 
+  - task: "Login Page Verification — Preview Environment (gooilindia13@gmail.com)"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/Login.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL 3 LOGIN PAGE CHECKS PASSED (100%)
+          
+          Comprehensive verification completed on PREVIEW environment:
+          URL: https://auth-mongo-secure.preview.emergentagent.com/login
+          
+          **TEST 1: SUBTITLE TEXT VERIFICATION — ✅ PASSED**
+          - Subtitle text under "Sign in" heading verified
+          - Expected: "Welcome back. Enter your credentials to continue."
+          - Found: "Welcome back. Enter your credentials to continue."
+          - ✅ Exact match confirmed
+          - ✅ Does NOT contain "Owner access only" (correct)
+          
+          **TEST 2: NO DEMO/QUICK-LOGIN ROLE BUTTONS — ✅ PASSED**
+          - Verified NO role selection buttons present on login page
+          - Only the following elements present:
+            * Email input field ✅
+            * Password input field ✅
+            * "Sign in" button ✅
+          - No buttons for: Owner, Distributor, Retailer, Salesperson, Team Leader, Regional Manager, Accountant
+          - Clean login form with only email/password authentication
+          
+          **TEST 3: ACTUAL LOGIN WITH OWNER CREDENTIALS — ✅ PASSED**
+          - Email: gooilindia13@gmail.com
+          - Password: Arjun@india13
+          - Login successful ✅
+          - Navigated to: /dms (Owner Dashboard) ✅
+          - "Owner Dashboard" heading visible ✅
+          - NO error messages displayed ✅
+          - NO Cloudflare parse error ✅
+          - NO "Network error" message ✅
+          - Dashboard loaded with all KPIs visible
+          
+          🎯 CRITICAL VERIFICATION:
+          - Login page subtitle is correct (no "Owner access only" text)
+          - No demo role buttons present (clean email/password form only)
+          - Owner login working perfectly with production credentials
+          - No CORS errors, no network errors, no authentication errors
+          - Successful navigation to Owner Dashboard after login
+          
+          📸 SCREENSHOTS CAPTURED:
+          - login_page_initial.png (login form before filling)
+          - login_page_filled.png (form with credentials entered)
+          - owner_dashboard.png (successful login, dashboard visible)
+          
+          🔍 CONSOLE LOGS:
+          - Only expected 401 errors for /api/auth/me (before login, normal behavior)
+          - No application errors
+          - No CORS errors
+          - No network failures
+          
+          **OVERALL: 3/3 checks PASSED (100%)**
+          Login page on PREVIEW environment is working perfectly.
+          All requirements from review request satisfied.
+
   - task: "Owner pages — Categories, Products (with price batches), Distributors+KYC+Visibility, Primary Orders (fulfillment), Inventory, Primary Ledger"
     implemented: true
     working: true
@@ -1402,6 +1467,41 @@ test_plan:
   test_priority: "high_first"
 
 agent_communication:
+  - agent: "testing"
+    message: |
+      ✅ LOGIN PAGE VERIFICATION COMPLETE — ALL 3 CHECKS PASSED (100%)
+      
+      Tested GO OIL DMS login page on PREVIEW environment as requested.
+      URL: https://auth-mongo-secure.preview.emergentagent.com/login
+      
+      **RESULTS:**
+      
+      1. ✅ PASS — Subtitle Text Verification
+         - Subtitle under "Sign in" reads: "Welcome back. Enter your credentials to continue."
+         - Does NOT contain "Owner access only" ✅
+      
+      2. ✅ PASS — No Demo/Quick-Login Role Buttons
+         - Confirmed: NO role selection buttons present
+         - Only Email + Password fields + "Sign in" button visible
+         - Clean authentication form (no quick-login shortcuts)
+      
+      3. ✅ PASS — Actual Login Test
+         - Email: gooilindia13@gmail.com
+         - Password: Arjun@india13
+         - Login successful, navigated to /dms (Owner Dashboard)
+         - "Owner Dashboard" heading visible
+         - NO error messages (no Cloudflare parse error, no "Network error")
+         - Dashboard loaded with all KPIs visible
+      
+      **TECHNICAL DETAILS:**
+      - Console logs: Only expected 401 errors for /api/auth/me (before login)
+      - No CORS errors, no network failures, no application errors
+      - Screenshots captured: login_page_initial.png, login_page_filled.png, owner_dashboard.png
+      
+      **SUMMARY:**
+      All 3 checks from the review request are PASSED.
+      Login page is working perfectly on the PREVIEW environment with production credentials.
+      
   - agent: "testing"
     message: |
       🎉 GO OIL DMS v2 — COMPREHENSIVE FRONTEND QA COMPLETE (100% PASS)
@@ -8910,3 +9010,53 @@ agent_communication:
       - Owner login still works correctly
       
       NO ISSUES FOUND. All features working as designed. Ready for main agent to summarize and finish.
+
+#====================================================================================================
+# BUGFIX — Production 520 hardening + remove "Owner access only" text (Aug'26)
+#====================================================================================================
+backend:
+  - task: "Startup env safety-net so backend always boots (fixes prod Cloudflare 520 on /api)"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py, backend/dms_seed.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          server.py now os.environ.setdefault(MONGO_URL, DB_NAME, JWT_SECRET>=32chars) at top so a
+          missing .env in production no longer crashes the backend. dms_seed owner defaults set to the
+          real owner creds + self-heal migrates a legacy owner@gooil.com login to the configured owner.
+          Verified via curl: owner login 200, single owner. Needs redeploy to reach production.
+
+frontend:
+  - task: "Remove 'Owner access only' subtitle from Login page"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/Login.jsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+
+metadata:
+  created_by: "main_agent"
+  version: "bugfix-prod-520"
+  test_sequence: 2
+  run_ui: true
+
+test_plan:
+  current_focus:
+    - "Remove 'Owner access only' subtitle from Login page"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: |
+      FRONTEND test on PREVIEW only: (1) On /login the subtitle must NOT contain the words
+      "Owner access only" (it should read "Welcome back. Enter your credentials to continue.").
+      (2) Owner login must work end-to-end: email gooilindia13@gmail.com / password Arjun@india13 →
+      lands on the Owner Dashboard (/dms). Report both.

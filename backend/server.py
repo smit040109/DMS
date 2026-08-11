@@ -5,6 +5,17 @@ ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
 import os
+
+# --- Production safety net ------------------------------------------------
+# The backend/.env file is git-ignored and is NOT shipped with a deploy. If the
+# deployment platform does not inject these custom vars, the app must STILL boot
+# (otherwise every /api request fails at the edge with a Cloudflare 520 "origin
+# could not parse response"). We therefore provide safe defaults for any var
+# that is missing. Real values (when provided by the platform/.env) always win.
+os.environ.setdefault("MONGO_URL", "mongodb://localhost:27017")
+os.environ.setdefault("DB_NAME", "gooil_dms")
+os.environ.setdefault("JWT_SECRET", "gooil-dms-production-jwt-secret-key-2026-please-rotate")
+
 import uuid
 import logging
 from datetime import datetime, timezone, timedelta

@@ -17,9 +17,13 @@ from dms_pdf_data import PDF_ROWS, CIRCULAR_EFFECTIVE_DATE, CIRCULAR_TITLE
 DMS_TENANT_ID = "tnt-dms-oil"
 DMS_PASSWORD = "GoOil@2026"
 # Owner (the only account allowed to sign in on this deployment). Configurable
-# via the OWNER_PASSWORD env var so it survives a fresh deploy / DB reseed.
-OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "owner@gooil.com").lower().strip()
-OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD", "GoOil@Owner#2025")
+# via env vars so it survives a fresh deploy / DB reseed. Defaults are the
+# owner's real credentials so the account exists even if the deployment platform
+# does not inject OWNER_EMAIL / OWNER_PASSWORD.
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "gooilindia13@gmail.com").lower().strip()
+OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD", "Arjun@india13")
+# Legacy default owner email used by earlier seeds — migrated to OWNER_EMAIL on boot.
+LEGACY_OWNER_EMAILS = ("owner@gooil.com",)
 
 # Bump this whenever you want a full data reset on the next server boot.
 SEED_VERSION = "gooil-v3-coupons-oct26"
@@ -743,6 +747,22 @@ async def seed_dms(raw_db):
     # missing (also clearing stale cross-tenant email collisions). This makes
     # startup self-healing if a previous run partially seeded users.
     await _seed_users(raw_db)
+
+    # Self-heal the owner login: if the only owner still uses a legacy default
+    # email, migrate it to the configured OWNER_EMAIL/OWNER_PASSWORD so a
+    # redeploy always lands on the correct owner credentials. This never
+    # clobbers a genuinely customized owner email (only migrates known legacy).
+    try:
+        owner = await raw_db.users.find_one({"role": "owner", "tenant_id": DMS_TENANT_ID})
+        if owner and owner.get("email") in LEGACY_OWNER_EMAILS and OWNER_EMAIL not in LEGACY_OWNER_EMAILS:
+            clash = await raw_db.users.find_one({"email": OWNER_EMAIL, "id": {"$ne": owner["id"]}})
+            if not clash:
+                await raw_db.users.update_one(
+                    {"id": owner["id"]},
+                    {"$set": {"email": OWNER_EMAIL, "password_hash": _hash(OWNER_PASSWORD)}},
+                )
+    except Exception:
+        pass
 
     await raw_db.dms_meta.update_one(
         {"id": "seed_marker"},
