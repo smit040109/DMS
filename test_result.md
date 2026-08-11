@@ -9040,15 +9040,85 @@ frontend:
     priority: "medium"
     needs_retesting: true
 
+  - task: "User Management — Edit Details dialog partial edit functionality"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/dms/OwnerUsersPage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL 3 PARTIAL EDIT TESTS PASSED (100%)
+          
+          Comprehensive UI testing completed for Edit Details dialog on User Management page.
+          Verified that users can edit ONLY one field without needing to change all fields.
+          
+          **TEST A: Edit ONLY name (Owner row) — ✅ PASSED**
+          - Found owner row (gooilindia13@gmail.com) with name "Rakesh Agarwal (Owner)"
+          - Clicked Edit button → dialog opened with all fields populated
+          - Changed ONLY name to "Rakesh Agarwal Test" (phone and email unchanged)
+          - Clicked Save Changes → Success toast "Details updated" appeared
+          - Dialog closed automatically
+          - Table updated immediately to show "Rakesh Agarwal Test"
+          - Reverted name back to "Rakesh Agarwal (Owner)" → Success
+          
+          **TEST B: Edit ONLY phone (Karan Salesperson) — ✅ PASSED**
+          - Found Karan Salesperson row (salesperson@gooil.com)
+          - Original phone: +91-9000000041
+          - Clicked Edit button → dialog opened
+          - Changed ONLY phone to "+91-9876543210" (name and email unchanged)
+          - Clicked Save Changes → Success toast appeared
+          - Dialog closed automatically
+          - Table updated immediately to show new phone "+91-9876543210"
+          
+          **TEST C: Edit ONLY email (Karan Salesperson) — ✅ PASSED**
+          - Found Karan Salesperson row (salesperson@gooil.com)
+          - Clicked Edit button → dialog opened
+          - Changed ONLY email to "karan_test@gooil.com" (name and phone unchanged)
+          - Clicked Save Changes → Success toast appeared
+          - Dialog closed automatically
+          - Table updated: row now has data-testid="user-row-karan_test@gooil.com"
+          - Email column shows "karan_test@gooil.com"
+          - Reverted email back to "salesperson@gooil.com" → Success
+          
+          🎯 CRITICAL FUNCTIONALITY VERIFIED:
+          - Partial edit working: Can edit just one field without changing others
+          - Backend receives only changed fields (not all fields)
+          - Success toast appears on save ("Details updated")
+          - Dialog closes automatically after successful save
+          - Table updates immediately with new values
+          - data-testid attributes update correctly (e.g., edit button testid changes with email)
+          - No errors in console logs
+          - All reverts successful (owner name and salesperson email restored)
+          
+          📊 TEST COVERAGE: 3/3 scenarios passed (100%)
+          - Edit name only: ✅
+          - Edit phone only: ✅
+          - Edit email only: ✅
+          
+          🔍 TECHNICAL DETAILS:
+          - Dialog fields: data-testid="eu-name", "eu-phone", "eu-email"
+          - Save button: data-testid="eu-submit"
+          - Edit button: data-testid="edit-user-{email}"
+          - User rows: data-testid="user-row-{email}"
+          - Submit function correctly compares form values with original user values
+          - Only sends changed fields to PATCH /api/dms/owner/users/{uid}
+          
+          NO CRITICAL ISSUES FOUND.
+          Edit Details dialog partial edit functionality is production-ready and working perfectly.
+
 metadata:
   created_by: "main_agent"
   version: "bugfix-prod-520"
-  test_sequence: 2
+  test_sequence: 3
   run_ui: true
 
 test_plan:
   current_focus:
-    - "Remove 'Owner access only' subtitle from Login page"
+    - "User Management — Edit Details dialog partial edit functionality"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
@@ -9060,3 +9130,28 @@ agent_communication:
       "Owner access only" (it should read "Welcome back. Enter your credentials to continue.").
       (2) Owner login must work end-to-end: email gooilindia13@gmail.com / password Arjun@india13 →
       lands on the Owner Dashboard (/dms). Report both.
+  
+  - agent: "testing"
+    message: |
+      ✅ USER MANAGEMENT EDIT DETAILS TESTING COMPLETE — ALL 3 TESTS PASSED (100%)
+      
+      Tested the Edit Details dialog on User Management page (/dms/owner/users) for partial edit functionality.
+      
+      **KEY FINDING: Partial edit is working correctly!**
+      Users can now edit just ONE field (name, phone, or email) without needing to change all fields.
+      
+      **TEST RESULTS:**
+      ✅ TEST A: Edit ONLY name on owner row (Rakesh Agarwal → Rakesh Agarwal Test → reverted)
+      ✅ TEST B: Edit ONLY phone on Karan Salesperson (+91-9000000041 → +91-9876543210)
+      ✅ TEST C: Edit ONLY email on Karan Salesperson (salesperson@gooil.com → karan_test@gooil.com → reverted)
+      
+      **VERIFIED:**
+      - Dialog opens with all fields pre-filled
+      - Can change just one field, others remain unchanged
+      - Success toast "Details updated" appears on save
+      - Dialog closes automatically
+      - Table updates immediately with new values
+      - Backend receives only changed fields (efficient API usage)
+      - All reverts successful
+      
+      NO ISSUES FOUND. Feature working as designed.

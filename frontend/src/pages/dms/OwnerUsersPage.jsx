@@ -343,15 +343,32 @@ function EditUserDialog({ user, onClose, onSaved }) {
   }, [user]);
 
   const submit = async () => {
-    if (!form.name.trim()) { toast.error("Name is required"); return; }
-    if (!form.email.trim() || !form.email.includes("@")) { toast.error("A valid email is required"); return; }
+    // Save only what actually changed — editing just the name (or just the
+    // email, or just the phone) should save on its own.
+    const changes = {};
+    const name = form.name.trim();
+    const phone = form.phone.trim();
+    const email = form.email.trim().toLowerCase();
+
+    if (name !== (user.name || "")) {
+      if (!name) { toast.error("Name cannot be empty"); return; }
+      changes.name = name;
+    }
+    if (phone !== (user.phone || "")) changes.phone = phone;
+    if (email !== (user.email || "").toLowerCase()) {
+      if (!email || !email.includes("@")) { toast.error("Enter a valid email"); return; }
+      changes.email = email;
+    }
+
+    if (Object.keys(changes).length === 0) {
+      toast("No changes to save");
+      onClose();
+      return;
+    }
+
     setBusy(true);
     try {
-      await dms.ownerUpdateUser(user.id, {
-        name: form.name.trim(),
-        phone: form.phone.trim(),
-        email: form.email.trim().toLowerCase(),
-      });
+      await dms.ownerUpdateUser(user.id, changes);
       toast.success("Details updated");
       onSaved?.();
       onClose();
