@@ -102,3 +102,17 @@ All money in **INR**, 10 demo users (password `Demo@2026`), mobile-responsive te
 - Box Dashboard card: GET /api/dms/coupons/boxes/stats — boxes created/assigned/coupons-in-boxes/claimed;
   shown as a "Coupon Boxes" summary card on the Owner Dashboard.
 - Backend 22/23 passed; frontend 4/4 flows passed. Coupon print artwork/engine unchanged.
+
+## Update — Owner-managed logins + full-process onboarding (Aug'26)
+- LOGIN: Owner = gooilindia13@gmail.com / Arjun@india13 (from OWNER_EMAIL/OWNER_PASSWORD env). Public
+  self-registration DISABLED (/api/auth/register → 403). All other roles log in only with credentials
+  the owner creates in-app.
+- ONBOARDING: Distributor login is created ONLY after ALL details + KYC + >=1 document. Retailer login
+  (when an email is provided) also requires region/gstin/shop_license/password + >=1 document. Enforced
+  in backend (create_distributor, create_retailer) AND frontend form validation with clear messages.
+- QUICK-CREATE: Owner "New User" panel can no longer create bare distributor/retailer logins
+  (OWNER_MANAGEABLE_ROLES excludes them); backend returns 400.
+- EDIT: Owner can edit any user's name / phone / login email — including the owner's own account —
+  via PATCH /api/dms/owner/users/{uid} and the new Edit dialog on User Management.
+- SEED SAFETY: Exactly one owner (matched by role, not just email) + unique index on users.email so
+  restarts/redeploys never duplicate the owner. Backend verified 15/15.

@@ -476,10 +476,23 @@ def build_dms_router(db, get_current_user):
 
     @router.post("/distributors")
     async def create_distributor(body: Dict[str, Any] = Body(...), user: dict = Depends(owner_only)):
-        required = ["name", "email", "password", "phone", "address"]
-        for k in required:
-            if not body.get(k):
-                raise HTTPException(status_code=400, detail=f"{k} required")
+        # FULL-PROCESS ONBOARDING: a distributor login is created ONLY after all
+        # required details + KYC + at least one document are provided.
+        required_labels = {
+            "name": "Business Name", "email": "Login Email", "password": "Login Password",
+            "phone": "Phone", "address": "Address", "region": "Region",
+            "gstin": "GSTIN", "pan": "PAN", "shop_license": "Shop / Trade License",
+            "bank_name": "Bank Name", "bank_account": "Bank Account", "bank_ifsc": "Bank IFSC",
+        }
+        missing = [label for key, label in required_labels.items()
+                   if not str(body.get(key) or "").strip()]
+        if not body.get("documents"):
+            missing.append("At least one uploaded Document")
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail="Complete the full onboarding before creating the login. Missing: " + ", ".join(missing),
+            )
         did = _nid("dist")
         # create user for distributor
         uid = await _create_dms_user(
@@ -1313,6 +1326,23 @@ def build_dms_router(db, get_current_user):
         for k in required:
             if not body.get(k):
                 raise HTTPException(status_code=400, detail=f"{k} required")
+        # FULL-PROCESS ONBOARDING: if a login (email) is being created for this
+        # retailer, all details + KYC + at least one document are mandatory first.
+        if str(body.get("email") or "").strip():
+            login_labels = {
+                "region": "Region", "gstin": "GSTIN", "shop_license": "Shop License",
+            }
+            missing = [label for key, label in login_labels.items()
+                       if not str(body.get(key) or "").strip()]
+            if not str(body.get("password") or "").strip():
+                missing.append("Login Password")
+            if not body.get("documents"):
+                missing.append("At least one uploaded Document")
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Complete the full onboarding before creating the retailer login. Missing: " + ", ".join(missing),
+                )
         rid = _nid("ret")
         # user login (optional)
         ruser_id = None
@@ -3430,9 +3460,13 @@ def build_dms_router(db, get_current_user):
     # =========================================================================
     # OWNER — Complete User Management + Impersonation (Phase 1)
     # =========================================================================
+    # Roles the owner can create via the quick "New User" panel. Distributor &
+    # Retailer are intentionally EXCLUDED — their logins must be created through
+    # the full onboarding flow (Distributors / Retailers pages) which requires
+    # complete details + KYC + documents.
     OWNER_MANAGEABLE_ROLES = [
-        "owner_accountant", "distributor", "distributor_accountant",
-        "retailer", "salesperson", "team_leader", "regional_manager",
+        "owner_accountant", "distributor_accountant",
+        "salesperson", "team_leader", "regional_manager",
     ]
 
     def _is_online(u: dict) -> bool:
@@ -3498,8 +3532,18 @@ def build_dms_router(db, get_current_user):
             raise HTTPException(status_code=404, detail="User not found")
         updatable = {"name", "phone", "active", "distributor_id", "retailer_id"}
         upd = {k: v for k, v in body.items() if k in updatable}
+        # Owner may also change the login email (login id) of any user, incl. self.
+        if "email" in body:
+            new_email = str(body.get("email") or "").strip().lower()
+            if not new_email or "@" not in new_email:
+                raise HTTPException(status_code=400, detail="A valid email is required")
+            clash = await db.users.find_one({"email": new_email, "id": {"$ne": uid}})
+            if clash:
+                raise HTTPException(status_code=400, detail=f"Email {new_email} is already in use")
+            upd["email"] = new_email
         if not upd:
             raise HTTPException(status_code=400, detail="Nothing to update")
+        upd["updated_at"] = _now()
         await db.users.update_one({"id": uid}, {"$set": upd})
         return {"ok": True}
 

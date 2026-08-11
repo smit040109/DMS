@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Plus, KeyRound, LogIn, Search, Users, ShieldCheck, Trash2 } from "lucide-react";
+import { Plus, KeyRound, LogIn, Search, Users, ShieldCheck, Trash2, Pencil } from "lucide-react";
 
 const ROLE_OPTIONS = [
   { value: "owner_accountant",       label: "Owner Accountant" },
@@ -22,6 +22,14 @@ const ROLE_OPTIONS = [
   { value: "team_leader",            label: "Team Leader" },
   { value: "regional_manager",       label: "Regional Manager" },
 ];
+
+// Roles that can be created via the quick "New User" panel. Distributor &
+// Retailer are intentionally excluded — their logins must be created through
+// the full onboarding flow (Distributors / Retailers pages) with complete
+// details + KYC + documents.
+const CREATE_ROLE_OPTIONS = ROLE_OPTIONS.filter(
+  r => r.value !== "distributor" && r.value !== "retailer"
+);
 
 const ROLE_LABEL = ROLE_OPTIONS.reduce((a, r) => (a[r.value] = r.label, a), {
   owner: "Company Owner", super_admin: "Super Admin",
@@ -54,6 +62,7 @@ export function OwnerUsersPage() {
   // dialogs
   const [createOpen, setCreateOpen] = useState(false);
   const [resetTarget, setResetTarget] = useState(null);
+  const [editTarget, setEditTarget] = useState(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -192,6 +201,14 @@ export function OwnerUsersPage() {
                       <Button
                         size="sm"
                         variant="outline"
+                        onClick={() => setEditTarget(u)}
+                        data-testid={`edit-user-${u.email}`}
+                      >
+                        <Pencil size={14} className="mr-1" /> Edit
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
                         onClick={() => setResetTarget(u)}
                         data-testid={`reset-pw-${u.email}`}
                       >
@@ -232,6 +249,7 @@ export function OwnerUsersPage() {
 
       <CreateUserDialog open={createOpen} onClose={() => setCreateOpen(false)} onCreated={refresh} />
       <ResetPasswordDialog user={resetTarget} onClose={() => setResetTarget(null)} />
+      <EditUserDialog user={editTarget} onClose={() => setEditTarget(null)} onSaved={refresh} />
     </div>
   );
 }
@@ -274,11 +292,14 @@ function CreateUserDialog({ open, onClose, onCreated }) {
             <Select value={form.role} onValueChange={v => setForm({ ...form, role: v })}>
               <SelectTrigger data-testid="cu-role"><SelectValue /></SelectTrigger>
               <SelectContent>
-                {ROLE_OPTIONS.map(r => (
+                {CREATE_ROLE_OPTIONS.map(r => (
                   <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
+            <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 mt-2">
+              To add a <b>Distributor</b> or <b>Retailer</b> login, use the <b>Distributors</b> / <b>Retailers</b> page — their login is created only after full details, KYC &amp; documents are submitted.
+            </div>
           </div>
           <div>
             <Label>Full Name</Label>
@@ -302,6 +323,73 @@ function CreateUserDialog({ open, onClose, onCreated }) {
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button onClick={submit} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="cu-submit">
             {busy ? "Creating…" : "Create User"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ============================================================================
+// Edit user dialog — owner can edit any user's name / phone / login email,
+// including the owner's own account.
+// ============================================================================
+function EditUserDialog({ user, onClose, onSaved }) {
+  const [form, setForm] = useState({ name: "", phone: "", email: "" });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (user) setForm({ name: user.name || "", phone: user.phone || "", email: user.email || "" });
+  }, [user]);
+
+  const submit = async () => {
+    if (!form.name.trim()) { toast.error("Name is required"); return; }
+    if (!form.email.trim() || !form.email.includes("@")) { toast.error("A valid email is required"); return; }
+    setBusy(true);
+    try {
+      await dms.ownerUpdateUser(user.id, {
+        name: form.name.trim(),
+        phone: form.phone.trim(),
+        email: form.email.trim().toLowerCase(),
+      });
+      toast.success("Details updated");
+      onSaved?.();
+      onClose();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to update");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Dialog open={!!user} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><Pencil size={18} /> Edit Details</DialogTitle>
+        </DialogHeader>
+        {user && (
+          <div className="space-y-3">
+            <div className="text-xs text-slate-500">
+              Role: <span className="font-medium text-slate-700">{ROLE_LABEL[user.role] || user.role}</span>
+            </div>
+            <div>
+              <Label>Full Name</Label>
+              <Input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} data-testid="eu-name" />
+            </div>
+            <div>
+              <Label>Phone</Label>
+              <Input value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} data-testid="eu-phone" />
+            </div>
+            <div>
+              <Label>Login ID / Email</Label>
+              <Input type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} data-testid="eu-email" />
+              <div className="text-[11px] text-slate-500 mt-1">Changing this updates the login ID for this user.</div>
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="eu-submit">
+            {busy ? "Saving…" : "Save Changes"}
           </Button>
         </DialogFooter>
       </DialogContent>

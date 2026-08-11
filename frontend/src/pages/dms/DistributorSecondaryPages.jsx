@@ -26,6 +26,18 @@ export function DistRetailersPage() {
   useEffect(() => { load(); }, []);
   const openNew = () => { setForm({ name: "", phone: "", address: "", region: "", email: "", password: "Demo@2026", gstin: "", shop_license: "", credit_limit: 100000 }); setOpen(true); };
   const save = async () => {
+    // If a login (email) is being created, require full details + KYC + document.
+    if (String(form.email || "").trim()) {
+      const req = { region: "Region", gstin: "GSTIN", shop_license: "Shop License", password: "Password" };
+      const missing = Object.entries(req)
+        .filter(([k]) => !String(form[k] || "").trim())
+        .map(([, label]) => label);
+      if (!(form.documents || []).length) missing.push("at least one Document");
+      if (missing.length) {
+        toast.error("To create a retailer login, complete: " + missing.join(", "));
+        return;
+      }
+    }
     try { await dms.createRetailer(form); toast.success("Retailer added"); setOpen(false); load(); }
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
@@ -71,6 +83,9 @@ export function DistRetailersPage() {
             <div><Label>Password</Label><Input value={form.password || ""} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
             <div><Label>GSTIN</Label><Input value={form.gstin || ""} onChange={e => setForm({ ...form, gstin: e.target.value })} /></div>
             <div><Label>Shop License</Label><Input value={form.shop_license || ""} onChange={e => setForm({ ...form, shop_license: e.target.value })} /></div>
+            <div className="col-span-2 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5">
+              If you set a <b>Login Email</b>, the retailer login is created only after Region, GSTIN, Shop License, Password &amp; at least one document are provided.
+            </div>
             <div className="col-span-2 text-xs uppercase tracking-wider font-semibold text-slate-500 pt-1">Bank & UPI (optional)</div>
             <div><Label>Bank Name</Label><Input value={form.bank_name || ""} onChange={e => setForm({ ...form, bank_name: e.target.value })} data-testid="ret-bank-name" /></div>
             <div><Label>Account No.</Label><Input value={form.bank_account || ""} onChange={e => setForm({ ...form, bank_account: e.target.value })} /></div>

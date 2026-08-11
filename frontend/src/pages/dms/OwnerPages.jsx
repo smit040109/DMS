@@ -673,6 +673,22 @@ export function DistributorsPage() {
   const openNew = () => { setForm({ name: "", email: "", password: "Demo@2026", phone: "", address: "", region: "", gstin: "", pan: "", shop_license: "", bank_name: "", bank_account: "", bank_ifsc: "", credit_limit: 500000 }); setOpen(true); };
 
   const save = async () => {
+    // Full-process onboarding: all details + KYC + at least one document required
+    // BEFORE the distributor login is created.
+    const req = {
+      name: "Business Name", email: "Login Email", password: "Login Password",
+      phone: "Phone", address: "Address", region: "Region",
+      gstin: "GSTIN", pan: "PAN", shop_license: "Shop / Trade License",
+      bank_name: "Bank Name", bank_account: "Bank Account", bank_ifsc: "IFSC",
+    };
+    const missing = Object.entries(req)
+      .filter(([k]) => !String(form[k] || "").trim())
+      .map(([, label]) => label);
+    if (!(form.documents || []).length) missing.push("at least one Document");
+    if (missing.length) {
+      toast.error("Complete the full onboarding first. Missing: " + missing.join(", "));
+      return;
+    }
     try {
       await dms.createDistributor(form);
       toast.success("Distributor onboarded");
@@ -728,6 +744,9 @@ export function DistributorsPage() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>New Distributor + KYC</DialogTitle></DialogHeader>
+          <div className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+            The distributor login is created <b>only after</b> all details, KYC and at least one document are submitted.
+          </div>
           <div className="space-y-4">
             <div>
               <div className="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2">Basic Info</div>
@@ -737,19 +756,19 @@ export function DistributorsPage() {
                 <div><Label>Login Email *</Label><Input type="email" value={form.email || ""} onChange={e => setForm({ ...form, email: e.target.value })} data-testid="d-email" /></div>
                 <div><Label>Login Password *</Label><Input value={form.password || ""} onChange={e => setForm({ ...form, password: e.target.value })} /></div>
                 <div className="col-span-2"><Label>Address *</Label><Textarea rows={2} value={form.address || ""} onChange={e => setForm({ ...form, address: e.target.value })} /></div>
-                <div><Label>Region</Label><Input value={form.region || ""} onChange={e => setForm({ ...form, region: e.target.value })} /></div>
+                <div><Label>Region *</Label><Input value={form.region || ""} onChange={e => setForm({ ...form, region: e.target.value })} /></div>
                 <div><Label>Credit Limit (₹)</Label><Input type="number" value={form.credit_limit || ""} onChange={e => setForm({ ...form, credit_limit: Number(e.target.value) })} /></div>
               </div>
             </div>
             <div>
-              <div className="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 flex items-center gap-1"><IdCard size={14} /> KYC Details</div>
+              <div className="text-xs uppercase tracking-wider font-semibold text-slate-500 mb-2 flex items-center gap-1"><IdCard size={14} /> KYC Details <span className="text-rose-500 normal-case font-normal">(all required)</span></div>
               <div className="grid grid-cols-2 gap-3">
-                <div><Label>GSTIN</Label><Input value={form.gstin || ""} onChange={e => setForm({ ...form, gstin: e.target.value })} /></div>
-                <div><Label>PAN</Label><Input value={form.pan || ""} onChange={e => setForm({ ...form, pan: e.target.value })} /></div>
-                <div><Label>Shop / Trade License</Label><Input value={form.shop_license || ""} onChange={e => setForm({ ...form, shop_license: e.target.value })} /></div>
-                <div><Label>Bank Name</Label><Input value={form.bank_name || ""} onChange={e => setForm({ ...form, bank_name: e.target.value })} /></div>
-                <div><Label>Bank Account</Label><Input value={form.bank_account || ""} onChange={e => setForm({ ...form, bank_account: e.target.value })} /></div>
-                <div><Label>IFSC</Label><Input value={form.bank_ifsc || ""} onChange={e => setForm({ ...form, bank_ifsc: e.target.value })} /></div>
+                <div><Label>GSTIN *</Label><Input value={form.gstin || ""} onChange={e => setForm({ ...form, gstin: e.target.value })} /></div>
+                <div><Label>PAN *</Label><Input value={form.pan || ""} onChange={e => setForm({ ...form, pan: e.target.value })} /></div>
+                <div><Label>Shop / Trade License *</Label><Input value={form.shop_license || ""} onChange={e => setForm({ ...form, shop_license: e.target.value })} /></div>
+                <div><Label>Bank Name *</Label><Input value={form.bank_name || ""} onChange={e => setForm({ ...form, bank_name: e.target.value })} /></div>
+                <div><Label>Bank Account *</Label><Input value={form.bank_account || ""} onChange={e => setForm({ ...form, bank_account: e.target.value })} /></div>
+                <div><Label>IFSC *</Label><Input value={form.bank_ifsc || ""} onChange={e => setForm({ ...form, bank_ifsc: e.target.value })} /></div>
                 <div><Label>Bank Branch</Label><Input value={form.bank_branch || ""} onChange={e => setForm({ ...form, bank_branch: e.target.value })} data-testid="d-branch" /></div>
                 <div><Label>UPI ID</Label><Input value={form.upi_id || ""} onChange={e => setForm({ ...form, upi_id: e.target.value })} placeholder="name@bank" data-testid="d-upi" /></div>
                 <div>

@@ -214,6 +214,18 @@ export function SpNewRetailerPage() {
   const nav = useNavigate();
   useEffect(() => { dms.listDistributors().then(d => { setDists(d.data); if (d.data[0]) setForm(f => ({ ...f, distributor_id: d.data[0].id })); }); }, []);
   const submit = async () => {
+    // If a login (email) is being created, require full details + KYC + document.
+    if (String(form.email || "").trim()) {
+      const req = { region: "Region", gstin: "GSTIN", shop_license: "Shop License", password: "Password" };
+      const missing = Object.entries(req)
+        .filter(([k]) => !String(form[k] || "").trim())
+        .map(([, label]) => label);
+      if (!(form.documents || []).length) missing.push("at least one Document");
+      if (missing.length) {
+        toast.error("To create a retailer login, complete: " + missing.join(", "));
+        return;
+      }
+    }
     setBusy(true);
     try {
       const body = {

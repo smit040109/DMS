@@ -138,7 +138,13 @@ async def _seed_users(raw_db):
         # deploy seeds the correct owner account. `ids` stays keyed by the canonical
         # spec email so all downstream data links (onboarded_by, owner_id) still work.
         email = OWNER_EMAIL if role == "owner" else spec_email
-        existing = await raw_db.users.find_one({"email": email})
+        # Match the owner by ROLE (not just email) so a previously-seeded owner
+        # whose email was later changed is NEVER duplicated on restart/redeploy.
+        if role == "owner":
+            existing = await raw_db.users.find_one({"role": "owner", "tenant_id": DMS_TENANT_ID}) \
+                or await raw_db.users.find_one({"email": email})
+        else:
+            existing = await raw_db.users.find_one({"email": email})
         if existing:
             if existing.get("tenant_id") == DMS_TENANT_ID:
                 # Already a DMS demo account — keep as-is (don't clobber owner edits).
@@ -716,6 +722,7 @@ async def seed_dms(raw_db):
 
     # Coupon-engine indexes (idempotent / safe)
     try:
+        await raw_db.users.create_index("email", unique=True)
         await raw_db.dms_v2_coupons.create_index("coupon_code", unique=True)
         await raw_db.dms_v2_coupons.create_index([("batch_id", 1), ("status", 1)])
         await raw_db.dms_v2_coupons.create_index("retailer_id")
