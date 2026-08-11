@@ -15,7 +15,7 @@ import sys
 from datetime import datetime
 
 # Backend URL
-BASE_URL = "https://transport-bill-3.preview.emergentagent.com/api"
+BASE_URL = "https://auth-mongo-secure.preview.emergentagent.com/api"
 PASSWORD = "GoOil@2026"
 
 # Test credentials

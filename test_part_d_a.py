@@ -4,7 +4,7 @@ import requests
 import time
 import json
 
-BASE_URL = "https://transport-bill-3.preview.emergentagent.com/api"
+BASE_URL = "https://auth-mongo-secure.preview.emergentagent.com/api"
 
 def login():
     resp = requests.post(f"{BASE_URL}/auth/login", 

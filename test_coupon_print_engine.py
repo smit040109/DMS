@@ -10,7 +10,7 @@ import io
 from datetime import datetime
 
 # Configuration
-BASE_URL = "https://transport-bill-3.preview.emergentagent.com/api"
+BASE_URL = "https://auth-mongo-secure.preview.emergentagent.com/api"
 PASSWORD = "GoOil@2026"
 
 # Test credentials

@@ -11,7 +11,7 @@ import requests
 import json
 
 # Backend URL from frontend/.env
-BASE_URL = "https://f66e083c-4de5-40a4-818a-b15e1df5c9dd.preview.emergentagent.com/api"
+BASE_URL = "https://auth-mongo-secure.preview.emergentagent.com/api"
 
 # All demo users password
 PASSWORD = "GoOil@2026"
