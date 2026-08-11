@@ -133,19 +133,23 @@ async def _seed_users(raw_db):
         ("regionalmgr@gooil.com",    "Vikram Regional Manager",   "regional_manager",      "+91-9000000061"),
     ]
     ids: dict = {}
-    for email, name, role, phone in users_spec:
+    for spec_email, name, role, phone in users_spec:
+        # The Owner's real login email/name come from env (OWNER_EMAIL) so a fresh
+        # deploy seeds the correct owner account. `ids` stays keyed by the canonical
+        # spec email so all downstream data links (onboarded_by, owner_id) still work.
+        email = OWNER_EMAIL if role == "owner" else spec_email
         existing = await raw_db.users.find_one({"email": email})
         if existing:
             if existing.get("tenant_id") == DMS_TENANT_ID:
                 # Already a DMS demo account — keep as-is (don't clobber owner edits).
-                ids[email] = existing["id"]
+                ids[spec_email] = existing["id"]
                 continue
             # Stale account from another tenant's seed sharing this email
             # (the `email` unique index is global) — remove so we can create
             # the authoritative DMS demo account.
             await raw_db.users.delete_one({"email": email})
         uid = _nid("usr")
-        ids[email] = uid
+        ids[spec_email] = uid
         await raw_db.users.insert_one({
             "id": uid,
             "tenant_id": DMS_TENANT_ID,

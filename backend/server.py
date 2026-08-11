@@ -246,12 +246,6 @@ async def login(request: Request, response: Response, body: LoginIn):
     if not user or not verify_password(body.password, user.get("password_hash", "")):
         logger.warning(f"Failed login for {email} from {request.client.host if request.client else '?'}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    # Production lockdown: ONLY the Owner account may sign in on this deployment.
-    # All other roles (distributor, retailer, salesperson, managers, accountants,
-    # platform/super-admin) are blocked at the server level for data security.
-    if user.get("role") != "owner":
-        logger.warning(f"Blocked non-owner login attempt: {email} (role={user.get('role')})")
-        raise HTTPException(status_code=403, detail="Access is restricted to the Owner account.")
     # Owner-controlled retailer login access (Item 3): block only when explicitly disabled
     if user.get("role") == "retailer" and user.get("login_enabled") is False:
         raise HTTPException(status_code=403, detail="Login access has been disabled by the owner. Please contact your distributor/owner.")
