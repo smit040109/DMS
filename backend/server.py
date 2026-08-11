@@ -246,6 +246,12 @@ async def login(request: Request, response: Response, body: LoginIn):
     if not user or not verify_password(body.password, user.get("password_hash", "")):
         logger.warning(f"Failed login for {email} from {request.client.host if request.client else '?'}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    # Production lockdown: ONLY the Owner account may sign in on this deployment.
+    # All other roles (distributor, retailer, salesperson, managers, accountants,
+    # platform/super-admin) are blocked at the server level for data security.
+    if user.get("role") != "owner":
+        logger.warning(f"Blocked non-owner login attempt: {email} (role={user.get('role')})")
+        raise HTTPException(status_code=403, detail="Access is restricted to the Owner account.")
     # Owner-controlled retailer login access (Item 3): block only when explicitly disabled
     if user.get("role") == "retailer" and user.get("login_enabled") is False:
         raise HTTPException(status_code=403, detail="Login access has been disabled by the owner. Please contact your distributor/owner.")
@@ -292,31 +298,9 @@ async def login(request: Request, response: Response, body: LoginIn):
 @api.post("/auth/register")
 @limiter.limit("30/minute")  # generous — proxy-collapsed IPs
 async def register(request: Request, response: Response, body: RegisterIn):
-    body.validate_password()
-    email = body.email.lower().strip()
-    if await _raw_db.users.find_one({"email": email}):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    valid_roles = {r["key"] for r in SEED["roles"]}
-    if body.role not in valid_roles:
-        raise HTTPException(status_code=400, detail="Invalid role")
-    # Self-registration defaults to the GO OIL tenant. In production this
-    # endpoint should be scoped by subdomain / tenant_slug in body.
-    tid = DEFAULT_TENANT_ID
-    user = {
-        "id": f"usr-{uuid.uuid4().hex[:12]}",
-        "tenant_id": tid,
-        "email": email, "name": body.name, "role": body.role, "branch_id": None,
-        "title": body.role.replace("_", " ").title(),
-        "password_hash": hash_password(body.password),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "avatar": "".join([w[0] for w in body.name.split()[:2]]).upper(),
-    }
-    await _raw_db.users.insert_one(user)
-    token = create_access_token(user["id"], user["email"], user["role"], tenant_id=tid)
-    response.set_cookie("access_token", token, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
-    user.pop("password_hash", None); user.pop("_id", None)
-    current_tenant_id.set(tid)
-    return {"user": user, "token": token}
+    # Public self-registration is DISABLED on this deployment. Only the Owner
+    # account exists and no new accounts may be created from the public API.
+    raise HTTPException(status_code=403, detail="Public registration is disabled.")
 
 
 @api.post("/auth/logout")

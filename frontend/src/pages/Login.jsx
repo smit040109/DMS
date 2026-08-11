@@ -7,26 +7,11 @@ import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, Loader2, Droplet, Users, ShoppingCart, TrendingUp } from "lucide-react";
 import ThemeToggle from "@/components/common/ThemeToggle";
 
-const DEMO = [
-  { role: "owner",                   email: "owner@gooil.com",          label: "Company Owner",           tag: "Owner"       },
-  { role: "owner_accountant",        email: "accountant@gooil.com",     label: "Owner Accountant",        tag: "Accounts"    },
-  { role: "distributor",             email: "distributor1@gooil.com",   label: "Distributor — Delhi",     tag: "Distributor" },
-  { role: "distributor",             email: "distributor2@gooil.com",   label: "Distributor — Mumbai",    tag: "Distributor" },
-  { role: "distributor_accountant",  email: "distacct@gooil.com",       label: "Distributor Accountant",  tag: "Accounts"    },
-  { role: "retailer",                email: "retailer1@gooil.com",      label: "Retailer — Sharma Auto",  tag: "Retailer"    },
-  { role: "retailer",                email: "retailer2@gooil.com",      label: "Retailer — Verma Motors", tag: "Retailer"    },
-  { role: "salesperson",             email: "salesperson@gooil.com",    label: "Salesperson",             tag: "Field"       },
-  { role: "team_leader",             email: "teamleader@gooil.com",     label: "Team Leader",             tag: "Sales Mgmt"  },
-  { role: "regional_manager",        email: "regionalmgr@gooil.com",    label: "Regional Manager",        tag: "Regional"    },
-];
-
-const DEMO_PASSWORD = "GoOil@2026";
-
 export default function Login() {
   const { user, login, error } = useAuth();
   const nav = useNavigate();
-  const [email, setEmail] = useState("owner@gooil.com");
-  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
 
   if (user) return <Navigate to="/dms" replace />;
@@ -35,13 +20,6 @@ export default function Login() {
     e.preventDefault();
     setBusy(true);
     const r = await login(email, password);
-    setBusy(false);
-    if (r.ok) nav("/dms");
-  };
-
-  const quick = async (u) => {
-    setBusy(true);
-    const r = await login(u.email, DEMO_PASSWORD);
     setBusy(false);
     if (r.ok) nav("/dms");
   };
@@ -100,7 +78,7 @@ export default function Login() {
             </div>
           </div>
           <h2 className="font-display font-bold text-3xl text-slate-900">Sign in</h2>
-          <p className="mt-1.5 text-sm text-slate-500">Choose a demo role below, or enter your own credentials.</p>
+          <p className="mt-1.5 text-sm text-slate-500">Owner access only. Enter your credentials to continue.</p>
 
           <form onSubmit={submit} className="mt-6 space-y-4">
             <div><Label htmlFor="email">Email</Label><Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} className="mt-1.5" required data-testid="login-email" /></div>
@@ -110,23 +88,6 @@ export default function Login() {
               {busy ? <><Loader2 size={14} className="mr-2 animate-spin" /> Signing in…</> : <>Sign in <ArrowRight size={15} className="ml-2" /></>}
             </Button>
           </form>
-
-          <div className="mt-6">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-slate-500 font-semibold mb-3">Try any role — password is <span className="text-slate-900 font-bold">GoOil@2026</span></div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {DEMO.map(u => (
-                <button key={u.email} onClick={() => quick(u)} disabled={busy}
-                  className="text-left text-xs rounded-lg border border-slate-200 px-3 py-2.5 hover:border-[#c9a227] hover:bg-[#faf6e6]/60 transition disabled:opacity-50 flex items-center justify-between"
-                  data-testid={`quick-login-${u.role}-${u.email.split('@')[0]}`}>
-                  <div className="min-w-0">
-                    <div className="font-semibold text-slate-900 truncate">{u.label}</div>
-                    <div className="text-slate-500 mt-0.5 truncate">{u.email}</div>
-                  </div>
-                  <span className="text-[9px] uppercase tracking-wider bg-[#faf0cf] text-[#8a6600] px-1.5 py-0.5 rounded shrink-0 ml-2 font-semibold">{u.tag}</span>
-                </button>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>

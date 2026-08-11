@@ -7,6 +7,7 @@ Bumping SEED_VERSION forces a full reset of all DMS demo data:
 - Reseeds Product Master + MAY'26 Price Circular from the official GO OIL PDF.
 - Creates fresh GO OIL-themed demo users for every role.
 """
+import os
 import bcrypt
 import uuid
 from datetime import datetime, timezone
@@ -15,6 +16,10 @@ from dms_pdf_data import PDF_ROWS, CIRCULAR_EFFECTIVE_DATE, CIRCULAR_TITLE
 
 DMS_TENANT_ID = "tnt-dms-oil"
 DMS_PASSWORD = "GoOil@2026"
+# Owner (the only account allowed to sign in on this deployment). Configurable
+# via the OWNER_PASSWORD env var so it survives a fresh deploy / DB reseed.
+OWNER_EMAIL = os.environ.get("OWNER_EMAIL", "owner@gooil.com").lower().strip()
+OWNER_PASSWORD = os.environ.get("OWNER_PASSWORD", "GoOil@Owner#2025")
 
 # Bump this whenever you want a full data reset on the next server boot.
 SEED_VERSION = "gooil-v3-coupons-oct26"
@@ -148,7 +153,7 @@ async def _seed_users(raw_db):
             "name": name,
             "role": role,
             "phone": phone,
-            "password_hash": _hash(DMS_PASSWORD),
+            "password_hash": _hash(OWNER_PASSWORD if role == "owner" else DMS_PASSWORD),
             "active": True,
             "created_at": _now(),
             "avatar": "".join([w[0] for w in name.split()[:2]]).upper(),
