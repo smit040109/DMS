@@ -724,7 +724,7 @@ def build_coupons_router(db, get_current_user, notify=None):
             raise HTTPException(400, "Batch is closed — cannot activate coupons")
         if cp["status"] in ("claimed", "redemption_pending", "redeemed"):
             raise HTTPException(400, f"Coupon already {cp['status']} — cannot activate")
-        if cp["status"] in ("cancelled", "expired"):
+        if cp["status"] in ("cancelled", "voided", "expired"):
             raise HTTPException(400, f"Coupon is {cp['status']} — cannot activate")
         if cp.get("active") and cp["status"] == "unused":
             return {"ok": True, "changed": False, "message": "Already active"}
@@ -765,6 +765,169 @@ def build_coupons_router(db, get_current_user, notify=None):
             "batch_id": cp["batch_id"], "scope": "single",
         })
         return {"ok": True}
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # VOID / CANCEL (Settings) — by SERIAL number or by BATCH.
+    # Voided coupons keep a full audit record and CANNOT be re-activated or
+    # encashed unless an owner explicitly runs the authorized recovery flow.
+    # ─────────────────────────────────────────────────────────────────────────
+    async def _find_coupon_by_serial(serial: str) -> Optional[Dict[str, Any]]:
+        s = (serial or "").strip().upper()
+        if not s:
+            return None
+        cp = await db.dms_v2_coupons.find_one({"visible_serial": s})
+        if not cp:
+            cp = await db.dms_v2_coupons.find_one({"coupon_code": s})
+        return _clean(cp)
+
+    @router.post("/coupons/void-by-serial/preview")
+    async def void_by_serial_preview(body: Dict[str, Any] = Body(...),
+                                     user: dict = Depends(owner_or_accountant)):
+        """Preview a single-serial void (no state change) so the UI can confirm."""
+        cp = await _find_coupon_by_serial(body.get("serial") or "")
+        if not cp:
+            raise HTTPException(404, "No coupon found for that serial number")
+        batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": cp["batch_id"]})) or {}
+        can_void = cp["status"] not in ("claimed", "redemption_pending", "redeemed")
+        return {
+            "serial": cp.get("visible_serial") or cp.get("coupon_code"),
+            "status": cp["status"],
+            "coupon_type": cp.get("coupon_type"),
+            "coupon_value": cp.get("coupon_value"),
+            "batch_label": batch.get("batch_label"),
+            "can_void": can_void,
+            "already_voided": cp["status"] == "voided",
+            "reason_blocked": None if can_void else f"Coupon is {cp['status']} — cannot void",
+        }
+
+    @router.post("/coupons/void-by-serial")
+    async def void_by_serial(body: Dict[str, Any] = Body(...),
+                             user: dict = Depends(owner_or_accountant)):
+        """Void ONE coupon by its visible serial number. Requires a reason.
+        Blocks coupons already claimed/redeemed (money already given)."""
+        serial = (body.get("serial") or "").strip().upper()
+        reason = (body.get("reason") or "").strip()
+        if not serial:
+            raise HTTPException(400, "serial is required")
+        if not reason:
+            raise HTTPException(400, "A reason is required to void a coupon")
+        cp = await _find_coupon_by_serial(serial)
+        if not cp:
+            raise HTTPException(404, "No coupon found for that serial number")
+        if cp["status"] in ("claimed", "redemption_pending", "redeemed"):
+            raise HTTPException(400, f"Cannot void a {cp['status']} coupon (already encashed)")
+        if cp["status"] == "voided":
+            return {"ok": True, "changed": False, "message": "Already voided"}
+        await db.dms_v2_coupons.update_one({"id": cp["id"]}, {"$set": {
+            "status": "voided", "active": False,
+            "voided_at": _now(), "voided_by": user["id"],
+            "voided_by_name": user.get("name") or user.get("email"),
+            "void_reason": reason, "void_scope": "serial",
+            "prev_status_before_void": cp["status"],
+            "deactivated_at": _now(), "deactivated_by": user["id"],
+            "updated_at": _now(),
+        }})
+        await _audit(user, "coupon.voided", "coupon", cp["id"], {
+            "visible_serial": cp.get("visible_serial") or cp.get("coupon_code"),
+            "batch_id": cp["batch_id"], "scope": "serial", "reason": reason,
+            "prev_status": cp["status"],
+        })
+        return {"ok": True, "changed": True,
+                "serial": cp.get("visible_serial") or cp.get("coupon_code")}
+
+    @router.post("/coupons/void-batch/preview")
+    async def void_batch_preview(body: Dict[str, Any] = Body(...),
+                                 user: dict = Depends(owner_or_accountant)):
+        """Preview a batch void: how many coupons will be voided vs skipped
+        (claimed/redeemed coupons are protected and skipped)."""
+        bid = (body.get("batch_id") or "").strip()
+        label = (body.get("batch_label") or "").strip()
+        batch = None
+        if bid:
+            batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": bid}))
+        elif label:
+            batch = _clean(await db.dms_v2_coupon_batches.find_one({"batch_label": label}))
+        if not batch:
+            raise HTTPException(404, "Batch not found")
+        protected = ("claimed", "redemption_pending", "redeemed")
+        total = await db.dms_v2_coupons.count_documents({"batch_id": batch["id"]})
+        skip = await db.dms_v2_coupons.count_documents(
+            {"batch_id": batch["id"], "status": {"$in": list(protected)}})
+        already = await db.dms_v2_coupons.count_documents(
+            {"batch_id": batch["id"], "status": "voided"})
+        return {
+            "batch_id": batch["id"], "batch_label": batch.get("batch_label"),
+            "total": total, "will_void": max(0, total - skip - already),
+            "skipped_encashed": skip, "already_voided": already,
+        }
+
+    @router.post("/coupons/void-batch")
+    async def void_batch(body: Dict[str, Any] = Body(...),
+                         user: dict = Depends(owner_or_accountant)):
+        """Void ALL non-encashed coupons in a batch (by batch_id or batch_label).
+        Protects claimed/redeemed coupons. Requires a reason. Closes the batch."""
+        bid = (body.get("batch_id") or "").strip()
+        label = (body.get("batch_label") or "").strip()
+        reason = (body.get("reason") or "").strip()
+        if not reason:
+            raise HTTPException(400, "A reason is required to void a batch")
+        batch = None
+        if bid:
+            batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": bid}))
+        elif label:
+            batch = _clean(await db.dms_v2_coupon_batches.find_one({"batch_label": label}))
+        if not batch:
+            raise HTTPException(404, "Batch not found")
+        res = await db.dms_v2_coupons.update_many(
+            {"batch_id": batch["id"],
+             "status": {"$in": ["generated", "unused", "cancelled", "assigned"]}},
+            {"$set": {"status": "voided", "active": False,
+                      "voided_at": _now(), "voided_by": user["id"],
+                      "voided_by_name": user.get("name") or user.get("email"),
+                      "void_reason": reason, "void_scope": "batch",
+                      "deactivated_at": _now(), "deactivated_by": user["id"],
+                      "updated_at": _now()}},
+        )
+        await db.dms_v2_coupon_batches.update_one({"id": batch["id"]}, {"$set": {
+            "active": False, "closed_at": _now(),
+            "voided_at": _now(), "voided_by": user["id"], "void_reason": reason,
+        }})
+        await _audit(user, "batch.voided", "batch", batch["id"], {
+            "batch_label": batch.get("batch_label"), "scope": "batch",
+            "reason": reason, "voided_count": res.modified_count,
+        })
+        return {"ok": True, "voided_count": res.modified_count,
+                "batch_label": batch.get("batch_label")}
+
+    @router.post("/coupons/{cid}/recover")
+    async def recover_voided_coupon(cid: str, body: Dict[str, Any] = Body(default={}),
+                                    user: dict = Depends(owner_only)):
+        """AUTHORIZED RECOVERY — restore a voided coupon back to usable (unused).
+        Owner only. Requires a reason. Fully audited."""
+        reason = (body.get("reason") or "").strip()
+        if not reason:
+            raise HTTPException(400, "A reason is required for recovery")
+        cp = _clean(await db.dms_v2_coupons.find_one({"id": cid}))
+        if not cp:
+            raise HTTPException(404, "Coupon not found")
+        if cp["status"] != "voided":
+            raise HTTPException(400, f"Only voided coupons can be recovered (this is {cp['status']})")
+        batch = _clean(await db.dms_v2_coupon_batches.find_one({"id": cp["batch_id"]})) or {}
+        batch_note = None
+        if not batch.get("active") or batch.get("closed_at"):
+            batch_note = "Batch is inactive/closed — re-activate the batch for the coupon to be scannable."
+        await db.dms_v2_coupons.update_one({"id": cid}, {"$set": {
+            "status": "unused", "active": True,
+            "recovered_at": _now(), "recovered_by": user["id"],
+            "recovered_by_name": user.get("name") or user.get("email"),
+            "recover_reason": reason, "updated_at": _now(),
+        }, "$unset": {"voided_at": "", "voided_by": "", "void_reason": ""}})
+        await _audit(user, "coupon.recovered", "coupon", cid, {
+            "visible_serial": cp.get("visible_serial") or cp.get("coupon_code"),
+            "batch_id": cp["batch_id"], "reason": reason,
+        })
+        return {"ok": True, "batch_note": batch_note}
+
 
     @router.post("/activate-range/preview")
     async def activate_range_preview(body: Dict[str, Any] = Body(...),
@@ -1193,7 +1356,7 @@ def build_coupons_router(db, get_current_user, notify=None):
             raise HTTPException(400, "No coupons in batch")
 
         # ── Build the print-ready PDF from the OFFICIAL artwork template ──
-        # 12x18in sheet, 35mm round die-cut, 77 coupons/sheet, front + back,
+        # 11x17in sheet, 35mm round die-cut, cutting-friendly grid, front + back,
         # mixed values supported. Only QR / Serial / Value are dynamic; the
         # approved GOOiL artwork is used verbatim (never redrawn).
         import coupon_template
@@ -1210,7 +1373,7 @@ def build_coupons_router(db, get_current_user, notify=None):
             await _audit(user, "batch.printed", "batch", bid,
                          {"batch_label": b["batch_label"],
                           "diameter_mm": 35.0, "side": side,
-                          "layout": "12x18in/35mm/77-per-sheet"})
+                          "layout": "11x17in/35mm/cutting-friendly"})
 
         return Response(
             content=buf.read(),
@@ -1220,7 +1383,8 @@ def build_coupons_router(db, get_current_user, notify=None):
         )
 
     # ─── MIXED PRINTING — many batches / selected coupons on shared sheets ──
-    COUPONS_PER_SHEET = 77  # matches approved 12x18in / 35mm artwork
+    import coupon_template as _ct
+    COUPONS_PER_SHEET = _ct.PER_SHEET  # 11x17in / 35mm cutting-friendly grid (70)
 
     async def _resolve_mixed_coupons(body: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Resolve a mixed-print selection body into a de-duplicated, sorted
@@ -1281,7 +1445,7 @@ def build_coupons_router(db, get_current_user, notify=None):
                            user: dict = Depends(owner_or_accountant)):
         """
         Commercial print-ready PDF mixing DIFFERENT coupon values/types on the
-        SAME 12x18in sheet (35mm round, 77/sheet, auto sheet calculation).
+        SAME 11x17in sheet (35mm round, cutting-friendly grid, auto sheet calc).
         Every successful print is saved to the Print History (re-downloadable).
 
         Body (any combination of):
@@ -1920,7 +2084,7 @@ def build_coupons_router(db, get_current_user, notify=None):
             return cp, "expired", None, None
         if cp["status"] in ("claimed", "redemption_pending", "redeemed"):
             return cp, "already_claimed", None, None
-        if cp["status"] in ("cancelled", "expired"):
+        if cp["status"] in ("cancelled", "voided", "expired"):
             return cp, cp["status"], None, None
         if cp["status"] != "unused" or not cp.get("active"):
             return cp, "coupon_inactive", None, None
@@ -2158,7 +2322,7 @@ def build_coupons_router(db, get_current_user, notify=None):
             raise HTTPException(400,
                                 f"Coupon already claimed on "
                                 f"{(cp.get('claim_timestamp') or '')[:10]} by another retailer")
-        if cp["status"] in ("cancelled", "expired"):
+        if cp["status"] in ("cancelled", "voided", "expired"):
             await _log_fraud(cp["status"], code, user, retailer_id, distributor_id,
                              request=request, body=body)
             raise HTTPException(400, f"Coupon is {cp['status']}")

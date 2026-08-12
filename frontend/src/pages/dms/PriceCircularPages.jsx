@@ -11,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { Plus, FileText, Calendar, Package, ArrowRight, TrendingUp, Layers, Lock } from "lucide-react";
+import { Plus, FileText, Calendar, Package, ArrowRight, TrendingUp, Layers, Lock, Ban, ShieldAlert } from "lucide-react";
 
 // ============================================================================
 // Price Circular — list all batches
@@ -373,6 +373,117 @@ export function NewPriceCircularPage() {
 // ============================================================================
 // Settings — GST % + company name
 // ============================================================================
+function CouponVoidCard() {
+  const [serial, setSerial] = useState("");
+  const [serialReason, setSerialReason] = useState("");
+  const [serialPrev, setSerialPrev] = useState(null);
+  const [batchLabel, setBatchLabel] = useState("");
+  const [batchReason, setBatchReason] = useState("");
+  const [batchPrev, setBatchPrev] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const previewSerial = async () => {
+    if (!serial.trim()) return toast.error("Enter a serial number");
+    try { const r = await dms.cpnVoidBySerialPreview({ serial }); setSerialPrev(r); }
+    catch (e) { setSerialPrev(null); toast.error(e?.response?.data?.detail || "Coupon not found"); }
+  };
+  const voidSerial = async () => {
+    if (!serial.trim()) return toast.error("Enter a serial number");
+    if (!serialReason.trim()) return toast.error("A reason is required to void");
+    if (!window.confirm(`Void coupon ${serial}?\n\nIt can no longer be scanned or encashed. Only the owner can recover it later.`)) return;
+    setBusy(true);
+    try {
+      const r = await dms.cpnVoidBySerial({ serial, reason: serialReason });
+      toast.success(r.changed === false ? "Already voided" : `Voided ${r.serial || serial}`);
+      setSerial(""); setSerialReason(""); setSerialPrev(null);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed to void"); }
+    finally { setBusy(false); }
+  };
+  const previewBatch = async () => {
+    if (!batchLabel.trim()) return toast.error("Enter a batch number / label");
+    try { const r = await dms.cpnVoidBatchPreview({ batch_label: batchLabel }); setBatchPrev(r); }
+    catch (e) { setBatchPrev(null); toast.error(e?.response?.data?.detail || "Batch not found"); }
+  };
+  const voidBatch = async () => {
+    if (!batchLabel.trim()) return toast.error("Enter a batch number / label");
+    if (!batchReason.trim()) return toast.error("A reason is required to void");
+    if (!window.confirm(`Void ALL non-encashed coupons in batch ${batchLabel}?\n\nAlready-encashed coupons are protected. This closes the batch.`)) return;
+    setBusy(true);
+    try {
+      const r = await dms.cpnVoidBatch({ batch_label: batchLabel, reason: batchReason });
+      toast.success(`Voided ${r.voided_count} coupon(s) in ${r.batch_label}`);
+      setBatchLabel(""); setBatchReason(""); setBatchPrev(null);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed to void batch"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <Card className="p-6 border-rose-200 shadow-sm md:col-span-2" data-testid="coupon-void-card">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="h-10 w-10 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center"><Ban size={20} /></div>
+        <div>
+          <div className="font-display font-bold text-slate-900">Void / Cancel Coupons</div>
+          <div className="text-xs text-slate-500">Void by serial number or by whole batch. Voided coupons keep a full audit record and can never be encashed (owner can recover if needed).</div>
+        </div>
+      </div>
+      <div className="grid md:grid-cols-2 gap-6">
+        {/* By Serial */}
+        <div className="space-y-3">
+          <div className="text-sm font-semibold text-slate-800 flex items-center gap-2"><ShieldAlert size={14} className="text-rose-600" /> Void by Serial Number</div>
+          <div>
+            <Label>Serial Number</Label>
+            <div className="flex gap-2 mt-1">
+              <Input value={serial} onChange={e => { setSerial(e.target.value.toUpperCase()); setSerialPrev(null); }} placeholder="e.g. GC0001AA" data-testid="void-serial-input" />
+              <Button type="button" variant="outline" onClick={previewSerial} data-testid="void-serial-check">Check</Button>
+            </div>
+          </div>
+          {serialPrev && (
+            <div className="text-xs rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1" data-testid="void-serial-preview">
+              <div><b>Status:</b> {serialPrev.status} · <b>Type:</b> {serialPrev.coupon_type} · <b>Value:</b> {serialPrev.coupon_value}</div>
+              <div><b>Batch:</b> {serialPrev.batch_label || "—"}</div>
+              {serialPrev.can_void
+                ? <div className="text-emerald-700 font-medium">This coupon can be voided.</div>
+                : <div className="text-rose-700 font-medium">{serialPrev.reason_blocked || "Cannot be voided."}</div>}
+            </div>
+          )}
+          <div>
+            <Label>Reason (required)</Label>
+            <Input value={serialReason} onChange={e => setSerialReason(e.target.value)} placeholder="e.g. printed damaged / lost sheet" data-testid="void-serial-reason" />
+          </div>
+          <Button disabled={busy} onClick={voidSerial} className="w-full bg-rose-700 hover:bg-rose-800 text-white" data-testid="void-serial-btn">
+            <Ban size={14} className="mr-2" /> Void This Coupon
+          </Button>
+        </div>
+        {/* By Batch */}
+        <div className="space-y-3">
+          <div className="text-sm font-semibold text-slate-800 flex items-center gap-2"><Layers size={14} className="text-rose-600" /> Void by Batch</div>
+          <div>
+            <Label>Batch Number / Label</Label>
+            <div className="flex gap-2 mt-1">
+              <Input value={batchLabel} onChange={e => { setBatchLabel(e.target.value); setBatchPrev(null); }} placeholder="e.g. BATCH-1" data-testid="void-batch-input" />
+              <Button type="button" variant="outline" onClick={previewBatch} data-testid="void-batch-check">Check</Button>
+            </div>
+          </div>
+          {batchPrev && (
+            <div className="text-xs rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-1" data-testid="void-batch-preview">
+              <div><b>Batch:</b> {batchPrev.batch_label} · Total {batchPrev.total}</div>
+              <div className="text-rose-700 font-medium">Will void: {batchPrev.will_void}</div>
+              <div className="text-slate-600">Protected (encashed): {batchPrev.skipped_encashed} · Already voided: {batchPrev.already_voided}</div>
+            </div>
+          )}
+          <div>
+            <Label>Reason (required)</Label>
+            <Input value={batchReason} onChange={e => setBatchReason(e.target.value)} placeholder="e.g. entire batch misprinted" data-testid="void-batch-reason" />
+          </div>
+          <Button disabled={busy} onClick={voidBatch} className="w-full bg-rose-700 hover:bg-rose-800 text-white" data-testid="void-batch-btn">
+            <Ban size={14} className="mr-2" /> Void Whole Batch
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function SettingsPage() {
   const [settings, setSettings] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -662,6 +773,9 @@ export function SettingsPage() {
             </label>
           </div>
         </Card>
+
+        {/* Coupon Void / Cancel — by serial or by batch (audit-safe) */}
+        <CouponVoidCard />
 
         {/* Danger Zone — reset to clean production state */}
         <Card className="p-6 border-rose-300 shadow-sm md:col-span-2 bg-rose-50/40">

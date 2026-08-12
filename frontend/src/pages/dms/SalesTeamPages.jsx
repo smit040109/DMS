@@ -86,7 +86,7 @@ export function SalespersonDashboardPage() {
         <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/distributors")}><Handshake size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">My Distributors</div><div className="text-xs text-slate-500">View stock & details</div></Card>
         <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/retailers")}><Store size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">My Retailers</div><div className="text-xs text-slate-500">Visit, onboard, place orders</div></Card>
         <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/orders")} data-testid="sp-my-orders-tile"><ClipboardList size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">My Orders</div><div className="text-xs text-slate-500">Track / edit / cancel</div></Card>
-        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/collect")} data-testid="sp-collect-tile"><Wallet size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">Receive Cash Payment</div><div className="text-xs text-slate-500">Collect from retailer</div></Card>
+        <Card className="p-4 cursor-pointer hover:shadow-md" onClick={() => nav("/dms/salesperson/collect")} data-testid="sp-collect-tile"><Wallet size={20} className="text-[#a67c00]" /><div className="mt-2 font-semibold">Receive Payment</div><div className="text-xs text-slate-500">Cash / UPI / Cheque</div></Card>
       </div>
     </div>
   );
@@ -542,7 +542,7 @@ export function SpOrdersPage() {
 // ============================================================================
 export function SpCollectPaymentPage() {
   const [retailers, setRetailers] = useState([]);
-  const [form, setForm] = useState({ retailer_id: "", amount: "", reference_no: "", description: "" });
+  const [form, setForm] = useState({ retailer_id: "", amount: "", method: "cash", txn_ref: "", cheque_no: "", cheque_date: "", bank_name: "", description: "" });
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState("");
   const nav = useNavigate();
@@ -562,23 +562,35 @@ export function SpCollectPaymentPage() {
     try {
       const amt = Number(form.amount);
       if (!form.retailer_id || !amt || amt <= 0) { toast.error("Pick retailer and enter amount"); setBusy(false); return; }
+      if (form.method === "upi" && !form.txn_ref.trim()) { toast.error("Enter the UPI transaction / reference number"); setBusy(false); return; }
+      if (form.method === "cheque" && !form.cheque_no.trim()) { toast.error("Enter the cheque number"); setBusy(false); return; }
       await dms.recordSecondaryPayment({
         retailer_id: form.retailer_id,
         amount: amt,
-        reference_no: form.reference_no || undefined,
-        description: form.description || "Cash collection",
-        method: "cash",
+        method: form.method,
+        txn_ref: form.txn_ref || undefined,
+        cheque_no: form.cheque_no || undefined,
+        cheque_date: form.cheque_date || undefined,
+        bank_name: form.bank_name || undefined,
+        notes: form.description || undefined,
+        description: form.description || `${form.method.toUpperCase()} collection`,
       });
-      toast.success(`Collected ${inr(amt)} from ${selected?.name || "retailer"}`);
-      setForm({ retailer_id: "", amount: "", reference_no: "", description: "" });
+      toast.success(`Collected ${inr(amt)} (${form.method.toUpperCase()}) from ${selected?.name || "retailer"}`);
+      setForm({ retailer_id: "", amount: "", method: "cash", txn_ref: "", cheque_no: "", cheque_date: "", bank_name: "", description: "" });
       nav("/dms/salesperson");
     } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
     setBusy(false);
   };
 
+  const MODES = [
+    { k: "cash", label: "Cash" },
+    { k: "upi", label: "UPI" },
+    { k: "cheque", label: "Cheque" },
+  ];
+
   return (
     <div className="max-w-2xl mx-auto">
-      <PageHeader title="Receive Cash Payment" subtitle="Record cash collected from a retailer" back="/dms/salesperson" />
+      <PageHeader title="Receive Payment" subtitle="Record cash / UPI / cheque collected from a retailer" back="/dms/salesperson" />
       <Card className="p-6 space-y-4">
         {/* Retailer picker */}
         <div>
@@ -601,6 +613,21 @@ export function SpCollectPaymentPage() {
           </div>
         </div>
 
+        {/* Payment mode */}
+        <div>
+          <Label>Payment Mode *</Label>
+          <div className="mt-1 grid grid-cols-3 gap-2">
+            {MODES.map(m => (
+              <button key={m.k} type="button"
+                onClick={() => setForm({ ...form, method: m.k })}
+                className={`px-3 py-2 rounded-lg border text-sm font-medium transition ${form.method === m.k ? "bg-[#a67c00] text-white border-[#a67c00]" : "bg-white text-slate-700 border-slate-200 hover:bg-slate-50"}`}
+                data-testid={`sp-collect-mode-${m.k}`}>
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label>Amount (₹) *</Label>
@@ -609,17 +636,39 @@ export function SpCollectPaymentPage() {
               <Input type="number" step="0.01" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} className="pl-8" data-testid="sp-collect-amount" />
             </div>
           </div>
-          <div>
-            <Label>Reference / Receipt #</Label>
-            <Input value={form.reference_no} onChange={e => setForm({ ...form, reference_no: e.target.value })} placeholder="Optional" data-testid="sp-collect-ref" />
-          </div>
+          {form.method === "upi" && (
+            <div>
+              <Label>UPI Txn / Ref # *</Label>
+              <Input value={form.txn_ref} onChange={e => setForm({ ...form, txn_ref: e.target.value })} placeholder="e.g. UPI ref no." data-testid="sp-collect-txnref" />
+            </div>
+          )}
+          {form.method === "cheque" && (
+            <div>
+              <Label>Cheque # *</Label>
+              <Input value={form.cheque_no} onChange={e => setForm({ ...form, cheque_no: e.target.value })} placeholder="Cheque number" data-testid="sp-collect-chequeno" />
+            </div>
+          )}
         </div>
+
+        {form.method === "cheque" && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Cheque Date</Label>
+              <Input type="date" value={form.cheque_date} onChange={e => setForm({ ...form, cheque_date: e.target.value })} data-testid="sp-collect-chequedate" />
+            </div>
+            <div>
+              <Label>Bank Name</Label>
+              <Input value={form.bank_name} onChange={e => setForm({ ...form, bank_name: e.target.value })} placeholder="e.g. HDFC" data-testid="sp-collect-bank" />
+            </div>
+          </div>
+        )}
+
         <div>
           <Label>Note</Label>
           <Textarea rows={2} value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} placeholder="Optional" />
         </div>
         <Button onClick={submit} disabled={busy || !form.retailer_id || !form.amount} className="w-full bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="sp-collect-submit">
-          <Wallet size={16} className="mr-2" /> Record Cash Payment
+          <Wallet size={16} className="mr-2" /> Record Payment
         </Button>
       </Card>
     </div>

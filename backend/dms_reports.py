@@ -327,6 +327,27 @@ async def _scoped_distributor_ids(db, user: Dict[str, Any]) -> Optional[List[str
     return []
 
 
+async def _scoped_salesperson_ids(db, user: Dict[str, Any]) -> Optional[List[str]]:
+    """Salesperson IDs whose data this user may see, or None if unrestricted.
+    owner/accountant/super_admin → None (all); salesperson → only self;
+    TL/RM/distributor → salespersons under their scoped distributors."""
+    role = user.get("role")
+    if role in ("owner", "owner_accountant", "super_admin"):
+        return None
+    if role == "salesperson":
+        return [user["id"]]
+    scoped = await _scoped_distributor_ids(db, user)
+    if scoped is None:
+        return None
+    if not scoped:
+        return []
+    assigns = await db.dms_sp_assignments.find(
+        {"distributor_id": {"$in": scoped}}, {"_id": 0, "salesperson_id": 1}
+    ).to_list(5000)
+    return list({a["salesperson_id"] for a in assigns})
+
+
+
 async def _product_map(db):
     m = {}
     async for p in db.dms_products.find({}, {"_id": 0}):
@@ -2143,7 +2164,11 @@ async def _run_sp_performance(db, user, filters):
     df = _parse_iso_date(filters.get("date_from"))
     dt = _end_of_day(_parse_iso_date(filters.get("date_to")))
     sps: Dict[str, Dict[str, Any]] = {}
-    async for u in db.users.find({"role": "salesperson"}, {"_id": 0, "id": 1, "name": 1}):
+    _sp_scope = await _scoped_salesperson_ids(db, user)
+    _uq = {"role": "salesperson"}
+    if _sp_scope is not None:
+        _uq["id"] = {"$in": _sp_scope or ["__none__"]}
+    async for u in db.users.find(_uq, {"_id": 0, "id": 1, "name": 1}):
         sps[u["id"]] = {"salesperson": u.get("name", ""), "orders": 0, "revenue": 0.0,
                         "retailers": set(), "new_retailers": 0}
     async for o in db.dms_secondary_orders.find({}, {"_id": 0}):
@@ -2195,11 +2220,12 @@ async def _run_sp_collection(db, user, filters):
     df = _parse_iso_date(filters.get("date_from"))
     dt = _end_of_day(_parse_iso_date(filters.get("date_to")))
     sps: Dict[str, Dict[str, Any]] = {}
+    _sp_scope = await _scoped_salesperson_ids(db, user)
     _uq = {"role": "salesperson"}
-    if user.get("role") == "salesperson":
-        _uq = {"role": "salesperson", "id": user["id"]}
+    if _sp_scope is not None:
+        _uq["id"] = {"$in": _sp_scope or ["__none__"]}
     async for u in db.users.find(_uq, {"_id": 0, "id": 1, "name": 1}):
-        sps[u["id"]] = {"salesperson": u.get("name", ""), "cash": 0.0, "cheque": 0.0, "count": 0}
+        sps[u["id"]] = {"salesperson": u.get("name", ""), "cash": 0.0, "upi": 0.0, "cheque": 0.0, "count": 0}
     async for l in db.dms_retailer_ledger.find({"kind": "payment"}, {"_id": 0}):
         if not _in_range(l.get("at"), df, dt):
             continue
@@ -2210,6 +2236,8 @@ async def _run_sp_collection(db, user, filters):
         amt = float(l.get("amount", 0) or 0)
         if method == "cheque":
             sps[by]["cheque"] += amt
+        elif method in ("upi", "bank_transfer", "neft", "rtgs", "card"):
+            sps[by]["upi"] += amt
         else:
             sps[by]["cash"] += amt
         sps[by]["count"] += 1
@@ -2219,13 +2247,15 @@ async def _run_sp_collection(db, user, filters):
             "salesperson": v["salesperson"],
             "count": v["count"],
             "cash": round(v["cash"], 2),
+            "upi": round(v["upi"], 2),
             "cheque": round(v["cheque"], 2),
-            "total": round(v["cash"] + v["cheque"], 2),
+            "total": round(v["cash"] + v["upi"] + v["cheque"], 2),
         })
     rows.sort(key=lambda r: r["total"], reverse=True)
     totals = {
         "count": sum(r["count"] for r in rows),
         "cash": round(sum(r["cash"] for r in rows), 2),
+        "upi": round(sum(r["upi"] for r in rows), 2),
         "cheque": round(sum(r["cheque"] for r in rows), 2),
         "total": round(sum(r["total"] for r in rows), 2),
     }
@@ -2233,6 +2263,7 @@ async def _run_sp_collection(db, user, filters):
         _col("salesperson", "Salesperson"),
         _col("count", "Payments", "int", totals=True),
         _col("cash", "Cash", "currency", totals=True),
+        _col("upi", "UPI/Digital", "currency", totals=True),
         _col("cheque", "Cheque", "currency", totals=True),
         _col("total", "Total Collected", "currency", totals=True),
     ]
@@ -2244,8 +2275,16 @@ async def _run_tl_rsm_team(db, user, filters):
     df = _parse_iso_date(filters.get("date_from"))
     dt = _end_of_day(_parse_iso_date(filters.get("date_to")))
     rows = []
+    # scope: RM sees only their own team leaders (+ themselves); admin sees all
+    _tl_q = {"role": "team_leader"}
+    _rm_q = {"role": "regional_manager"}
+    if user.get("role") == "regional_manager":
+        _my_tls = [a["team_leader_id"] async for a in db.dms_rm_assignments.find(
+            {"regional_manager_id": user["id"]}, {"_id": 0, "team_leader_id": 1})]
+        _tl_q["id"] = {"$in": _my_tls or ["__none__"]}
+        _rm_q["id"] = user["id"]
     # Iterate team leaders
-    async for tl in db.users.find({"role": "team_leader"}, {"_id": 0, "id": 1, "name": 1}):
+    async for tl in db.users.find(_tl_q, {"_id": 0, "id": 1, "name": 1}):
         tlid = tl["id"]
         dist_ids = [a["distributor_id"] async for a in db.dms_tl_assignments.find(
             {"team_leader_id": tlid}, {"_id": 0, "distributor_id": 1})]
@@ -2265,7 +2304,7 @@ async def _run_tl_rsm_team(db, user, filters):
             "orders": orders,
             "revenue": round(revenue, 2),
         })
-    async for rm in db.users.find({"role": "regional_manager"}, {"_id": 0, "id": 1, "name": 1}):
+    async for rm in db.users.find(_rm_q, {"_id": 0, "id": 1, "name": 1}):
         rmid = rm["id"]
         tl_ids = [a["team_leader_id"] async for a in db.dms_rm_assignments.find(
             {"regional_manager_id": rmid}, {"_id": 0, "team_leader_id": 1})]
@@ -2310,7 +2349,11 @@ async def _run_live_tracking_visits(db, user, filters):
     df = _parse_iso_date(filters.get("date_from"))
     dt = _end_of_day(_parse_iso_date(filters.get("date_to")))
     sps: Dict[str, Dict[str, Any]] = {}
-    async for u in db.users.find({"role": "salesperson"}, {"_id": 0, "id": 1, "name": 1}):
+    _sp_scope = await _scoped_salesperson_ids(db, user)
+    _uq = {"role": "salesperson"}
+    if _sp_scope is not None:
+        _uq["id"] = {"$in": _sp_scope or ["__none__"]}
+    async for u in db.users.find(_uq, {"_id": 0, "id": 1, "name": 1}):
         sps[u["id"]] = {"salesperson": u.get("name", ""), "visits": 0, "punch_days": 0, "gps_pings": 0}
     async for v in db.dms_visits.find({}, {"_id": 0}):
         if _in_range(v.get("at"), df, dt) and v.get("salesperson_id") in sps:

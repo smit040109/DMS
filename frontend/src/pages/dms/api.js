@@ -175,6 +175,12 @@ export const dms = {
   cpnDeactivateRange: (body) => api.post(`/dms/coupons/deactivate-range`, body).then(r => r.data),
   cpnBulkActivate: (coupon_ids) => api.post(`/dms/coupons/coupons/bulk-activate`, { coupon_ids }).then(r => r.data),
   cpnBulkDeactivate: (coupon_ids) => api.post(`/dms/coupons/coupons/bulk-deactivate`, { coupon_ids }).then(r => r.data),
+  // v2 — Void / Cancel (Settings) — by serial or by batch, with audit-safe recovery
+  cpnVoidBySerialPreview: (body) => api.post(`/dms/coupons/coupons/void-by-serial/preview`, body).then(r => r.data),
+  cpnVoidBySerial: (body) => api.post(`/dms/coupons/coupons/void-by-serial`, body).then(r => r.data),
+  cpnVoidBatchPreview: (body) => api.post(`/dms/coupons/coupons/void-batch/preview`, body).then(r => r.data),
+  cpnVoidBatch: (body) => api.post(`/dms/coupons/coupons/void-batch`, body).then(r => r.data),
+  cpnRecoverCoupon: (cid, body = {}) => api.post(`/dms/coupons/coupons/${cid}/recover`, body).then(r => r.data),
   cpnCouponQrPayload: (cid) => api.get(`/dms/coupons/coupons/${cid}/qr-payload`).then(r => r.data),
   cpnCouponQrImageBlob: async (cid, size = 6) => {
     const r = await api.get(`/dms/coupons/coupons/${cid}/qr-image`, {

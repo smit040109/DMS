@@ -15,9 +15,9 @@ comes straight from the owner's approved PNG templates in
 ``backend/assets/coupon_template``.
 
 Print engine spec (per owner requirement):
-    * Paper size : 12 x 18 inch
-    * Coupon     : 35 mm round (die-cut)
-    * 77 coupons per sheet (7 columns x 11 rows)
+    * Paper size : 11 x 17 inch
+    * Coupon     : 35 mm round (die-cut) — FRONT & BACK identical physical size
+    * Cutting-friendly auto grid (equal margins, mirrored back for duplex)
     * Auto sheet calculation, mixed values on one sheet, front & back sheets.
 """
 from __future__ import annotations
@@ -28,8 +28,9 @@ import os
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
+import numpy as np
 import qrcode
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 from reportlab.lib.units import inch, mm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas as pdfcanvas
@@ -50,13 +51,40 @@ _SERIAL_FONT = os.path.join(_FONT_DIR, "LiberationMono-Bold.ttf")
 _GOLD = (242, 198, 52)          # value gold to match artwork
 _GOLD_SHADOW = (0, 0, 0, 210)
 
-# Print layout spec
-PAGE_W_IN, PAGE_H_IN = 12.0, 18.0
+# Print layout spec — 11 x 17 in sheet, 35 mm round coupon, cutting-friendly grid
+PAGE_W_IN, PAGE_H_IN = 11.0, 17.0
 COUPON_MM = 35.0
-COLS, ROWS = 7, 11
-PER_SHEET = COLS * ROWS          # 77
+MIN_GAP_MM = 4.0                 # minimum cutting margin between coupons
+
+
+def _auto_grid(page_w_pts: float, page_h_pts: float,
+               d_pts: float, min_gap_pts: float) -> tuple[int, int]:
+    """Largest COLS x ROWS grid of `d`-diameter coupons that fits `page`
+    while keeping at least `min_gap` between/around coupons (cut-friendly)."""
+    cols = max(1, int((page_w_pts - min_gap_pts) // (d_pts + min_gap_pts)))
+    rows = max(1, int((page_h_pts - min_gap_pts) // (d_pts + min_gap_pts)))
+    return cols, rows
+
+
+from reportlab.lib.units import inch as _inch, mm as _mm  # noqa: E402  (grid calc)
+COLS, ROWS = _auto_grid(PAGE_W_IN * _inch, PAGE_H_IN * _inch,
+                        COUPON_MM * _mm, MIN_GAP_MM * _mm)
+PER_SHEET = COLS * ROWS          # 11x17 / 35mm → 7 x 10 = 70
 
 _RENDER_PX = 480                 # per-coupon compose resolution (~350 DPI @ 35mm)
+
+# ── Brand text crisp-redraw config (preserve artwork, only sharpen wording) ──
+# The approved artwork bakes "Hi-Technoply Automotive" as a LOW-RES raster that
+# looks pixelated when scaled. We mask ONLY that text strip and redraw the exact
+# same wording with a clean bundled font — halftone dots + logo + ribbon stay.
+_BRAND_TEXT = "Hi-Technoply Automotive"
+# (y0_frac, y1_frac, target_text_width_frac) per side — tuned to the artwork
+_BRAND_BAND = {
+    "front": (0.350, 0.410, 0.60),
+    "back": (0.294, 0.350, 0.52),
+}
+_BRAND_FILL = (252, 252, 252)          # crisp white, matches artwork
+_BRAND_BG = (9, 8, 8, 255)             # near-black backdrop behind the wording
 
 
 @lru_cache(maxsize=1)
@@ -68,7 +96,44 @@ def _geometry() -> Dict[str, Any]:
 @lru_cache(maxsize=2)
 def _template(side: str) -> Image.Image:
     path = _FRONT_PNG if side == "front" else _BACK_PNG
-    return Image.open(path).convert("RGBA")
+    img = Image.open(path).convert("RGBA")
+    try:
+        _sharpen_brand_text(img, side)     # crisp "Hi-Technoply Automotive"
+    except Exception:
+        pass                               # never fail the print over cosmetics
+    return img
+
+
+def _sharpen_brand_text(img: Image.Image, side: str) -> None:
+    """In-place: mask the pixelated 'Hi-Technoply Automotive' strip and redraw
+    the SAME wording crisply. Halftone dots / logo / ribbon are preserved."""
+    band = _BRAND_BAND.get(side)
+    if not band:
+        return
+    W, H = img.size
+    y0f, y1f, wf = band
+    y0, y1 = int(y0f * H), int(y1f * H)
+    xa, xb = int(0.12 * W), int(0.88 * W)
+
+    # 1) build a mask of the existing (near-white) wording inside the strip
+    rgb = np.asarray(img.convert("RGB"))
+    sub = rgb[y0:y1, xa:xb]
+    text_mask = (sub.min(axis=2) > 125).astype("uint8") * 255
+    m = Image.fromarray(text_mask, "L").filter(ImageFilter.MaxFilter(9))
+
+    # 2) paint over ONLY those pixels with the near-black backdrop
+    backdrop = Image.new("RGBA", (xb - xa, y1 - y0), _BRAND_BG)
+    img.paste(backdrop, (xa, y0), m)
+
+    # 3) redraw the exact wording, centered, fitted to the artwork proportions
+    draw = ImageDraw.Draw(img)
+    cx = 0.5 * W
+    cy = (y0 + y1) / 2
+    max_w = wf * W
+    max_h = (y1 - y0) * 0.92
+    font = _fit_font(draw, _BRAND_TEXT, _VALUE_FONT_FALLBACK,
+                     max_w, max_h, int(max_h * 1.25))
+    _draw_centered(draw, cx, cy, _BRAND_TEXT, font, fill=_BRAND_FILL)
 
 
 def _font(path: str, size: int) -> ImageFont.FreeTypeFont:
@@ -178,7 +243,7 @@ def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
     coupon_value, and (for v2) qr_ciphertext_b64 + qr_signature_v2.
 
     ``side`` : 'front' | 'back' | 'both' (front sheets then mirrored back sheets).
-    Returns PDF bytes (multi-page, 12x18in, 77 coupons/sheet).
+    Returns PDF bytes (multi-page, 11x17in, cutting-friendly grid/sheet).
     """
     if side not in ("front", "back", "both"):
         side = "both"

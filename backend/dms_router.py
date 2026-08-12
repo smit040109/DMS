@@ -2099,14 +2099,32 @@ def build_dms_router(db, get_current_user):
             dids = [a["distributor_id"] for a in assigns]
             if retailer.get("distributor_id") not in dids:
                 raise HTTPException(status_code=403, detail="Retailer not in your assigned distributors")
+        # ── payment mode + mode-specific details (Cash / UPI / Cheque / bank) ──
+        method = (body.get("method") or "cash").strip().lower()
+        if method not in ("cash", "upi", "cheque", "bank_transfer", "neft", "rtgs", "card"):
+            raise HTTPException(status_code=400, detail="Invalid payment mode")
+        txn_ref = (body.get("txn_ref") or body.get("reference_no") or "").strip()
+        cheque_no = (body.get("cheque_no") or "").strip()
+        if method == "upi" and not txn_ref:
+            raise HTTPException(status_code=400, detail="UPI transaction/reference number is required")
+        if method == "cheque" and not cheque_no:
+            raise HTTPException(status_code=400, detail="Cheque number is required")
         entry = {
             "id": _nid("rle"),
             "distributor_id": retailer["distributor_id"], "retailer_id": rid,
+            "retailer_name": retailer.get("name", ""),
             "kind": "payment",
-            "reference_no": body.get("reference_no", f"PMT-{datetime.now().strftime('%y%m%d%H%M%S')}"),
-            "amount": amt, "method": body.get("method", "cash" if role == "salesperson" else "bank_transfer"),
-            "description": body.get("description", "Payment received"),
+            "reference_no": txn_ref or f"PMT-{datetime.now().strftime('%y%m%d%H%M%S')}",
+            "amount": amt,
+            "method": method,
+            "txn_ref": txn_ref or None,
+            "cheque_no": cheque_no or None,
+            "cheque_date": (body.get("cheque_date") or None),
+            "bank_name": (body.get("bank_name") or "").strip() or None,
+            "notes": (body.get("notes") or "").strip() or None,
+            "description": (body.get("description") or body.get("notes") or "Payment received"),
             "at": _now(), "recorded_by": user["id"], "recorded_by_role": role,
+            "recorded_by_name": user.get("name") or user.get("email"),
         }
         await db.dms_retailer_ledger.insert_one(entry)
         return _clean(entry)
