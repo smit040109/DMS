@@ -1,7 +1,7 @@
 # GO OIL DMS — COMPREHENSIVE BACKEND FLOW AUDIT REPORT
 **Date:** 2026-08-10  
 **Auditor:** Testing Agent  
-**Base URL:** https://smartcoupon-retail.preview.emergentagent.com  
+**Base URL:** https://fast-release-2.preview.emergentagent.com  
 **API Prefix:** /api  
 
 ---

@@ -12,7 +12,7 @@ import string
 from datetime import datetime
 
 # Base URL from frontend/.env
-BASE_URL = "https://smartcoupon-retail.preview.emergentagent.com/api"
+BASE_URL = "https://fast-release-2.preview.emergentagent.com/api"
 
 # Test credentials (all password: GoOil@2026)
 CREDENTIALS = {

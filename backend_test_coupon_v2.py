@@ -26,7 +26,7 @@ import string
 from typing import Dict, Any, Optional
 
 # Backend base URL from frontend/.env
-BASE_URL = "https://smartcoupon-retail.preview.emergentagent.com/api"
+BASE_URL = "https://fast-release-2.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 CREDENTIALS = {

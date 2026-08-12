@@ -328,8 +328,11 @@ async def get_roles():
 @api.get("/dashboard/kpis")
 async def dashboard_kpis(user: dict = Depends(get_current_user)):
     invoices_total = 0
-    async for inv in db.invoices.find({}, {"total": 1, "_id": 0}):
-        invoices_total += inv.get("total", 0)
+    _agg = await db.invoices.aggregate([
+        {"$group": {"_id": None, "total": {"$sum": "$total"}}}
+    ]).to_list(1)
+    if _agg:
+        invoices_total = _agg[0].get("total", 0) or 0
     n_orders = await db.primary_orders.count_documents({}) + await db.secondary_orders.count_documents({})
     open_orders = await db.primary_orders.count_documents({"status": {"$in": ["Draft", "Approved", "Ready"]}})
     delayed = await db.dispatches.count_documents({"status": "Delayed"})
