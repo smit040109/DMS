@@ -10,7 +10,7 @@ import sys
 from datetime import datetime, timedelta
 
 # Public URL from frontend/.env
-BASE_URL = "https://auth-mongo-secure.preview.emergentagent.com/api"
+BASE_URL = "https://smartcoupon-retail.preview.emergentagent.com/api"
 
 # Test credentials
 OWNER_EMAIL = "owner@gooil.com"

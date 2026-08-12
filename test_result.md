@@ -1073,7 +1073,7 @@ backend:
           🐛 BUG FIX — Login failing on deployed URL with "Network error"
           
           User reported: "log in nai ho raha" (login not working) on deployed URL
-          https://auth-mongo-secure.preview.emergentagent.com/login
+          https://smartcoupon-retail.preview.emergentagent.com/login
           
           ROOT CAUSE IDENTIFIED (via browser network capture):
           - Deployed frontend had old sandbox URL baked into REACT_APP_BACKEND_URL at build time
@@ -1099,7 +1099,7 @@ backend:
           ✅ CORS BUG FIX VERIFIED — ALL 13 TESTS PASSED (100%)
           
           Comprehensive backend API testing completed for CORS fix verification.
-          Tested on sandbox URL: https://auth-mongo-secure.preview.emergentagent.com
+          Tested on sandbox URL: https://smartcoupon-retail.preview.emergentagent.com
           
           **TEST 1 — Sandbox login end-to-end: 6/6 PASSED ✅**
           - Test 1a: POST /api/auth/login with owner@gooil.com → 200 with JWT token ✅
@@ -1108,12 +1108,12 @@ backend:
           - Test 1d: Wrong password → 401 (security intact) ✅
           
           **TEST 2 — CORS behaviour compatible with cross-origin: 3/3 PASSED ✅**
-          - Test 2a: OPTIONS preflight with Origin: https://auth-mongo-secure.preview.emergentagent.com
+          - Test 2a: OPTIONS preflight with Origin: https://smartcoupon-retail.preview.emergentagent.com
             * Status: 204 ✅
             * Access-Control-Allow-Origin: * ✅
             * Access-Control-Allow-Methods: includes POST ✅
             * Access-Control-Allow-Headers: * (wildcard includes content-type + authorization) ✅
-          - Test 2b: POST /api/auth/login with Origin: https://auth-mongo-secure.preview.emergentagent.com
+          - Test 2b: POST /api/auth/login with Origin: https://smartcoupon-retail.preview.emergentagent.com
             * Status: 200 (not blocked by CORS) ✅
           - Test 2c: POST with random origin (https://random-other-domain.example.com)
             * Status: 200 (handled cleanly, no 500 error) ✅
@@ -1237,7 +1237,7 @@ frontend:
           ✅ ALL 3 LOGIN PAGE CHECKS PASSED (100%)
           
           Comprehensive verification completed on PREVIEW environment:
-          URL: https://auth-mongo-secure.preview.emergentagent.com/login
+          URL: https://smartcoupon-retail.preview.emergentagent.com/login
           
           **TEST 1: SUBTITLE TEXT VERIFICATION — ✅ PASSED**
           - Subtitle text under "Sign in" heading verified
@@ -1472,7 +1472,7 @@ agent_communication:
       ✅ LOGIN PAGE VERIFICATION COMPLETE — ALL 3 CHECKS PASSED (100%)
       
       Tested GO OIL DMS login page on PREVIEW environment as requested.
-      URL: https://auth-mongo-secure.preview.emergentagent.com/login
+      URL: https://smartcoupon-retail.preview.emergentagent.com/login
       
       **RESULTS:**
       
@@ -1986,7 +1986,7 @@ agent_communication:
       User-reported login issue "Something went wrong. Please try again." is RESOLVED.
       
       ✅ CORS CONFIGURATION FIX CONFIRMED:
-      - Backend /app/backend/.env: CORS_ORIGINS set to specific origin (https://auth-mongo-secure.preview.emergentagent.com)
+      - Backend /app/backend/.env: CORS_ORIGINS set to specific origin (https://smartcoupon-retail.preview.emergentagent.com)
       - Frontend axios withCredentials: true working correctly
       - Preflight requests returning access-control-allow-credentials: true
       - access_token cookie being set and sent correctly
@@ -4311,7 +4311,7 @@ agent_communication:
       🐛 CORS BUG FIX REQUEST — Login Cross-Origin Issue
       
       User reported: "log in nai ho raha" (login not working) on deployed URL
-      https://auth-mongo-secure.preview.emergentagent.com/login → showing "Network error — is the server reachable?"
+      https://smartcoupon-retail.preview.emergentagent.com/login → showing "Network error — is the server reachable?"
       
       ROOT CAUSE IDENTIFIED:
       - Frontend axios client had `withCredentials: true` (unnecessary for JWT Bearer auth)
@@ -5106,61 +5106,61 @@ agent_communication:
           
           **OWNER ROLE (8/8 PASSED):**
           1. ✅ Coupons → /dms/owner/coupons
-             - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/owner/coupons
+             - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/owner/coupons
              - Heading: "Coupon Management"
              - Page renders with KPI cards and batches table
           
           2. ✅ All Coupons → /dms/owner/coupons/all
-             - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/owner/coupons/all
+             - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/owner/coupons/all
              - Heading: "All Coupons"
              - Page renders correctly
           
           3. ✅ Redemptions → /dms/owner/coupons/redemptions
-             - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/owner/coupons/redemptions
+             - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/owner/coupons/redemptions
              - Heading: "Redemption Requests"
              - Page renders correctly
           
           4. ✅ Credit Notes → /dms/owner/coupons/credit-notes
-             - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/owner/coupons/credit-notes
+             - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/owner/coupons/credit-notes
              - Heading: "Credit Notes"
              - Page renders correctly
           
           5. ✅ Dispatch Advices → /dms/owner/coupons/dispatch-advices
-             - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/owner/coupons/dispatch-advices
+             - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/owner/coupons/dispatch-advices
              - Heading: "Dispatch Advices"
              - Page renders correctly
           
           6. ✅ Coupon Reports → /dms/owner/coupon-reports
-             - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/owner/coupon-reports
+             - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/owner/coupon-reports
              - Heading: "Coupon Reports"
              - Page renders correctly
           
           7. ✅ Coupon Audit Log → /dms/owner/coupons/audit-log
-             - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/owner/coupons/audit-log
+             - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/owner/coupons/audit-log
              - Heading: "Coupon Audit Log"
              - Page renders correctly
           
           8. ✅ Batch Detail → /dms/owner/coupons/batches/cbt-a936658197c6
-             - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/owner/coupons/batches/cbt-a936658197c6
+             - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/owner/coupons/batches/cbt-a936658197c6
              - Heading: "Batch GO-R-00003"
              - Clicked "Open" button on batch row, navigated to batch detail page
              - Page shows batch details with status cards and coupons table
           
           **SALESPERSON ROLE (1/1 PASSED):**
           9. ✅ Scan Coupon → /dms/salesperson/scan
-             - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/salesperson/scan
+             - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/salesperson/scan
              - Heading: "Scan Coupon"
              - Page renders with two-column layout (Retailer picker + Scan panel)
           
           **RETAILER ROLE (1/1 PASSED):**
           10. ✅ My Wallet → /dms/retailer/wallet
-              - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/retailer/wallet
+              - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/retailer/wallet
               - Heading: "My Wallets & Coupons"
               - Page renders with two large wallet cards (Cash Wallet + Reward Wallet)
           
           **DISTRIBUTOR ROLE (1/1 PASSED):**
           11. ✅ Coupon Rewards → /dms/distributor/coupons
-              - URL: https://auth-mongo-secure.preview.emergentagent.com/dms/distributor/coupons
+              - URL: https://smartcoupon-retail.preview.emergentagent.com/dms/distributor/coupons
               - Heading: "Coupon Rewards"
               - Page renders with KPI cards and tabs (Retailer Wallets, Redemptions, 
                 Credit Notes, Dispatch Advices)
@@ -5796,7 +5796,7 @@ agent_communication:
           **TEST SETUP:**
           - Used existing batch: GO-C-00003 (100 coupons)
           - Auth: owner@gooil.com / GoOil@2026
-          - Public URL: https://auth-mongo-secure.preview.emergentagent.com
+          - Public URL: https://smartcoupon-retail.preview.emergentagent.com
           - All routes under /api/*
           
           **TEST 1 — PDF Export with Default Diameter (34mm) ✅**
@@ -6240,7 +6240,7 @@ backend:
           - DB re-seeded (135 products, 2 distributors)
           - All passwords: GoOil@2026
           - Login working for all 9 roles
-          - Backend URL: https://auth-mongo-secure.preview.emergentagent.com/api
+          - Backend URL: https://smartcoupon-retail.preview.emergentagent.com/api
           
           **NO MAJOR CRITICAL ISSUES FOUND.**
           All 8 core features working as designed. Only party_statement report endpoint missing.

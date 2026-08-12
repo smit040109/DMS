@@ -1,5 +1,5 @@
 🚀 GO OIL DMS — Phase 2B Backend Testing
-Base URL: https://auth-mongo-secure.preview.emergentagent.com/api
+Base URL: https://smartcoupon-retail.preview.emergentagent.com/api
 
 ================================================================================
   LOGIN ALL ROLES

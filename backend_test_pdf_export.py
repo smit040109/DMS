@@ -10,7 +10,7 @@ import re
 from io import BytesIO
 
 # Get backend URL from environment
-BACKEND_URL = os.getenv("REACT_APP_BACKEND_URL", "https://auth-mongo-secure.preview.emergentagent.com")
+BACKEND_URL = os.getenv("REACT_APP_BACKEND_URL", "https://smartcoupon-retail.preview.emergentagent.com")
 BASE_URL = f"{BACKEND_URL}/api"
 
 # Test credentials

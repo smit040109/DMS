@@ -10,7 +10,7 @@ import string
 from typing import Dict, Any, List
 
 # Configuration
-BASE_URL = "https://auth-mongo-secure.preview.emergentagent.com/api"
+BASE_URL = "https://smartcoupon-retail.preview.emergentagent.com/api"
 OWNER_EMAIL = "gooilindia13@gmail.com"
 OWNER_PASSWORD = "Arjun@india13"
 
