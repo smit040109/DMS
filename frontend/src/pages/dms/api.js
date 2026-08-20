@@ -1,5 +1,20 @@
 import api from "@/lib/api";
 
+// When a download uses responseType:"blob" and the server returns a JSON error,
+// axios delivers the error body as a Blob — so `e.response.data.detail` is lost.
+// This normalizes it back to a plain object so callers can show the real reason.
+async function normalizeBlobError(e) {
+  try {
+    const d = e?.response?.data;
+    if (d instanceof Blob) {
+      const text = await d.text();
+      try { e.response.data = JSON.parse(text); }
+      catch { e.response.data = { detail: text || "Download failed" }; }
+    }
+  } catch { /* ignore */ }
+  return e;
+}
+
 export const dms = {
   // notifications
   notifications: () => api.get("/dms/notifications").then(r => r.data),
@@ -191,12 +206,15 @@ export const dms = {
   cpnExportPdfUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-pdf`,
   cpnExportXlsxUrl: (bid) => (process.env.REACT_APP_BACKEND_URL || "") + `/api/dms/coupons/batches/${bid}/export-xlsx`,
   cpnExportPdf: async (bid, filename, opts = {}) => {
-    const params = {};
-    if (opts.diameter_mm) params.diameter_mm = opts.diameter_mm;
-    const r = await api.get(`/dms/coupons/batches/${bid}/export-pdf`, { responseType: "blob", params });
-    const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
-    const a = document.createElement("a"); a.href = url; a.download = filename || `batch_${bid}.pdf`;
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    try {
+      const params = {};
+      if (opts.diameter_mm) params.diameter_mm = opts.diameter_mm;
+      if (opts.side) params.side = opts.side;
+      const r = await api.get(`/dms/coupons/batches/${bid}/export-pdf`, { responseType: "blob", params });
+      const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+      const a = document.createElement("a"); a.href = url; a.download = filename || `batch_${bid}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch (e) { throw await normalizeBlobError(e); }
   },
   cpnExportPdfBlob: async (bid, opts = {}) => {
     const params = {};
@@ -209,17 +227,21 @@ export const dms = {
   // Mixed print (multiple batches / serial range) + Print History
   cpnPrintMixedPreview: (body) => api.post(`/dms/coupons/print-mixed/preview`, body).then(r => r.data),
   cpnPrintMixed: async (body, filename) => {
-    const r = await api.post(`/dms/coupons/print-mixed`, body, { responseType: "blob" });
-    const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
-    const a = document.createElement("a"); a.href = url; a.download = filename || `coupons.pdf`;
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    try {
+      const r = await api.post(`/dms/coupons/print-mixed`, body, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+      const a = document.createElement("a"); a.href = url; a.download = filename || `coupons.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch (e) { throw await normalizeBlobError(e); }
   },
   cpnPrintHistory: () => api.get(`/dms/coupons/print-history`).then(r => r.data),
   cpnPrintHistoryDownload: async (hid, filename) => {
-    const r = await api.get(`/dms/coupons/print-history/${hid}/download`, { responseType: "blob" });
-    const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
-    const a = document.createElement("a"); a.href = url; a.download = filename || `reprint.pdf`;
-    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    try {
+      const r = await api.get(`/dms/coupons/print-history/${hid}/download`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+      const a = document.createElement("a"); a.href = url; a.download = filename || `reprint.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch (e) { throw await normalizeBlobError(e); }
   },
   cpnPrintHistoryDelete: (hid) => api.delete(`/dms/coupons/print-history/${hid}`).then(r => r.data),
   cpnExportXlsx: async (bid, filename) => {

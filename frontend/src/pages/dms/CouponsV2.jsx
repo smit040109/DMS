@@ -296,7 +296,7 @@ export function OwnerCouponsPage() {
                     <Button size="sm" variant="outline" className="mr-2"
                             onClick={async () => {
                               try {
-                                toast.info("Preparing 12×18 sheet (77 per sheet)…");
+                                toast.info("Preparing 11×17 sheet (70 per sheet)…");
                                 await dms.cpnExportPdf(b.id, `${b.batch_label}_sheet_35mm.pdf`, { side: "both" });
                                 toast.success("Sheet PDF downloaded");
                                 load();
@@ -375,7 +375,7 @@ export function OwnerCouponsPage() {
 }
 
 // ═══════════ Print Sheet Dialog — multi-batch / serial-range printing ════════
-// 77 coupons per 12x18in sheet. Auto sheet calculation. Saves to Print History.
+// 70 coupons per 11x17in sheet. Auto sheet calculation. Saves to Print History.
 function PrintSheetDialog({ open, onClose, batches, onPrinted }) {
   const printable = useMemo(
     () => (batches || []).filter(b => ["activated", "printed", "generated"].includes(b.status)),
@@ -436,7 +436,7 @@ function PrintSheetDialog({ open, onClose, batches, onPrinted }) {
     if (!body) { toast.error("Select at least one batch or a serial range"); return; }
     setDownloading(true);
     try {
-      toast.info("Building 12×18 sheet (77 per sheet)…");
+      toast.info("Building 11×17 sheet (70 per sheet)…");
       await dms.cpnPrintMixed(body, `GOOIL_coupons_${preview?.coupon_count || ""}.pdf`);
       toast.success("Sheet PDF downloaded & saved to history");
       onPrinted?.();

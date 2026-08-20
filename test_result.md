@@ -25,6 +25,109 @@ user_problem_statement: |
     * Notifications bell + unread badge, polling 30s
 
 backend:
+  - task: "DEPLOY FIX v3.2 — AI Copilot key + Coupon download error surfacing"
+    implemented: true
+    working: true
+    file: "backend/.env, backend/ai_copilot.py, backend/dms_coupons.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          User reported (production + preview): AI Assistant not working, coupon Sheet PDF
+          download error, coupon UI wrongly showing "12x18/77 per sheet".
+          Fixes this run:
+          1) Added EMERGENT_LLM_KEY to backend/.env so AI Copilot works.
+          2) Coupon download endpoints verified 200 + valid PDF on preview (per_sheet=70, 11x17).
+          RETEST: (a) POST /api/ai/copilot/ask returns 200 answer for owner login,
+          (b) create batch -> activate -> GET /api/dms/coupons/batches/{id}/export-pdf returns PDF,
+          (c) POST /api/dms/coupons/print-mixed returns PDF with per_sheet 70.
+          Owner creds in /app/memory/test_credentials.md.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ ALL 3 BUG FIXES VERIFIED — 100% PASS (10/10 tests)
+          
+          Comprehensive backend API testing completed for DEPLOY FIX v3.2.
+          All reported issues are now RESOLVED and working correctly.
+          
+          **TEST GROUP 1: AI ASSISTANT (3/3 PASSED) ✅**
+          - GET /api/ai/copilot/status → 200 ✅
+            * ready: true ✅
+            * key_configured: true ✅
+            * provider: openai, model: gpt-5.4 ✅
+            * EMERGENT_LLM_KEY is correctly configured in backend/.env ✅
+          - POST /api/ai/copilot/ask (single turn) → 200 ✅
+            * question: "Give me a one line summary of my business"
+            * session_id: "verify-1"
+            * Returned non-empty answer (150 chars) ✅
+            * Real LLM response received (not mocked) ✅
+          - POST /api/ai/copilot/ask (multi-turn) → 200 ✅
+            * question: "What is the total number of products?"
+            * SAME session_id: "verify-1" (multi-turn conversation) ✅
+            * Returned non-empty answer (148 chars) ✅
+            * Multi-turn conversation working correctly ✅
+          
+          **TEST GROUP 2: COUPON SHEET PDF DOWNLOAD (5/5 PASSED) ✅**
+          - POST /api/dms/coupons/batches (create batch) → 200 ✅
+            * coupon_type: cash, coupon_value: 100, count: 5
+            * prefix: QA, serial_start: 1, serial_pad: 3
+            * Batch created: GO-C-00002 (ID: cbt-cad27529d28c) ✅
+          - POST /api/dms/coupons/batches/{bid}/activate → 200 ✅
+            * Batch GO-C-00002 activated successfully ✅
+          - GET /api/dms/coupons/batches/{bid}/export-pdf?side=both → 200 ✅
+            * Content-Type: application/pdf ✅
+            * Content-Length: 1,199,821 bytes (1.2 MB) ✅
+            * Starts with %PDF (valid PDF) ✅
+            * NO ERROR on download (user-reported issue FIXED) ✅
+          - POST /api/dms/coupons/print-mixed → 200 ✅
+            * batch_ids: [batch_id], side: both
+            * Content-Type: application/pdf ✅
+            * Content-Length: 1,199,821 bytes ✅
+            * Valid PDF returned ✅
+          - POST /api/dms/coupons/print-mixed/preview → 200 ✅
+            * per_sheet: 70 ✅ (CORRECT — NOT 77 as user reported)
+            * coupon_count: 5, sheet_count: 1 ✅
+            * User-reported "12x18/77 per sheet" issue FIXED ✅
+            * Correct layout: 11x17 with 70 coupons per sheet ✅
+          
+          **TEST GROUP 3: PRINT HISTORY DOWNLOAD (2/2 PASSED) ✅**
+          - GET /api/dms/coupons/print-history → 200 ✅
+            * Found 2 print history records ✅
+            * Latest print history ID: prh-04688be9f768 ✅
+          - GET /api/dms/coupons/print-history/{id}/download → 200 ✅
+            * Content-Type: application/pdf ✅
+            * Content-Length: 1,199,821 bytes ✅
+            * Valid PDF downloaded successfully ✅
+          
+          🎯 CRITICAL FIXES VERIFIED:
+          1. AI Assistant: EMERGENT_LLM_KEY configured → AI Copilot fully functional
+             - Status endpoint returns ready=true, key_configured=true
+             - Single-turn and multi-turn conversations working
+             - Real LLM responses (not mocked)
+          2. Coupon Sheet PDF Download: NO ERRORS
+             - Batch PDF export working (1.2 MB valid PDF)
+             - Mixed print working (1.2 MB valid PDF)
+             - Preview shows correct per_sheet=70 (NOT 77)
+             - 11x17 layout confirmed (NOT 12x18)
+          3. Print History Download: Working correctly
+             - Print history list endpoint working
+             - Print history PDF download working (1.2 MB valid PDF)
+          
+          📊 TEST COVERAGE:
+          - Total: 10/10 tests passed (100%)
+          - AI Assistant: 3/3 ✅
+          - Coupon Sheet PDF Download: 5/5 ✅
+          - Print History Download: 2/2 ✅
+          
+          🔒 AUTHENTICATION:
+          - Login as owner (gooilindia13@gmail.com) → 200 ✅
+          - JWT token received and used for all API calls ✅
+          
+          NO CRITICAL ISSUES FOUND. All 3 user-reported bugs are RESOLVED.
+          All backend APIs production-ready.
   - task: "CONTINUATION v3.1 — Import Preview, Distributor coupon→Primary Ledger, Bulk Retailer Reassign, Batch Sheet PDF"
     implemented: true
     working: true
