@@ -33,6 +33,7 @@ import json
 import os
 import re
 import secrets
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from io import BytesIO
@@ -63,6 +64,33 @@ def _clean(d: Dict[str, Any] | None) -> Dict[str, Any] | None:
     if d and "_id" in d:
         d.pop("_id", None)
     return d
+
+
+# ── Background PDF-generation job registry ──────────────────────────────────
+# Large coupon batches (e.g. 1400 coupons) take longer than the edge/ingress
+# proxy timeout (~60s) to render synchronously, causing an empty/502 response.
+# We therefore render in the background and let the client poll for completion,
+# then download the finished PDF. Files are written to a temp dir keyed by job.
+import asyncio  # noqa: E402
+_PDF_JOB_DIR = os.path.join(tempfile.gettempdir(), "gooil_coupon_pdfs")
+os.makedirs(_PDF_JOB_DIR, exist_ok=True)
+_PDF_JOBS: Dict[str, Dict[str, Any]] = {}
+
+
+def _prune_pdf_jobs(max_age_sec: int = 3600, max_keep: int = 50) -> None:
+    """Drop old finished jobs + their temp files to bound disk/memory."""
+    try:
+        items = sorted(_PDF_JOBS.items(), key=lambda kv: kv[1].get("_ts", 0))
+        # remove by count
+        while len(items) > max_keep:
+            jid, j = items.pop(0)
+            _PDF_JOBS.pop(jid, None)
+            p = j.get("path")
+            if p and os.path.exists(p):
+                try: os.remove(p)
+                except Exception: pass
+    except Exception:
+        pass
 
 
 def _round(v: Any, n: int = 2) -> float:
@@ -1382,9 +1410,83 @@ def build_coupons_router(db, get_current_user, notify=None):
                      f'attachment; filename="{b["batch_label"]}_coupons_35mm_{side}.pdf"'},
         )
 
+    # ─── ASYNC batch PDF (background render + poll + download) ──────────────
+    # For large batches the synchronous endpoint above can exceed the proxy
+    # timeout. These endpoints render in the background so the HTTP request
+    # returns immediately; the client polls status then downloads.
+    @router.post("/batches/{bid}/export-pdf-async")
+    async def export_pdf_async(bid: str,
+                               side: str = Query("both", pattern="^(front|back|both)$"),
+                               user: dict = Depends(owner_only)):
+        b = _clean(await db.dms_v2_coupon_batches.find_one({"id": bid}))
+        if not b:
+            raise HTTPException(404, "Batch not found")
+        coupons = await db.dms_v2_coupons.find({"batch_id": bid}, {"_id": 0})\
+            .sort("visible_serial", 1).to_list(200_000)
+        if not coupons:
+            raise HTTPException(400, "No coupons in batch")
+
+        # mark printed (idempotent) — same behaviour as sync endpoint
+        if b["status"] in ("activated",):
+            await db.dms_v2_coupon_batches.update_one({"id": bid}, {"$set": {
+                "status": "printed", "printed_at": _now(), "printed_by": user["id"],
+            }})
+            await _audit(user, "batch.printed", "batch", bid,
+                         {"batch_label": b["batch_label"], "diameter_mm": 35.0,
+                          "side": side, "layout": "11x17in/35mm/cutting-friendly"})
+
+        job_id = _nid("pdfjob")
+        filename = f'{b["batch_label"]}_coupons_35mm_{side}.pdf'
+        _PDF_JOBS[job_id] = {
+            "status": "pending", "path": None, "filename": filename,
+            "error": None, "count": len(coupons), "_ts": datetime.now(timezone.utc).timestamp(),
+        }
+        _prune_pdf_jobs()
+
+        async def _run():
+            try:
+                import coupon_template
+                pdf_bytes = await asyncio.to_thread(
+                    coupon_template.build_print_pdf, coupons, side=side,
+                    title=b.get("batch_label", "coupons"))
+                path = os.path.join(_PDF_JOB_DIR, job_id + ".pdf")
+                with open(path, "wb") as fh:
+                    fh.write(pdf_bytes)
+                _PDF_JOBS[job_id].update(status="done", path=path)
+            except Exception as e:  # pragma: no cover
+                _PDF_JOBS[job_id].update(status="error", error=str(e))
+
+        asyncio.create_task(_run())
+        return {"job_id": job_id, "status": "pending", "count": len(coupons), "filename": filename}
+
+    @router.get("/pdf-jobs/{job_id}")
+    async def pdf_job_status(job_id: str, user: dict = Depends(owner_only)):
+        j = _PDF_JOBS.get(job_id)
+        if not j:
+            raise HTTPException(404, "Job not found or expired")
+        return {"status": j["status"], "ready": j["status"] == "done",
+                "error": j.get("error"), "filename": j.get("filename"),
+                "count": j.get("count")}
+
+    @router.get("/pdf-jobs/{job_id}/download")
+    async def pdf_job_download(job_id: str, user: dict = Depends(owner_only)):
+        j = _PDF_JOBS.get(job_id)
+        if not j:
+            raise HTTPException(404, "Job not found or expired")
+        if j["status"] == "error":
+            raise HTTPException(500, j.get("error") or "PDF generation failed")
+        if j["status"] != "done" or not j.get("path") or not os.path.exists(j["path"]):
+            raise HTTPException(409, "PDF not ready yet")
+        with open(j["path"], "rb") as fh:
+            data = fh.read()
+        return Response(
+            content=data, media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{j["filename"]}"'},
+        )
+
     # ─── MIXED PRINTING — many batches / selected coupons on shared sheets ──
     import coupon_template as _ct
-    COUPONS_PER_SHEET = _ct.PER_SHEET  # 11x17in / 35mm cutting-friendly grid (70)
+    COUPONS_PER_SHEET = _ct.PER_SHEET  # 11x17in / 35mm cutting-friendly grid (77)
 
     async def _resolve_mixed_coupons(body: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Resolve a mixed-print selection body into a de-duplicated, sorted

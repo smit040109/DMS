@@ -226,6 +226,30 @@ export const dms = {
     const r = await api.get(`/dms/coupons/batches/${bid}/export-pdf`, { responseType: "blob", params });
     return new Blob([r.data], { type: "application/pdf" });
   },
+  // Async (background) PDF generation — reliable for large batches that would
+  // otherwise exceed the proxy timeout. start → poll → download.
+  cpnExportPdfJobStart: (bid, opts = {}) =>
+    api.post(`/dms/coupons/batches/${bid}/export-pdf-async`, null, { params: opts.side ? { side: opts.side } : {} }).then(r => r.data),
+  cpnPdfJobStatus: (jobId) => api.get(`/dms/coupons/pdf-jobs/${jobId}`).then(r => r.data),
+  cpnExportPdfViaJob: async (bid, filename, opts = {}) => {
+    try {
+      const start = await api.post(`/dms/coupons/batches/${bid}/export-pdf-async`, null,
+        { params: opts.side ? { side: opts.side } : {} }).then(r => r.data);
+      const jobId = start.job_id;
+      // poll until ready (up to ~4 min)
+      for (let i = 0; i < 120; i++) {
+        await new Promise(res => setTimeout(res, 2000));
+        const st = await api.get(`/dms/coupons/pdf-jobs/${jobId}`).then(r => r.data);
+        if (st.status === "done") break;
+        if (st.status === "error") throw new Error(st.error || "PDF generation failed");
+        if (i === 119) throw new Error("PDF generation timed out");
+      }
+      const r = await api.get(`/dms/coupons/pdf-jobs/${jobId}/download`, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+      const a = document.createElement("a"); a.href = url; a.download = filename || `batch_${bid}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch (e) { throw await normalizeBlobError(e); }
+  },
   cpnCreateShareLink: (bid, body = {}) =>
     api.post(`/dms/coupons/batches/${bid}/share-link`, body).then(r => r.data),
   // Mixed print (multiple batches / serial range) + Print History

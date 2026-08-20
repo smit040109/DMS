@@ -34,7 +34,7 @@ import {
   Users, Store, Award, RefreshCw, PackageCheck, Printer, FileSpreadsheet,
   FileText, Wallet, Coins, Truck, Search, ArrowRight, ChevronLeft, ChevronRight,
   Play, PauseCircle, Copy, AlertTriangle, ClipboardList, Activity, TrendingUp,
-  Download, Share2, Eye, EyeOff, Lock, MessageCircle, Link2, Clock,
+  Download, Share2, Eye, EyeOff, Lock, MessageCircle, Link2, Clock, Loader2,
 } from "lucide-react";
 
 // ═════════════════════════ shared bits ══════════════════════════════════════
@@ -128,6 +128,7 @@ export function OwnerCouponsPage() {
   const [history, setHistory] = useState([]);
   const [scanPerm, setScanPerm] = useState(false);
   const [permBusy, setPermBusy] = useState(false);
+  const [pdfBusyId, setPdfBusyId] = useState(null);
   const nav = useNavigate();
 
   useEffect(() => {
@@ -292,20 +293,23 @@ export function OwnerCouponsPage() {
                 <TableCell><StatusChip s={b.status} /></TableCell>
                 <TableCell className="text-xs text-slate-500">{niceDate(b.created_at)}</TableCell>
                 <TableCell className="text-right">
-                  {["activated", "printed"].includes(b.status) && (
-                    <Button size="sm" variant="outline" className="mr-2"
-                            onClick={async () => {
-                              try {
-                                toast.info("Preparing 11×17 sheet (70 per sheet)…");
-                                await dms.cpnExportPdf(b.id, `${b.batch_label}_sheet_35mm.pdf`, { side: "both" });
-                                toast.success("Sheet PDF downloaded");
-                                load();
-                              } catch (e) { toast.error(e?.response?.data?.detail || "PDF failed"); }
-                            }}
-                            data-testid={`cpn-batch-sheet-${b.batch_no}`}>
-                      <Printer size={14} className="mr-1" /> Sheet PDF
-                    </Button>
-                  )}
+                  <Button size="sm" variant="outline" className="mr-2"
+                          disabled={pdfBusyId === b.id}
+                          onClick={async () => {
+                            setPdfBusyId(b.id);
+                            try {
+                              toast.info(`Generating 11×17 sheet PDF for ${b.count?.toLocaleString?.() || b.count} coupons (77 per sheet)… this can take a little while for large batches.`);
+                              await dms.cpnExportPdfViaJob(b.id, `${b.batch_label}_sheet_35mm.pdf`, { side: "both" });
+                              toast.success("Coupon PDF downloaded");
+                              load();
+                            } catch (e) { toast.error(e?.response?.data?.detail || e?.message || "PDF failed"); }
+                            finally { setPdfBusyId(null); }
+                          }}
+                          data-testid={`cpn-batch-sheet-${b.batch_no}`}>
+                    {pdfBusyId === b.id
+                      ? <><Loader2 size={14} className="mr-1 animate-spin" /> Generating…</>
+                      : <><Printer size={14} className="mr-1" /> Generate PDF</>}
+                  </Button>
                   <Button size="sm" variant="outline" onClick={() => nav(`/dms/owner/coupons/batches/${b.id}`)}
                           data-testid={`cpn-batch-view-${b.batch_no}`}>
                     Open <ArrowRight size={14} className="ml-1" />
@@ -375,7 +379,7 @@ export function OwnerCouponsPage() {
 }
 
 // ═══════════ Print Sheet Dialog — multi-batch / serial-range printing ════════
-// 70 coupons per 11x17in sheet. Auto sheet calculation. Saves to Print History.
+// 77 coupons per 11x17in sheet. Auto sheet calculation. Saves to Print History.
 function PrintSheetDialog({ open, onClose, batches, onPrinted }) {
   const printable = useMemo(
     () => (batches || []).filter(b => ["activated", "printed", "generated"].includes(b.status)),
@@ -436,7 +440,7 @@ function PrintSheetDialog({ open, onClose, batches, onPrinted }) {
     if (!body) { toast.error("Select at least one batch or a serial range"); return; }
     setDownloading(true);
     try {
-      toast.info("Building 11×17 sheet (70 per sheet)…");
+      toast.info("Building 11×17 sheet (77 per sheet)…");
       await dms.cpnPrintMixed(body, `GOOIL_coupons_${preview?.coupon_count || ""}.pdf`);
       toast.success("Sheet PDF downloaded & saved to history");
       onPrinted?.();

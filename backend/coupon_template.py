@@ -54,7 +54,7 @@ _GOLD_SHADOW = (0, 0, 0, 210)
 # Print layout spec — 11 x 17 in sheet, 35 mm round coupon, cutting-friendly grid
 PAGE_W_IN, PAGE_H_IN = 11.0, 17.0
 COUPON_MM = 35.0
-MIN_GAP_MM = 4.0                 # minimum cutting margin between coupons
+MIN_GAP_MM = 3.5                 # minimum cutting margin between coupons
 
 
 def _auto_grid(page_w_pts: float, page_h_pts: float,
@@ -67,9 +67,10 @@ def _auto_grid(page_w_pts: float, page_h_pts: float,
 
 
 from reportlab.lib.units import inch as _inch, mm as _mm  # noqa: E402  (grid calc)
-COLS, ROWS = _auto_grid(PAGE_W_IN * _inch, PAGE_H_IN * _inch,
-                        COUPON_MM * _mm, MIN_GAP_MM * _mm)
-PER_SHEET = COLS * ROWS          # 11x17 / 35mm → 7 x 10 = 70
+# FIXED cutting-friendly grid: 7 columns x 11 rows = 77 coupons per 11x17in sheet
+# (35 mm round die-cut). This is a business requirement — do not auto-shrink.
+COLS, ROWS = 7, 11
+PER_SHEET = COLS * ROWS          # 11x17 / 35mm → 7 x 11 = 77
 
 _RENDER_PX = 480                 # per-coupon compose resolution (~350 DPI @ 35mm)
 
@@ -234,24 +235,119 @@ def _coupon_payload(cp: Dict[str, Any]) -> str:
     return f"{cp.get('coupon_code') or cp.get('visible_serial')}"
 
 
-def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
-                    title: str = "coupons") -> bytes:
-    """
-    Build a commercial print-ready PDF.
+# ── Fast overlay renderers (used by build_print_pdf) ────────────────────────
+# The big performance/size win: the STATIC artwork (front-per-value & back) is
+# embedded ONCE as a shared image XObject. Per coupon we only overlay a tiny QR
+# bitmap + vector serial text on the canvas instead of embedding a unique full
+# raster for every single coupon (which made 1400-coupon PDFs ~250 MB & time out).
 
-    ``coupons`` items need: visible_serial / coupon_code, coupon_type,
-    coupon_value, and (for v2) qr_ciphertext_b64 + qr_signature_v2.
+from reportlab.pdfbase import pdfmetrics          # noqa: E402
+from reportlab.pdfbase.ttfonts import TTFont      # noqa: E402
+
+_SERIAL_PDF_FONT = "CouponSerialMono"
+_serial_font_ready = False
+
+
+def _ensure_serial_font() -> None:
+    global _serial_font_ready
+    if _serial_font_ready:
+        return
+    try:
+        pdfmetrics.registerFont(TTFont(_SERIAL_PDF_FONT, _SERIAL_FONT))
+    except Exception:
+        pass
+    _serial_font_ready = True
+
+
+@lru_cache(maxsize=8)
+def _front_base_reader(value_text: str) -> ImageReader:
+    """Full FRONT artwork with the value baked in — one per distinct value."""
+    return ImageReader(render_coupon("front", value_text=value_text))
+
+
+@lru_cache(maxsize=1)
+def _back_base_reader() -> ImageReader:
+    """Static BACK artwork (with the sample-QR area whitened) — NO per-coupon
+    QR/serial. Embedded once and reused for every back coupon."""
+    base = _template("back").resize((_RENDER_PX, _RENDER_PX), Image.LANCZOS).copy()
+    draw = ImageDraw.Draw(base)
+    g = _geometry()
+    box = g["qr_box"]
+    W = H = _RENDER_PX
+    bx0, by0 = box["x0"] * W, box["y0"] * H
+    bx1, by1 = box["x1"] * W, box["y1"] * H
+    draw.rounded_rectangle([bx0, by0, bx1, by1],
+                           radius=int((bx1 - bx0) * 0.03), fill=(255, 255, 255))
+    return ImageReader(base)
+
+
+def _qr_reader(payload: str) -> ImageReader:
+    """Small 1-bit QR bitmap for one coupon (cheap to generate & embed)."""
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H,
+                       box_size=4, border=1)
+    qr.add_data(payload or "")
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white").convert("1")
+    return ImageReader(img)
+
+
+def _qr_png(payload: str) -> bytes:
+    """Module-level (picklable) QR→PNG bytes — used for parallel pre-generation."""
+    qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_H,
+                       box_size=4, border=1)
+    qr.add_data(payload or "")
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white").convert("1")
+    b = io.BytesIO()
+    img.save(b, format="PNG")
+    return b.getvalue()
+
+
+def _parallel_qr_pngs(payloads: List[str]) -> Optional[List[bytes]]:
+    """Pre-generate all QR PNGs across CPU cores. Best-effort — returns None
+    (caller falls back to serial) if the pool is unavailable. QR generation with
+    ERROR_CORRECT_H is the dominant cost for large batches, so this cuts the wall
+    time substantially on multi-core hosts."""
+    if len(payloads) < 150:
+        return None
+    try:
+        import concurrent.futures as _futures
+        workers = min(8, max(2, (os.cpu_count() or 2)))
+        with _futures.ProcessPoolExecutor(max_workers=workers) as ex:
+            return list(ex.map(_qr_png, payloads, chunksize=32))
+    except Exception:
+        return None
+
+
+def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
+                    title: str = "coupons",
+                    lead_blank_sheet: bool = True,
+                    pad_last_sheet: bool = True) -> bytes:
+    """
+    Build a commercial print-ready PDF (11x17in, 35 mm round die-cut, 7x11 = 77
+    per sheet, cutting-friendly grid).
+
+    Layout requirements (business):
+      * ``lead_blank_sheet`` — the VERY FIRST page of each side is a BLANK sheet
+        with 77 empty 35 mm circles (die-cut guide).
+      * ``pad_last_sheet``  — the last partially-filled coupon sheet is padded up
+        to 77 with blank 35 mm circles.
 
     ``side`` : 'front' | 'back' | 'both' (front sheets then mirrored back sheets).
-    Returns PDF bytes (multi-page, 11x17in, cutting-friendly grid/sheet).
+    Returns PDF bytes.
     """
     if side not in ("front", "back", "both"):
         side = "both"
 
+    _ensure_serial_font()
+    g = _geometry()
+    qbox = g["qr_box"]
+    qx0, qy0, qx1, qy1 = qbox["x0"], qbox["y0"], qbox["x1"], qbox["y1"]
+    qbw = (qx1 - qx0)                       # qr-box width as fraction of coupon
+
     page_w = PAGE_W_IN * inch
     page_h = PAGE_H_IN * inch
     d_pts = COUPON_MM * mm
-    # centre a COLS x ROWS grid with equal margins
     gap_x = (page_w - COLS * d_pts) / (COLS + 1)
     gap_y = (page_h - ROWS * d_pts) / (ROWS + 1)
 
@@ -260,6 +356,11 @@ def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
 
     n = len(coupons)
     n_sheets = max(1, (n + PER_SHEET - 1) // PER_SHEET)
+
+    # Pre-generate all QR bitmaps in parallel (dominant cost for large batches).
+    qr_pngs: Optional[List[bytes]] = None
+    if side in ("back", "both"):
+        qr_pngs = _parallel_qr_pngs([_coupon_payload(cp) for cp in coupons])
 
     def _pos(idx_in_sheet: int, mirror: bool):
         col = idx_in_sheet % COLS
@@ -270,35 +371,67 @@ def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
         y = page_h - (gap_y + row * (d_pts + gap_y)) - d_pts
         return x, y
 
-    # fronts sharing the same value are identical → render once & reuse
-    # (reportlab dedupes identical ImageReader instances in the output file)
-    front_cache: Dict[str, ImageReader] = {}
+    def _blank_circle(idx_in_sheet: int, mirror: bool):
+        x, y = _pos(idx_in_sheet, mirror)
+        c.saveState()
+        c.setLineWidth(0.5)
+        c.setDash(2, 2)
+        c.setStrokeColorRGB(0.7, 0.7, 0.7)
+        c.circle(x + d_pts / 2.0, y + d_pts / 2.0, d_pts / 2.0, stroke=1, fill=0)
+        c.restoreState()
 
-    def _front_reader(cp: Dict[str, Any]) -> ImageReader:
-        vt = format_value(cp.get("coupon_type"), cp.get("coupon_value"))
-        r = front_cache.get(vt)
-        if r is None:
-            r = ImageReader(render_coupon("front", value_text=vt))
-            front_cache[vt] = r
-        return r
+    def _blank_sheet(mirror: bool):
+        for i in range(PER_SHEET):
+            _blank_circle(i, mirror)
+        c.showPage()
+
+    def _draw_back_overlay(x: float, y: float, cp: Dict[str, Any], gidx: int):
+        # QR position (mirrors render_coupon geometry, mapped to page coords)
+        qs = 0.80 * qbw                      # qr size as fraction of coupon
+        qr_left = x + (qx0 + 0.10 * qbw) * d_pts
+        qr_top_frac = qy0 + 0.04 * qbw
+        qr_bottom_frac = qr_top_frac + qs
+        qr_bottom = y + d_pts * (1.0 - qr_bottom_frac)
+        qr_sz = qs * d_pts
+        if qr_pngs is not None:
+            reader = ImageReader(io.BytesIO(qr_pngs[gidx]))
+        else:
+            reader = _qr_reader(_coupon_payload(cp))
+        c.drawImage(reader, qr_left, qr_bottom,
+                    width=qr_sz, height=qr_sz, preserveAspectRatio=True)
+        serial = cp.get("visible_serial") or cp.get("coupon_code")
+        if serial:
+            strip_cy_frac = ((qr_top_frac + qs) + qy1) / 2.0
+            cy = y + d_pts * (1.0 - strip_cy_frac)
+            fsz = max(4.0, 0.11 * qbw * d_pts)
+            c.setFillColorRGB(0.06, 0.06, 0.06)
+            try:
+                c.setFont(_SERIAL_PDF_FONT, fsz)
+            except Exception:
+                c.setFont("Helvetica-Bold", fsz)
+            cx = x + ((qx0 + qx1) / 2.0) * d_pts
+            c.drawCentredString(cx, cy - fsz * 0.35, str(serial))
 
     def _draw_side(which: str):
         mirror = (which == "back")
+        if lead_blank_sheet:
+            _blank_sheet(mirror)
         for s in range(n_sheets):
             chunk = coupons[s * PER_SHEET:(s + 1) * PER_SHEET]
             for i, cp in enumerate(chunk):
-                if which == "front":
-                    reader = _front_reader(cp)
-                else:
-                    img = render_coupon(
-                        "back",
-                        qr_payload=_coupon_payload(cp),
-                        serial=cp.get("visible_serial") or cp.get("coupon_code"),
-                    )
-                    reader = ImageReader(img)
                 x, y = _pos(i, mirror)
-                c.drawImage(reader, x, y, width=d_pts, height=d_pts,
-                            preserveAspectRatio=True, mask="auto")
+                if which == "front":
+                    vt = format_value(cp.get("coupon_type"), cp.get("coupon_value"))
+                    c.drawImage(_front_base_reader(vt), x, y, width=d_pts, height=d_pts,
+                                preserveAspectRatio=True, mask="auto")
+                else:
+                    c.drawImage(_back_base_reader(), x, y, width=d_pts, height=d_pts,
+                                preserveAspectRatio=True, mask="auto")
+                    _draw_back_overlay(x, y, cp, s * PER_SHEET + i)
+            # pad the remaining positions of the LAST sheet with blank circles
+            if pad_last_sheet and len(chunk) < PER_SHEET:
+                for i in range(len(chunk), PER_SHEET):
+                    _blank_circle(i, mirror)
             c.showPage()
 
     if side in ("front", "both"):
