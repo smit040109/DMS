@@ -13,7 +13,7 @@ import sys
 from typing import Dict, Any, Optional
 
 # Backend URL from frontend/.env
-BASE_URL = "https://14dc390a-a7b1-4b12-9090-d90040b73ea8.preview.emergentagent.com/api"
+BASE_URL = "https://po-order-sync.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 OWNER_EMAIL = "gooilindia13@gmail.com"
