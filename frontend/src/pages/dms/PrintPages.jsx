@@ -325,7 +325,7 @@ export function PrintPurchaseOrderPage() {
         </div>
       </div>
       <table className="w-full text-sm border border-slate-200 mb-6">
-        <thead><tr className="bg-slate-50 text-left"><th className="p-2">#</th><th className="p-2">Product</th><th className="p-2 text-right">Qty (Boxes)</th><th className="p-2 text-right">Rate</th><th className="p-2 text-right">Amount</th></tr></thead>
+        <thead><tr className="bg-slate-50 text-left"><th className="p-2">#</th><th className="p-2">Product</th><th className="p-2 text-right">Qty</th><th className="p-2 text-right">Rate</th><th className="p-2 text-right">Amount</th></tr></thead>
         <tbody>{(o.items || []).map((it, i) => (
           <tr key={i} className="border-t border-slate-100">
             <td className="p-2">{i + 1}</td>

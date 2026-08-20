@@ -1008,10 +1008,22 @@ export function OwnerOrderDetailPage() {
   const load = () => dms.getOrder(id).then(setOrder);
   useEffect(() => { load(); }, [id]);
 
-  const setLine = async (pid, qty) => {
+  const setLine = async (pid, qty, allowOversell = false) => {
     setBusy(true);
-    try { await dms.fulfillLine(id, { product_id: pid, qty_boxes_fulfilled: Number(qty) }); await load(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+    try {
+      await dms.fulfillLine(id, { product_id: pid, qty_boxes_fulfilled: Number(qty), allow_oversell: allowOversell });
+      await load();
+    }
+    catch (e) {
+      if (e.response?.status === 409) {
+        setBusy(false);
+        const msg = (e.response?.data?.detail || "Insufficient owner stock.") + "\n\nDo you want to fulfill this quantity anyway?";
+        if (window.confirm(msg)) { return setLine(pid, qty, true); }
+        await load(); // revert the input back to the saved value
+        return;
+      }
+      toast.error(e.response?.data?.detail || "Failed");
+    }
     setBusy(false);
   };
 
@@ -1038,9 +1050,14 @@ export function OwnerOrderDetailPage() {
     <div>
       <PageHeader
         title={order.order_no}
-        subtitle={`${order.distributor_name} • Placed ${niceDate(order.created_at)}`}
+        subtitle={
+          order.is_backorder
+            ? `${order.distributor_name} • Backorder from ${order.backorder_of_no || "previous order"} • Placed ${niceDate(order.created_at)}`
+            : `${order.distributor_name} • Placed ${niceDate(order.created_at)}`
+        }
         back="/dms/owner/primary-orders"
         action={<div className="flex gap-2">
+          {order.is_backorder && <span className="self-center text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">Backorder</span>}
           <Button variant="outline" onClick={() => window.open(`/dms/print/purchase-order/${order.id}`, "_blank")} data-testid="print-po-btn"><span className="mr-1">🖨</span> Print PO</Button>
           {order.ebill_id && <Button variant="outline" onClick={() => window.open(`/dms/print/ebill/${order.ebill_id}`, "_blank")} data-testid="print-ebill-btn"><span className="mr-1">🖨</span> Print e-Bill</Button>}
           {canReady && <Button onClick={ready} disabled={busy} className="bg-gradient-to-r from-[#c9a227] to-[#a67c00] hover:from-[#b8931f] hover:to-[#8a6600] text-white" data-testid="mark-ready-btn"><Truck size={16} className="mr-1" /> Mark Ready to Go</Button>}
@@ -1055,13 +1072,18 @@ export function OwnerOrderDetailPage() {
       <Card className="mb-4">
         <div className="p-4 border-b border-slate-100 font-semibold">Line Items — set fulfillment quantity</div>
         <Table>
-          <TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Price</TableHead><TableHead>Ordered</TableHead><TableHead>Fulfilled</TableHead><TableHead>Line Total</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow><TableHead>Product</TableHead><TableHead>Price</TableHead><TableHead>Ordered</TableHead><TableHead>In Stock</TableHead><TableHead>Fulfilled</TableHead><TableHead>Line Total</TableHead></TableRow></TableHeader>
           <TableBody>
             {order.items.map(it => (
               <TableRow key={it.product_id}>
                 <TableCell><div className="font-medium">{it.product_name}</div><div className="text-xs font-mono text-slate-500">{it.sku_code}</div></TableCell>
                 <TableCell>{inr(it.unit_price)}</TableCell>
                 <TableCell>{it.qty_boxes_ordered} boxes</TableCell>
+                <TableCell>
+                  <span className={`text-sm font-semibold ${((it.owner_stock_boxes ?? 0) < it.qty_boxes_ordered) ? "text-rose-600" : "text-emerald-600"}`} data-testid={`stock-${it.product_id}`}>
+                    {it.owner_stock_boxes ?? 0} boxes
+                  </span>
+                </TableCell>
                 <TableCell>
                   {canFulfill ? (
                     <Input type="number" min={0} max={it.qty_boxes_ordered} defaultValue={it.qty_boxes_fulfilled}

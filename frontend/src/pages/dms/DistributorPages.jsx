@@ -226,7 +226,7 @@ export function DistributorOrdersPage() {
           <TableBody>
             {list.map(o => (
               <TableRow key={o.id} className="cursor-pointer hover:bg-slate-50" onClick={() => nav(`/dms/distributor/my-orders/${o.id}`)} data-testid={`my-ord-${o.id}`}>
-                <TableCell className="font-mono text-sm">{o.order_no}</TableCell>
+                <TableCell className="font-mono text-sm">{o.order_no}{o.is_backorder && <span className="ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 align-middle">Backorder</span>}</TableCell>
                 <TableCell>{o.items.length}</TableCell>
                 <TableCell className="font-medium">{inr(o.total)}</TableCell>
                 <TableCell><div className="flex items-center gap-2 min-w-[100px]"><div className="w-16 h-1.5 bg-slate-100 rounded overflow-hidden"><div className="h-full bg-[#faf6e6]0" style={{ width: `${o.fulfillment_pct}%` }} /></div><span className="text-xs">{o.fulfillment_pct}%</span></div></TableCell>

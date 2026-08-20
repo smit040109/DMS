@@ -755,6 +755,11 @@ def build_dms_router(db, get_current_user):
             doc["ebill"] = eb
         atts = await db.dms_attachments.find({"reference_id": oid}, {"_id": 0}).to_list(50)
         doc["attachments"] = atts
+        # Owner-side viewers also see how much of each product is in owner's own
+        # inventory right now (helps decide fulfillment). Not exposed to distributors.
+        if role in ("owner", "owner_accountant", "super_admin"):
+            for it in doc.get("items", []):
+                it["owner_stock_boxes"] = await _get_owner_stock(it["product_id"])
         return doc
 
     @router.post("/primary-orders/{oid}/fulfill-line")
@@ -762,6 +767,7 @@ def build_dms_router(db, get_current_user):
         """Set qty_boxes_fulfilled for a specific product line."""
         pid = body.get("product_id")
         qty = int(body.get("qty_boxes_fulfilled", 0))
+        allow_oversell = bool(body.get("allow_oversell", False))
         if not pid:
             raise HTTPException(status_code=400, detail="product_id required")
         order = await db.dms_primary_orders.find_one({"id": oid}, {"_id": 0})
@@ -774,13 +780,17 @@ def build_dms_router(db, get_current_user):
         if not line:
             raise HTTPException(status_code=400, detail="Line not in order")
         qty = max(0, min(qty, line["qty_boxes_ordered"]))
-        # Stop-sale-on-negative check: current owner stock must cover this fulfillment
-        # (compare qty against owner_stock; other fulfilled lines' stock is not yet decremented,
-        #  so we only need this line's requested amount ≤ current owner stock).
-        if qty > 0 and await _stop_sale_enabled():
+        # Stock check: current owner stock must cover this fulfillment.
+        # If insufficient AND the owner has not explicitly confirmed overselling,
+        # return HTTP 409 so the UI can prompt for a confirmation and retry with
+        # allow_oversell=true. (Inventory is never forced negative on dispatch.)
+        if qty > 0 and not allow_oversell and await _stop_sale_enabled():
             avail = await _get_owner_stock(pid)
             if qty > avail:
-                raise HTTPException(status_code=400, detail=f"Insufficient owner stock: available {avail} boxes, requested {qty}. Enable stock or reduce fulfilled quantity.")
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Insufficient owner stock: available {avail} boxes, requested {qty}. Confirm to fulfill anyway.",
+                )
         line["qty_boxes_fulfilled"] = qty
         # recompute fulfillment_pct
         ord_total = sum(it["qty_boxes_ordered"] for it in order["items"])
@@ -859,10 +869,72 @@ def build_dms_router(db, get_current_user):
             "description": f"Invoice for order {order['order_no']}",
             "at": _now(),
         })
+        # ── BACKORDER: carry forward any UN-fulfilled quantity ──────────────
+        # If the owner fulfilled less than what was ordered, the remaining boxes
+        # must not be lost. We auto-create a NEW pending order (backorder) for the
+        # distributor with only the remaining quantities, so the owner can fulfill
+        # it later. Guarded so it is created only once per source order.
+        backorder_id = None
+        existing_bo = await db.dms_primary_orders.find_one({"backorder_of": oid}, {"_id": 0, "id": 1})
+        if not existing_bo:
+            bo_items = []
+            bo_sub = 0.0
+            bo_gst = 0.0
+            for it in order["items"]:
+                remaining = int(it.get("qty_boxes_ordered", 0)) - int(it.get("qty_boxes_fulfilled", 0))
+                if remaining <= 0:
+                    continue
+                line_sub = _round(it["unit_price"] * remaining)
+                line_gst = _round(line_sub * (it.get("gst_pct", 0) / 100.0))
+                bo_sub += line_sub
+                bo_gst += line_gst
+                bo_items.append({
+                    **it,
+                    "qty_boxes_ordered": remaining,
+                    "qty_boxes_fulfilled": 0,
+                    "line_subtotal": line_sub,
+                    "line_gst": line_gst,
+                    "line_total": _round(line_sub + line_gst),
+                })
+            if bo_items:
+                bo_total = _round(bo_sub + bo_gst)
+                bo = {
+                    "id": _nid("po"),
+                    "order_no": f"{order['order_no']}-B",
+                    "distributor_id": order["distributor_id"],
+                    "distributor_name": order["distributor_name"],
+                    "items": bo_items,
+                    "subtotal": _round(bo_sub),
+                    "gst_total": _round(bo_gst),
+                    "total": bo_total,
+                    "status": "pending",
+                    "fulfillment_pct": 0,
+                    "notes": f"Backorder — remaining quantity from {order['order_no']}",
+                    "is_backorder": True,
+                    "backorder_of": oid,
+                    "backorder_of_no": order["order_no"],
+                    "created_at": _now(),
+                    "created_by": user["id"],
+                    "ready_at": None,
+                    "received_at": None,
+                    "ebill_id": None,
+                }
+                await db.dms_primary_orders.insert_one(bo)
+                backorder_id = bo["id"]
+                # notify owners + owner_accountants about the auto-created backorder
+                async for u in db.users.find({"role": {"$in": ["owner", "owner_accountant"]}}, {"_id": 0, "id": 1}):
+                    await notify(
+                        u["id"], "primary_order",
+                        f"Backorder created for {order['distributor_name']}",
+                        f"{bo['order_no']} — remaining {len(bo_items)} item(s) from {order['order_no']}",
+                        f"/dms/owner/primary-orders/{bo['id']}",
+                    )
+
         # update order
         await db.dms_primary_orders.update_one(
             {"id": oid},
-            {"$set": {"status": "ready_to_go", "ebill_id": ebill["id"], "ready_at": _now(), "updated_at": _now()}},
+            {"$set": {"status": "ready_to_go", "ebill_id": ebill["id"], "ready_at": _now(),
+                      "updated_at": _now(), "backorder_id": backorder_id, "has_backorder": bool(backorder_id)}},
         )
         # NOTE: Coupon auto-assignment REMOVED — new GO OIL coupon engine does not
         # tie coupons to primary orders (coupons are inserted randomly in bottles
@@ -876,7 +948,8 @@ def build_dms_router(db, get_current_user):
                 f"e-Bill {ebill['ebill_no']} • Total ₹{total:,.0f}",
                 f"/dms/distributor/my-orders/{oid}",
             )
-        return {"ok": True, "ebill_id": ebill["id"], "status": "ready_to_go"}
+        return {"ok": True, "ebill_id": ebill["id"], "status": "ready_to_go",
+                "backorder_id": backorder_id, "has_backorder": bool(backorder_id)}
 
     @router.post("/primary-orders/{oid}/receive")
     async def mark_received(oid: str, user: dict = Depends(distributor_only)):
@@ -2196,6 +2269,38 @@ def build_dms_router(db, get_current_user):
         await db.dms_sp_assignments.delete_one({"salesperson_id": salesperson_id, "distributor_id": distributor_id})
         return {"ok": True}
 
+    # ── Direct Team-Leader → Salesperson assignment (manual hierarchy) ──
+    @router.get("/assignments/tl-salespersons")
+    async def list_tl_sp_assignments(team_leader_id: Optional[str] = None, user: dict = Depends(get_current_user)):
+        q: Dict[str, Any] = {}
+        if team_leader_id:
+            q["team_leader_id"] = team_leader_id
+        elif user["role"] == "team_leader":
+            q["team_leader_id"] = user["id"]
+        docs = await db.dms_tl_sp_assignments.find(q, {"_id": 0}).to_list(2000)
+        return {"data": docs}
+
+    @router.post("/assignments/tl-salespersons")
+    async def assign_tl_sp(body: Dict[str, Any] = Body(...), user: dict = Depends(get_current_user)):
+        if user["role"] not in ("owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Only owner can assign salespersons to team leaders")
+        tlid = body.get("team_leader_id"); spid = body.get("salesperson_id")
+        if not tlid or not spid:
+            raise HTTPException(status_code=400, detail="team_leader_id + salesperson_id required")
+        await db.dms_tl_sp_assignments.update_one(
+            {"team_leader_id": tlid, "salesperson_id": spid},
+            {"$set": {"team_leader_id": tlid, "salesperson_id": spid, "assigned_by": user["id"], "at": _now()}},
+            upsert=True,
+        )
+        return {"ok": True}
+
+    @router.delete("/assignments/tl-salespersons")
+    async def unassign_tl_sp(team_leader_id: str, salesperson_id: str, user: dict = Depends(get_current_user)):
+        if user["role"] not in ("owner", "super_admin"):
+            raise HTTPException(status_code=403, detail="Forbidden")
+        await db.dms_tl_sp_assignments.delete_one({"team_leader_id": team_leader_id, "salesperson_id": salesperson_id})
+        return {"ok": True}
+
     # ── consolidated hierarchy tree (owner view) ──
     # ── bulk move retailers to another distributor ──
     @router.post("/owner/retailers/bulk-assign-distributor")
@@ -2238,6 +2343,7 @@ def build_dms_router(db, get_current_user):
         sp_asg = await db.dms_sp_assignments.find({}, {"_id": 0}).to_list(5000)
         tl_asg = await db.dms_tl_assignments.find({}, {"_id": 0}).to_list(5000)
         rm_asg = await db.dms_rm_assignments.find({}, {"_id": 0}).to_list(5000)
+        tl_sp_asg = await db.dms_tl_sp_assignments.find({}, {"_id": 0}).to_list(5000)
 
         # index
         ret_by_dist: Dict[str, List[Dict[str, Any]]] = {}
@@ -2253,8 +2359,16 @@ def build_dms_router(db, get_current_user):
         tl_by_rm: Dict[str, List[str]] = {}
         for a in rm_asg:
             tl_by_rm.setdefault(a["regional_manager_id"], []).append(a["team_leader_id"])
+        # direct Team-Leader → Salesperson assignments
+        direct_sp_by_tl: Dict[str, List[str]] = {}
+        for a in tl_sp_asg:
+            direct_sp_by_tl.setdefault(a["team_leader_id"], []).append(a["salesperson_id"])
 
         dmap = {d["id"]: d for d in distributors}
+
+        def _direct_sp_list(tlid):
+            return [{"id": sid, "name": (umap.get(sid) or {}).get("name", sid)}
+                    for sid in direct_sp_by_tl.get(tlid, [])]
 
         def _sp_list(did):
             return [{"id": sid, "name": (umap.get(sid) or {}).get("name", sid)}
@@ -2276,6 +2390,7 @@ def build_dms_router(db, get_current_user):
             for tlid in tl_by_rm.get(rm["id"], []):
                 tl = umap.get(tlid, {"id": tlid, "name": tlid})
                 tl_nodes.append({"id": tlid, "name": tl.get("name"),
+                                 "salespersons": _direct_sp_list(tlid),
                                  "distributors": [_dist_node(x) for x in dist_by_tl.get(tlid, [])]})
             tree.append({"id": rm["id"], "name": rm.get("name"), "team_leaders": tl_nodes})
 
@@ -2285,6 +2400,7 @@ def build_dms_router(db, get_current_user):
         for tl in by_role.get("team_leader", []):
             if tl["id"] not in assigned_tl_ids:
                 loose_tls.append({"id": tl["id"], "name": tl.get("name"),
+                                  "salespersons": _direct_sp_list(tl["id"]),
                                   "distributors": [_dist_node(x) for x in dist_by_tl.get(tl["id"], [])]})
 
         # distributors not under any TL
@@ -3126,19 +3242,21 @@ def build_dms_router(db, get_current_user):
         """
         Return the list of salesperson user_ids the given user is allowed to see.
         owner / super_admin → all
-        regional_manager → SPs assigned to TLs under this RM
-        team_leader → SPs assigned to distributors under this TL
+        regional_manager → SPs under this RM's TLs (via distributors) + directly assigned to those TLs
+        team_leader → SPs under this TL's distributors + directly assigned to this TL
         """
         role = user.get("role")
         if role in ("owner", "super_admin"):
             ids = [u["id"] async for u in db.users.find({"role": "salesperson"}, {"_id": 0, "id": 1})]
             return ids
         if role == "team_leader":
-            tl_dists = [a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0, "distributor_id": 1})]
-            if not tl_dists:
-                return []
             ids = set()
-            async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": tl_dists}}, {"_id": 0, "salesperson_id": 1}):
+            tl_dists = [a["distributor_id"] async for a in db.dms_tl_assignments.find({"team_leader_id": user["id"]}, {"_id": 0, "distributor_id": 1})]
+            if tl_dists:
+                async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": tl_dists}}, {"_id": 0, "salesperson_id": 1}):
+                    ids.add(a["salesperson_id"])
+            # direct Team-Leader → Salesperson assignments (manual hierarchy)
+            async for a in db.dms_tl_sp_assignments.find({"team_leader_id": user["id"]}, {"_id": 0, "salesperson_id": 1}):
                 ids.add(a["salesperson_id"])
             return list(ids)
         if role == "regional_manager":
@@ -3149,10 +3267,30 @@ def build_dms_router(db, get_current_user):
             ids = set()
             async for a in db.dms_sp_assignments.find({"distributor_id": {"$in": list(dists)}}, {"_id": 0, "salesperson_id": 1}):
                 ids.add(a["salesperson_id"])
+            # direct Team-Leader → Salesperson assignments for this RM's TLs
+            async for a in db.dms_tl_sp_assignments.find({"team_leader_id": {"$in": tls}}, {"_id": 0, "salesperson_id": 1}):
+                ids.add(a["salesperson_id"])
             return list(ids)
         if role == "salesperson":
             return [user["id"]]
         return []
+
+    async def _tl_visible_ids_for(user: dict) -> List[str]:
+        """Team-leader user_ids the given user may view on the map."""
+        role = user.get("role")
+        if role in ("owner", "super_admin"):
+            return [u["id"] async for u in db.users.find({"role": "team_leader"}, {"_id": 0, "id": 1})]
+        if role == "regional_manager":
+            return [a["team_leader_id"] async for a in db.dms_rm_assignments.find({"regional_manager_id": user["id"]}, {"_id": 0, "team_leader_id": 1})]
+        if role == "team_leader":
+            return [user["id"]]
+        return []
+
+    async def _trackable_visible_ids_for(user: dict) -> set:
+        """Union of salesperson + team-leader ids the user may track (route/detail)."""
+        sp = await _sp_visible_ids_for(user)
+        tl = await _tl_visible_ids_for(user)
+        return set(sp) | set(tl)
 
     @router.post("/tracking/ping")
     async def tracking_ping(body: Dict[str, Any] = Body(...), user: dict = Depends(field_user_only)):
@@ -3335,15 +3473,15 @@ def build_dms_router(db, get_current_user):
           - total distance travelled
           - visited distributors / retailers (proximity < 200m to any ping)
         """
-        # RBAC — same visibility rules as /tracking/live
-        allowed = await _sp_visible_ids_for(user)
+        # RBAC — same visibility rules as /tracking/live (salespersons + team leaders)
+        allowed = await _trackable_visible_ids_for(user)
         if sid not in allowed:
-            raise HTTPException(status_code=403, detail="Not permitted to view this salesperson")
+            raise HTTPException(status_code=403, detail="Not permitted to view this person")
 
         day = date or _today()
-        sp = await db.users.find_one({"id": sid, "role": "salesperson"}, {"_id": 0, "password_hash": 0})
+        sp = await db.users.find_one({"id": sid, "role": {"$in": ["salesperson", "team_leader"]}}, {"_id": 0, "password_hash": 0})
         if not sp:
-            raise HTTPException(status_code=404, detail="Salesperson not found")
+            raise HTTPException(status_code=404, detail="Person not found")
 
         # punch
         punch = await db.dms_punch.find_one({"salesperson_id": sid, "date": day}, {"_id": 0})
@@ -3406,7 +3544,7 @@ def build_dms_router(db, get_current_user):
         user: dict = Depends(get_current_user),
     ):
         """Date-wise summary (last N days) for the salesperson."""
-        allowed = await _sp_visible_ids_for(user)
+        allowed = await _trackable_visible_ids_for(user)
         if sid not in allowed:
             raise HTTPException(status_code=403, detail="Not permitted")
         end = datetime.now(timezone.utc)
@@ -3444,7 +3582,7 @@ def build_dms_router(db, get_current_user):
         user: dict = Depends(get_current_user),
     ):
         """Per-day full routes for the last N days — for multi-day route comparison/playback."""
-        allowed = await _sp_visible_ids_for(user)
+        allowed = await _trackable_visible_ids_for(user)
         if sid not in allowed:
             raise HTTPException(status_code=403, detail="Not permitted")
         start = datetime.now(timezone.utc) - timedelta(days=days)

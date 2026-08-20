@@ -60,6 +60,7 @@ export function OwnerHierarchyPage() {
 
   // assignment form state
   const [rmTl, setRmTl] = useState({ rm: "", tl: "" });
+  const [tlSp, setTlSp] = useState({ tl: "", sp: "" });
   const [tlDist, setTlDist] = useState({ tl: "", dist: "" });
   const [distSp, setDistSp] = useState({ dist: "", sp: "" });
   const [retailers, setRetailers] = useState([]);
@@ -83,6 +84,19 @@ export function OwnerHierarchyPage() {
   const doAssignRmTl = async () => {
     if (!rmTl.rm || !rmTl.tl) return toast.error("Select RM and Team Leader");
     try { await dms.assignRmTl({ regional_manager_id: rmTl.rm, team_leader_id: rmTl.tl }); toast.success("Team Leader assigned to RM"); setRmTl({ rm: "", tl: "" }); load(); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+  };
+  const doAssignTlSp = async () => {
+    if (!tlSp.tl || !tlSp.sp) return toast.error("Select Team Leader and Salesperson");
+    try { await dms.assignTlSp({ team_leader_id: tlSp.tl, salesperson_id: tlSp.sp }); toast.success("Salesperson assigned to Team Leader"); setTlSp({ tl: "", sp: "" }); load(); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+  };
+  const unassignRmTl = async (rm, tl) => {
+    try { await dms.unassignRmTl(rm, tl); toast.success("Removed"); load(); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+  };
+  const unassignTlSp = async (tl, sp) => {
+    try { await dms.unassignTlSp(tl, sp); toast.success("Removed"); load(); }
     catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
   };
   const doAssignTlDist = async () => {
@@ -125,16 +139,32 @@ export function OwnerHierarchyPage() {
         subtitle="Set who reports to whom — Regional Manager → Team Leaders → Distributors → Salespersons & Retailers"
         action={<Button variant="outline" onClick={load} disabled={busy}>Refresh</Button>} />
 
-      {/* Assignment panels */}
-      <div className="grid md:grid-cols-3 gap-3 mb-5">
+      {/* Primary manual flow: RM → Team Leader → Salesperson */}
+      <div className="text-xs font-bold text-slate-500 uppercase mb-2 flex items-center gap-1">
+        <Network size={14} className="text-[#a67c00]" /> Manual Hierarchy — Regional Manager → Team Leader → Salesperson
+      </div>
+      <div className="grid md:grid-cols-2 gap-3 mb-5">
         <Card className="p-4">
-          <div className="text-xs font-bold text-slate-500 uppercase mb-2">RM → Team Leader</div>
+          <div className="text-xs font-bold text-slate-500 uppercase mb-2">Step 1 · Regional Manager → Team Leader</div>
           <div className="flex flex-col gap-2">
-            <Picker label="Regional Manager" options={all.regional_managers} value={rmTl.rm} onChange={v => setRmTl(s => ({ ...s, rm: v }))} />
-            <Picker label="Team Leader" options={all.team_leaders} value={rmTl.tl} onChange={v => setRmTl(s => ({ ...s, tl: v }))} />
-            <Button className={GOLD_BTN} size="sm" onClick={doAssignRmTl}><Plus size={14} className="mr-1" /> Assign</Button>
+            <Picker label="Select Regional Manager" options={all.regional_managers} value={rmTl.rm} onChange={v => setRmTl(s => ({ ...s, rm: v }))} />
+            <Picker label="Select Team Leader" options={all.team_leaders} value={rmTl.tl} onChange={v => setRmTl(s => ({ ...s, tl: v }))} />
+            <Button className={GOLD_BTN} size="sm" onClick={doAssignRmTl}><Plus size={14} className="mr-1" /> Assign Team Leader to RM</Button>
           </div>
         </Card>
+        <Card className="p-4">
+          <div className="text-xs font-bold text-slate-500 uppercase mb-2">Step 2 · Team Leader → Salesperson</div>
+          <div className="flex flex-col gap-2">
+            <Picker label="Select Team Leader" options={all.team_leaders} value={tlSp.tl} onChange={v => setTlSp(s => ({ ...s, tl: v }))} />
+            <Picker label="Select Salesperson" options={all.salespersons} value={tlSp.sp} onChange={v => setTlSp(s => ({ ...s, sp: v }))} />
+            <Button className={GOLD_BTN} size="sm" onClick={doAssignTlSp}><Plus size={14} className="mr-1" /> Assign Salesperson to Team Leader</Button>
+          </div>
+        </Card>
+      </div>
+
+      {/* Distributor mapping (optional — used for secondary sales) */}
+      <div className="text-xs font-bold text-slate-400 uppercase mb-2">Distributor Mapping (optional)</div>
+      <div className="grid md:grid-cols-3 gap-3 mb-5">
         <Card className="p-4">
           <div className="text-xs font-bold text-slate-500 uppercase mb-2">Team Leader → Distributor</div>
           <div className="flex flex-col gap-2">
@@ -149,6 +179,11 @@ export function OwnerHierarchyPage() {
             <Picker label="Distributor" options={all.distributors} value={distSp.dist} onChange={v => setDistSp(s => ({ ...s, dist: v }))} />
             <Picker label="Salesperson" options={all.salespersons} value={distSp.sp} onChange={v => setDistSp(s => ({ ...s, sp: v }))} />
             <Button className={GOLD_BTN} size="sm" onClick={doAssignDistSp}><Plus size={14} className="mr-1" /> Assign</Button>
+          </div>
+        </Card>
+        <Card className="p-4 flex items-center justify-center text-center">
+          <div className="text-xs text-slate-400 leading-relaxed">
+            Distributor mapping is used for secondary sales &amp; retailer routing. The live-tracking hierarchy uses the manual flow above.
           </div>
         </Card>
       </div>
@@ -200,6 +235,17 @@ export function OwnerHierarchyPage() {
               <div key={tl.id} className="ml-4 mt-2 border-l-2 border-purple-200 pl-3">
                 <div className="flex items-center gap-2 font-semibold text-slate-800 text-sm">
                   <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px]">TL</span> {tl.name}
+                  <button onClick={() => unassignRmTl(rm.id, tl.id)} title="Remove Team Leader from RM"
+                    className="ml-1 text-slate-300 hover:text-rose-500"><X size={13} /></button>
+                </div>
+                <div className="ml-5 mt-1 flex flex-wrap gap-1.5">
+                  {(tl.salespersons || []).length === 0 && <span className="text-[11px] text-slate-400">No salesperson assigned</span>}
+                  {(tl.salespersons || []).map(sp => (
+                    <span key={sp.id} className="inline-flex items-center gap-1 text-[11px] bg-sky-50 text-sky-700 border border-sky-200 rounded-full px-2 py-0.5">
+                      <UserCog size={11} /> {sp.name}
+                      <button onClick={() => unassignTlSp(tl.id, sp.id)} className="hover:text-rose-500"><X size={11} /></button>
+                    </span>
+                  ))}
                 </div>
                 {(tl.distributors || []).map(d => renderDist(d, tl.id))}
               </div>
@@ -214,6 +260,15 @@ export function OwnerHierarchyPage() {
               <div key={tl.id} className="ml-2 mt-2">
                 <div className="flex items-center gap-2 font-semibold text-slate-800 text-sm">
                   <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px]">TL</span> {tl.name}
+                </div>
+                <div className="ml-5 mt-1 flex flex-wrap gap-1.5">
+                  {(tl.salespersons || []).length === 0 && <span className="text-[11px] text-slate-400">No salesperson assigned</span>}
+                  {(tl.salespersons || []).map(sp => (
+                    <span key={sp.id} className="inline-flex items-center gap-1 text-[11px] bg-sky-50 text-sky-700 border border-sky-200 rounded-full px-2 py-0.5">
+                      <UserCog size={11} /> {sp.name}
+                      <button onClick={() => unassignTlSp(tl.id, sp.id)} className="hover:text-rose-500"><X size={11} /></button>
+                    </span>
+                  ))}
                 </div>
                 {(tl.distributors || []).map(d => renderDist(d, tl.id))}
               </div>

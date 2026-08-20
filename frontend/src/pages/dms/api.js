@@ -107,6 +107,10 @@ export const dms = {
   unassignSpDist: (sp, did) => api.delete("/dms/assignments/sp-distributors", { params: { salesperson_id: sp, distributor_id: did } }).then(r => r.data),
   listRmTls: (params = {}) => api.get("/dms/assignments/rm-tls", { params }).then(r => r.data),
   assignRmTl: (body) => api.post("/dms/assignments/rm-tls", body).then(r => r.data),
+  unassignRmTl: (rm, tl) => api.delete("/dms/assignments/rm-tls", { params: { regional_manager_id: rm, team_leader_id: tl } }).then(r => r.data),
+  listTlSalespersons: (params = {}) => api.get("/dms/assignments/tl-salespersons", { params }).then(r => r.data),
+  assignTlSp: (body) => api.post("/dms/assignments/tl-salespersons", body).then(r => r.data),
+  unassignTlSp: (tl, sp) => api.delete("/dms/assignments/tl-salespersons", { params: { team_leader_id: tl, salesperson_id: sp } }).then(r => r.data),
 
   // users
   listUsers: (role) => api.get("/dms/users", { params: role ? { role } : {} }).then(r => r.data),

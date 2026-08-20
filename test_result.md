@@ -9857,3 +9857,151 @@ agent_communication:
       
       **NEXT STEPS:**
       Main agent should summarize and finish. The deployment fix is working correctly.
+
+#====================================================================================================
+# CONTINUATION SPRINT — Fulfillment / Backorder / Hierarchy / Live Tracking (main agent)
+#====================================================================================================
+backend:
+  - task: "Owner stock column in primary order detail"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py (get_primary_order)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          GET /api/dms/primary-orders/{id} now adds `owner_stock_boxes` to each line item
+          when the caller is owner/owner_accountant/super_admin. Verify field present for owner,
+          absent for distributor caller.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ PASSED — owner_stock_boxes field present in order detail
+          Tested GET /api/dms/primary-orders/{id} as owner. Item has owner_stock_boxes field with integer value.
+  - task: "Insufficient stock -> 409 confirm (allow_oversell)"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py (fulfill_primary_line)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          POST /api/dms/primary-orders/{id}/fulfill-line now returns HTTP 409 when fulfilled qty
+          exceeds owner stock AND stop_sale_on_negative is enabled AND allow_oversell not set.
+          Passing allow_oversell:true in body bypasses the block and saves the fulfillment.
+          Verify: (a) 409 when stock insufficient, (b) success with allow_oversell:true.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ PASSED — Insufficient stock returns 409, allow_oversell bypass works
+          Without allow_oversell: HTTP 409 with clear error message. With allow_oversell=true: HTTP 200, fulfillment saved.
+  - task: "Backorder auto-create on mark-ready"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py (mark_ready_to_go)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          When owner marks an order Ready to Go with partial fulfillment, a NEW pending order
+          (is_backorder=true, backorder_of=<orderId>, order_no suffix "-B") is auto-created for the
+          remaining (ordered-fulfilled) quantities. Guarded so only ONE backorder per source order.
+          Response includes backorder_id/has_backorder. Verify no duplicate backorders on re-calls.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ PASSED — Backorder auto-creation works correctly
+          Backorder created with correct properties: is_backorder=true, backorder_of=original_id, order_no ends with "-B", qty=ordered-fulfilled. Only ONE backorder per source order.
+  - task: "Direct Team-Leader -> Salesperson assignment + visibility"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py (assignments/tl-salespersons, _sp_visible_ids_for, owner_hierarchy)"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          New collection dms_tl_sp_assignments. Endpoints POST/DELETE/GET /api/dms/assignments/tl-salespersons
+          (owner only for write). _sp_visible_ids_for now unions direct TL->SP assignments for team_leader
+          and regional_manager roles (existing distributor-based filtering preserved). owner_hierarchy tree
+          TL nodes now include `salespersons` (direct). Verify assign -> appears in /owner/hierarchy tree,
+          and TL/RM tracking/live salespersons list includes the directly-assigned SP.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ PASSED — TL-SP assignment and hierarchy working correctly
+          POST/DELETE /api/dms/assignments/tl-salespersons working. Hierarchy shows salespersons array in TL nodes. Assignments correctly reflected.
+  - task: "Team-Leader route tracking (detail/history/routes)"
+    implemented: true
+    working: true
+    file: "backend/dms_router.py (tracking_salesperson_detail/history/routes)"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          The 3 tracking-detail endpoints now accept team_leader ids too (via _trackable_visible_ids_for)
+          so a TL's own day-route can be shown on the map. RBAC preserved (owner=all, RM=assigned TLs,
+          TL=self). Verify GET /api/dms/tracking/salesperson/{tlUserId} works for owner.
+      - working: true
+        agent: "testing"
+        comment: |
+          ✅ PASSED — TL tracking detail works for owner, live tracking intact
+          GET /api/dms/tracking/salesperson/{tlUserId} returns 200 with route/punch/working_hours. Live tracking regression check passed.
+
+frontend:
+  - task: "Fulfillment page In-Stock column + oversell confirm; PO print Qty header; backorder tags; hierarchy TL->SP UI; live-tracking clickable legend + initial pins"
+    implemented: true
+    working: "NA"
+    file: "frontend/src/pages/dms/{OwnerPages,PrintPages,DistributorPages,HierarchyPage,LiveTrackingPage,api}.jsx/js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: |
+          Frontend not yet tested (awaiting user permission).
+
+agent_communication:
+  - agent: "main"
+    message: |
+      Please run BACKEND tests only for this continuation sprint (owner login creds in
+      /app/memory/test_credentials.md: gooilindia13@gmail.com / Arjun@india13).
+      Focus areas:
+      1) GET /api/dms/primary-orders/{id} owner_stock_boxes present for owner.
+      2) fulfill-line: 409 on insufficient stock; success with allow_oversell:true.
+      3) mark-ready backorder creation (partial fulfill) -> new pending order is_backorder=true,
+         only one backorder per source order.
+      4) TL->SP assignment endpoints + hierarchy tree reflects it + tracking visibility.
+      5) TL tracking detail endpoint works for owner.
+      Do NOT modify Testing Protocol. Keep existing functionality intact.
+  - agent: "testing"
+    message: |
+      ✅ ALL 5 BACKEND TESTS PASSED (100%)
+      
+      Comprehensive backend API testing completed for GO OIL DMS continuation sprint.
+      All 5 test areas passed successfully with no critical issues found.
+      
+      TEST RESULTS:
+      1. ✅ Owner stock column: owner_stock_boxes field present in order detail
+      2. ✅ Insufficient stock: 409 error + allow_oversell bypass working
+      3. ✅ Backorder auto-create: Correct backorder creation with all properties
+      4. ✅ TL-SP assignment: POST/DELETE working, hierarchy reflects assignments
+      5. ✅ TL tracking: Owner can access TL tracking detail, live tracking intact
+      
+      NO CRITICAL ISSUES FOUND. All continuation sprint backend APIs production-ready.
+      Main agent should summarize and finish.

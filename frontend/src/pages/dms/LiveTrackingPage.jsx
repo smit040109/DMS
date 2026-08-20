@@ -38,6 +38,10 @@ const ICON_SP_OFF = makeIcon("#64748b", "S");   // slate for offline
 const ICON_TL   = makeIcon("#6366f1", "T");     // indigo — Team Leader (ASM)
 const ICON_TL_OFF = makeIcon("#94a3b8", "T");   // slate for offline TL
 
+// Pin that shows the person's first-name initial (e.g. Smit → "S", Uday → "U")
+const initialOf = (name) => ((name || "?").trim().charAt(0) || "?").toUpperCase();
+const makeInitialIcon = (color, name) => makeIcon(color, initialOf(name));
+
 // India centre default
 const INDIA_CENTER = [22.5, 79.5];
 
@@ -90,6 +94,7 @@ export function LiveTrackingPage() {
   const { user } = useAuth();
   const [live, setLive] = useState({ salespersons: [], distributors: [], retailers: [], team_leaders: [], field_staff: [] });
   const [selectedSp, setSelectedSp] = useState(null);
+  const [activeList, setActiveList] = useState("salespersons"); // which legend category is expanded
   const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [detail, setDetail] = useState(null); // { punch, route, distance_km, visited, working_hours }
   const [history, setHistory] = useState([]);
@@ -172,8 +177,8 @@ export function LiveTrackingPage() {
   }, [multiDay, selectedSp]);
 
   const selectedSpMeta = useMemo(
-    () => live.salespersons.find(s => s.id === selectedSp),
-    [live.salespersons, selectedSp],
+    () => [...(live.salespersons || []), ...(live.team_leaders || [])].find(s => s.id === selectedSp),
+    [live.salespersons, live.team_leaders, selectedSp],
   );
 
   const fullPolyline = useMemo(() => {
@@ -193,6 +198,20 @@ export function LiveTrackingPage() {
     setSelectedSp(sp.id);
     if (sp.lat && sp.lng) setFlyTarget([sp.lat, sp.lng]);
   };
+  const flyToItem = (item) => {
+    if (item.lat && item.lng) setFlyTarget([item.lat, item.lng]);
+  };
+
+  // Legend categories — clicking a legend item expands its directory list
+  const CATS = {
+    salespersons: { label: "Salespersons", color: "#e11d48", selectable: true },
+    team_leaders: { label: "Team Leaders", color: "#6366f1", selectable: true },
+    distributors: { label: "Distributors", color: "#0f766e", selectable: false },
+    retailers:    { label: "Retailers",    color: "#f59e0b", selectable: false },
+    field_staff:  { label: "On-duty staff", color: "#10b981", selectable: false },
+  };
+  const activeCat = CATS[activeList] || CATS.salespersons;
+  const activeItems = live[activeList] || [];
 
   return (
     <div>
@@ -216,23 +235,31 @@ export function LiveTrackingPage() {
         {/* Left side — salespersons list + selected detail */}
         <div className="space-y-4">
           <Card className="p-3">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-              Salespersons ({live.salespersons.length})
+            <div className="text-xs font-semibold uppercase tracking-wider mb-2 flex items-center gap-2">
+              <span style={{ background: activeCat.color, transform: "rotate(-45deg)" }}
+                    className="h-3.5 w-3.5 rounded-full rounded-bl-none border border-white shadow inline-block" />
+              <span className="text-slate-700">{activeCat.label} ({activeItems.length})</span>
             </div>
-            {live.salespersons.length === 0 && (
-              <div className="text-xs text-slate-400 py-6 text-center">No salespersons visible</div>
+            {activeItems.length === 0 && (
+              <div className="text-xs text-slate-400 py-6 text-center">None visible</div>
             )}
             <div className="space-y-1.5 max-h-72 overflow-y-auto">
-              {live.salespersons.map(sp => (
+              {activeItems.map(it => (
                 <button
-                  key={sp.id}
-                  onClick={() => onSelectSp(sp)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${selectedSp === sp.id ? "bg-[#faf6e6] border border-[#c9a227]" : "hover:bg-slate-50 border border-transparent"}`}
-                  data-testid={`sp-item-${sp.id}`}
+                  key={it.id}
+                  onClick={() => (activeCat.selectable ? onSelectSp(it) : flyToItem(it))}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 ${activeCat.selectable && selectedSp === it.id ? "bg-[#faf6e6] border border-[#c9a227]" : "hover:bg-slate-50 border border-transparent"}`}
+                  data-testid={`dir-item-${it.id}`}
                 >
-                  <span className={`h-2 w-2 rounded-full ${sp.online ? "bg-emerald-500 animate-pulse" : "bg-slate-300"}`} />
-                  <span className="flex-1 truncate">{sp.name}</span>
-                  {sp.lat != null && <MapPin size={12} className="text-slate-400" />}
+                  {activeCat.selectable ? (
+                    <span className={`h-2 w-2 rounded-full shrink-0 ${it.online ? "bg-emerald-500 animate-pulse" : "bg-slate-300"}`} />
+                  ) : (
+                    <span className="h-5 w-5 shrink-0 rounded-full flex items-center justify-center text-[10px] font-bold text-white" style={{ background: activeCat.color }}>
+                      {initialOf(it.name)}
+                    </span>
+                  )}
+                  <span className="flex-1 truncate">{it.name}</span>
+                  {it.lat != null && <MapPin size={12} className="text-slate-400" />}
                 </button>
               ))}
             </div>
@@ -377,15 +404,20 @@ export function LiveTrackingPage() {
             </Card>
           )}
 
-          {/* Legend */}
+          {/* Legend — click a category to list its members */}
           <Card className="p-3">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Legend</div>
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Legend — tap to view</div>
             <div className="grid grid-cols-2 gap-2 text-xs">
-              <LegendBadge color="#e11d48" glyph="S" label={`Salespersons (${live.salespersons.length})`} />
-              <LegendBadge color="#6366f1" glyph="T" label={`Team Leaders (${(live.team_leaders || []).length})`} />
-              <LegendBadge color="#0f766e" glyph="D" label={`Distributors (${live.distributors.length})`} />
-              <LegendBadge color="#f59e0b" glyph="R" label={`Retailers (${live.retailers.length})`} />
-              <LegendBadge color="#10b981" glyph="●" label={`On-duty staff (${(live.field_staff || []).filter(f => f.online).length})`} />
+              <LegendBadge color="#e11d48" glyph="S" label={`Salespersons (${live.salespersons.length})`}
+                active={activeList === "salespersons"} onClick={() => setActiveList("salespersons")} />
+              <LegendBadge color="#6366f1" glyph="T" label={`Team Leaders (${(live.team_leaders || []).length})`}
+                active={activeList === "team_leaders"} onClick={() => setActiveList("team_leaders")} />
+              <LegendBadge color="#0f766e" glyph="D" label={`Distributors (${live.distributors.length})`}
+                active={activeList === "distributors"} onClick={() => setActiveList("distributors")} />
+              <LegendBadge color="#f59e0b" glyph="R" label={`Retailers (${live.retailers.length})`}
+                active={activeList === "retailers"} onClick={() => setActiveList("retailers")} />
+              <LegendBadge color="#10b981" glyph="●" label={`On-duty staff (${(live.field_staff || []).filter(f => f.online).length})`}
+                active={activeList === "field_staff"} onClick={() => setActiveList("field_staff")} />
             </div>
           </Card>
         </div>
@@ -425,10 +457,10 @@ export function LiveTrackingPage() {
                 </Marker>
               ))}
 
-              {/* Salespersons — live positions (animated / moving marker) */}
+              {/* Salespersons — live positions (animated / moving marker with name initial) */}
               {live.salespersons.filter(s => s.lat && s.lng).map(s => (
-                <AnimatedMarker key={`s-${s.id}`} position={[s.lat, s.lng]} icon={s.online ? ICON_SP : ICON_SP_OFF}
-                        eventHandlers={{ click: () => setSelectedSp(s.id) }}>
+                <AnimatedMarker key={`s-${s.id}`} position={[s.lat, s.lng]} icon={makeInitialIcon(s.online ? "#e11d48" : "#64748b", s.name)}
+                        eventHandlers={{ click: () => onSelectSp(s) }}>
                   <Popup>
                     <b>{s.name}</b><br/>
                     <span className="text-xs">Salesperson</span><br/>
@@ -440,9 +472,10 @@ export function LiveTrackingPage() {
                 </AnimatedMarker>
               ))}
 
-              {/* Team Leaders — live positions (Phase 1: for RSM view + Owner view) */}
+              {/* Team Leaders — live positions with name initial (selectable → route) */}
               {(live.team_leaders || []).filter(t => t.lat && t.lng).map(t => (
-                <Marker key={`t-${t.id}`} position={[t.lat, t.lng]} icon={t.online ? ICON_TL : ICON_TL_OFF}>
+                <Marker key={`t-${t.id}`} position={[t.lat, t.lng]} icon={makeInitialIcon(t.online ? "#6366f1" : "#94a3b8", t.name)}
+                        eventHandlers={{ click: () => onSelectSp(t) }}>
                   <Popup>
                     <b>{t.name}</b><br/>
                     <span className="text-xs">Team Leader</span><br/>
@@ -525,14 +558,18 @@ function StatRow({ icon: Icon, label, value }) {
   );
 }
 
-function LegendBadge({ color, glyph, label }) {
+function LegendBadge({ color, glyph, label, active, onClick }) {
   return (
-    <div className="flex items-center gap-2">
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex items-center gap-2 text-left rounded-md px-1.5 py-1 transition-colors w-full ${active ? "bg-[#faf6e6] ring-1 ring-[#c9a227]" : "hover:bg-slate-50"}`}
+    >
       <div style={{ background: color, transform: "rotate(-45deg)" }}
-           className="h-4 w-4 rounded-full rounded-bl-none border border-white shadow flex items-center justify-center">
+           className="h-4 w-4 rounded-full rounded-bl-none border border-white shadow flex items-center justify-center shrink-0">
         <span style={{ transform: "rotate(45deg)", color: "white", fontSize: 8, fontWeight: 700 }}>{glyph}</span>
       </div>
-      <span className="text-slate-700">{label}</span>
-    </div>
+      <span className={`${active ? "text-[#8a6600] font-semibold" : "text-slate-700"}`}>{label}</span>
+    </button>
   );
 }
