@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for GO OIL DMS - Coupon PDF Endpoint Fix
-Tests the large-batch (1400 coupons) PDF generation fix
+Backend API Testing for GO OIL DMS - Coupon Features
+Tests:
+  GROUP A: Coupon Sheet PDF endpoints (template edits verification)
+  GROUP B: Sales Person CASH coupon reduces Retailer↔Distributor outstanding
+  GROUP C: POINTS coupon credits reward wallet, NOT cash ledger
 """
 
 import requests
 import time
 import json
-from datetime import datetime
+from typing import Optional, Dict, Any
 
 # Base URL from frontend/.env
 BASE_URL = "https://points-wallet-hub-2.preview.emergentagent.com/api"
@@ -15,6 +18,13 @@ BASE_URL = "https://points-wallet-hub-2.preview.emergentagent.com/api"
 # Test credentials from /app/memory/test_credentials.md
 OWNER_EMAIL = "gooilindia13@gmail.com"
 OWNER_PASSWORD = "Arjun@india13"
+SALESPERSON_EMAIL = "salesperson@gooil.com"
+SALESPERSON_PASSWORD = "GoOil@2026"
+
+# Seeded demo IDs
+DISTRIBUTOR_ID = "dist-5effaa6a97"  # Anil Distributor — Delhi
+RETAILER_ID = "ret-7acf91f94c"      # Sharma Auto Parts
+SALESPERSON_ID = "usr-7e2502836b"
 
 # Color codes for output
 GREEN = '\033[92m'
@@ -33,325 +43,641 @@ def log_test(message, status="INFO"):
     }.get(status, RESET)
     print(f"{color}[{status}]{RESET} {message}")
 
-def login_owner():
-    """Login as owner and return JWT token"""
-    log_test("Logging in as owner...", "INFO")
+def login(email: str, password: str) -> Optional[str]:
+    """Login and return JWT token"""
+    log_test(f"Logging in as {email}...", "INFO")
     response = requests.post(
         f"{BASE_URL}/auth/login",
-        json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}
+        json={"email": email, "password": password}
     )
     
     if response.status_code == 200:
         data = response.json()
-        token = data.get("token")  # Changed from "access_token" to "token"
-        log_test(f"Owner login successful. Role: {data.get('user', {}).get('role')}", "PASS")
+        token = data.get("token")
+        role = data.get('user', {}).get('role')
+        log_test(f"Login successful. Role: {role}", "PASS")
         return token
     else:
-        log_test(f"Owner login failed: {response.status_code} - {response.text}", "FAIL")
+        log_test(f"Login failed: {response.status_code} - {response.text}", "FAIL")
         return None
 
-def test_list_batches(token):
-    """Test GET /api/dms/coupons/batches - list all batches"""
-    log_test("\n=== TEST 1: List Coupon Batches ===", "INFO")
-    
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(f"{BASE_URL}/dms/coupons/batches", headers=headers)
-    
-    if response.status_code != 200:
-        log_test(f"Failed to list batches: {response.status_code}", "FAIL")
-        return None, None
-    
-    data = response.json()
-    batches = data.get("data", [])
-    
-    log_test(f"Found {len(batches)} batches", "INFO")
-    
-    # Find large batch (~1400 coupons) and small batch (~100 coupons)
-    large_batch = None
-    small_batch = None
-    
-    for batch in batches:
-        batch_id = batch.get("id")
-        batch_label = batch.get("batch_label")
-        count = batch.get("count", 0)
-        status = batch.get("status")
-        title = batch.get("title", "")
-        
-        log_test(f"  - {batch_label}: {title}, count={count}, status={status}, id={batch_id}", "INFO")
-        
-        # Identify large batch (around 1400 coupons)
-        if count >= 1000 and large_batch is None:
-            large_batch = batch
-            log_test(f"    → LARGE batch identified: {batch_label} ({count} coupons)", "PASS")
-        
-        # Identify small batch (around 100 coupons)
-        if 50 <= count <= 200 and small_batch is None:
-            small_batch = batch
-            log_test(f"    → SMALL batch identified: {batch_label} ({count} coupons)", "PASS")
-    
-    if large_batch is None:
-        log_test("WARNING: No large batch (>1000 coupons) found", "WARN")
-    
-    if small_batch is None:
-        log_test("WARNING: No small batch (50-200 coupons) found", "WARN")
-    
-    return large_batch, small_batch
+# ═════════════════════════════════════════════════════════════════════════════
+# TEST GROUP A: Coupon Sheet PDF endpoints (template edits verification)
+# ═════════════════════════════════════════════════════════════════════════════
 
-def test_export_pdf(token, batch, batch_type="BATCH"):
-    """Test GET /api/dms/coupons/batches/{bid}/export-pdf"""
-    if batch is None:
-        log_test(f"Skipping {batch_type} PDF export test (batch not found)", "WARN")
-        return False
+def test_group_a_pdf_endpoints(owner_token: str) -> Dict[str, bool]:
+    """Test coupon PDF endpoints after template edits"""
+    log_test("\n" + "="*80, "INFO")
+    log_test("TEST GROUP A: Coupon Sheet PDF Endpoints", "INFO")
+    log_test("="*80, "INFO")
     
-    batch_id = batch.get("id")
-    batch_label = batch.get("batch_label")
-    count = batch.get("count")
-    status = batch.get("status")
+    results = {}
+    headers = {"Authorization": f"Bearer {owner_token}"}
     
-    log_test(f"\n=== TEST: {batch_type} Batch PDF Export ===", "INFO")
-    log_test(f"Batch: {batch_label}, Count: {count}, Status: {status}, ID: {batch_id}", "INFO")
+    # Use timestamp to ensure unique prefix
+    unique_suffix = str(int(time.time()))[-4:]
     
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"{BASE_URL}/dms/coupons/batches/{batch_id}/export-pdf"
+    # A1: Create CASH batch
+    log_test("\n[A1] Creating CASH batch...", "INFO")
+    batch_payload = {
+        "coupon_type": "cash",
+        "coupon_value": 100,
+        "count": 100,
+        "prefix": f"QA{unique_suffix}",
+        "serial_start": 1,
+        "serial_pad": 3,
+        "title": "QA Test Batch"
+    }
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/batches",
+        headers=headers,
+        json=batch_payload
+    )
     
-    log_test(f"Requesting: GET {url}", "INFO")
-    
-    start_time = time.time()
-    response = requests.get(url, headers=headers)
-    elapsed_time = time.time() - start_time
-    
-    log_test(f"Response time: {elapsed_time:.2f} seconds", "INFO")
-    
-    # Check HTTP status
-    if response.status_code != 200:
-        log_test(f"FAIL: HTTP {response.status_code} (expected 200)", "FAIL")
-        log_test(f"Response: {response.text[:500]}", "FAIL")
-        return False
-    
-    log_test(f"✓ HTTP 200 OK", "PASS")
-    
-    # Check Content-Type
-    content_type = response.headers.get("Content-Type", "")
-    if "application/pdf" not in content_type:
-        log_test(f"FAIL: Content-Type is '{content_type}' (expected 'application/pdf')", "FAIL")
-        return False
-    
-    log_test(f"✓ Content-Type: {content_type}", "PASS")
-    
-    # Check response body is non-empty
-    content_length = len(response.content)
-    if content_length == 0:
-        log_test(f"FAIL: Response body is EMPTY", "FAIL")
-        return False
-    
-    log_test(f"✓ Content-Length: {content_length:,} bytes ({content_length / 1024:.1f} KB)", "PASS")
-    
-    # Check PDF header (starts with %PDF)
-    first_bytes = response.content[:4]
-    if first_bytes != b'%PDF':
-        log_test(f"FAIL: Response does not start with '%PDF' (got: {first_bytes})", "FAIL")
-        return False
-    
-    log_test(f"✓ Valid PDF header: {first_bytes}", "PASS")
-    
-    # Check completion time (should be < 60s)
-    if elapsed_time > 60:
-        log_test(f"WARN: Response took {elapsed_time:.2f}s (> 60s timeout threshold)", "WARN")
+    if response.status_code == 200:
+        data = response.json()
+        batch_id = data.get("batch", {}).get("id")
+        batch_label = data.get("batch", {}).get("batch_label")
+        log_test(f"✓ Batch created: {batch_label} (ID: {batch_id})", "PASS")
+        results["a1_create_batch"] = True
     else:
-        log_test(f"✓ Completed within timeout ({elapsed_time:.2f}s < 60s)", "PASS")
+        log_test(f"✗ Failed to create batch: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["a1_create_batch"] = False
+        return results
     
-    log_test(f"✓ {batch_type} batch PDF export: ALL CHECKS PASSED", "PASS")
-    return True
-
-def test_export_pdf_with_side_param(token, batch):
-    """Test GET /api/dms/coupons/batches/{bid}/export-pdf?side=front"""
-    if batch is None:
-        log_test("Skipping side parameter test (batch not found)", "WARN")
-        return False
+    # A2: Activate batch
+    log_test("\n[A2] Activating batch...", "INFO")
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/batches/{batch_id}/activate",
+        headers=headers
+    )
     
-    batch_id = batch.get("id")
-    batch_label = batch.get("batch_label")
+    if response.status_code == 200:
+        log_test(f"✓ Batch {batch_label} activated", "PASS")
+        results["a2_activate_batch"] = True
+    else:
+        log_test(f"✗ Failed to activate batch: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["a2_activate_batch"] = False
+        return results
     
-    log_test(f"\n=== TEST: PDF Export with side=front Parameter ===", "INFO")
-    log_test(f"Batch: {batch_label}, ID: {batch_id}", "INFO")
+    # A3: Export PDF (side=both)
+    log_test("\n[A3] Testing export-pdf?side=both...", "INFO")
+    response = requests.get(
+        f"{BASE_URL}/dms/coupons/batches/{batch_id}/export-pdf?side=both",
+        headers=headers
+    )
     
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"{BASE_URL}/dms/coupons/batches/{batch_id}/export-pdf?side=front"
-    
-    log_test(f"Requesting: GET {url}", "INFO")
-    
-    start_time = time.time()
-    response = requests.get(url, headers=headers)
-    elapsed_time = time.time() - start_time
-    
-    if response.status_code != 200:
-        log_test(f"FAIL: HTTP {response.status_code}", "FAIL")
-        return False
-    
-    content_length = len(response.content)
-    log_test(f"✓ HTTP 200, Content-Length: {content_length:,} bytes ({content_length / 1024:.1f} KB)", "PASS")
-    
-    # Front-only PDF should be smaller than both-sides
-    log_test(f"✓ Front-only PDF generated successfully (smaller file expected)", "PASS")
-    
-    return True
-
-def test_print_mixed_preview(token, batch):
-    """Test POST /api/dms/coupons/print-mixed/preview - verify per_sheet == 77"""
-    if batch is None:
-        log_test("Skipping print-mixed preview test (batch not found)", "WARN")
-        return False
-    
-    batch_id = batch.get("id")
-    batch_label = batch.get("batch_label")
-    
-    log_test(f"\n=== TEST: Print-Mixed Preview (per_sheet verification) ===", "INFO")
-    log_test(f"Batch: {batch_label}, ID: {batch_id}", "INFO")
-    
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"{BASE_URL}/dms/coupons/print-mixed/preview"
-    payload = {"batch_ids": [batch_id]}
-    
-    log_test(f"Requesting: POST {url}", "INFO")
-    log_test(f"Payload: {json.dumps(payload)}", "INFO")
-    
-    response = requests.post(url, headers=headers, json=payload)
-    
-    if response.status_code != 200:
-        log_test(f"FAIL: HTTP {response.status_code}", "FAIL")
-        log_test(f"Response: {response.text[:500]}", "FAIL")
-        return False
-    
-    log_test(f"✓ HTTP 200 OK", "PASS")
-    
-    data = response.json()
-    per_sheet = data.get("per_sheet")
-    breakdown = data.get("breakdown", [])
-    
-    log_test(f"Response: per_sheet={per_sheet}, breakdown={breakdown}", "INFO")
-    
-    # Critical check: per_sheet must be 77 (NOT 70)
-    if per_sheet != 77:
-        log_test(f"FAIL: per_sheet is {per_sheet} (expected 77)", "FAIL")
-        return False
-    
-    log_test(f"✓ per_sheet == 77 (CORRECT - 7x11 grid on 11x17in sheet)", "PASS")
-    log_test(f"✓ breakdown: {breakdown}", "PASS")
-    
-    return True
-
-def test_generated_status_batch(token, batches):
-    """Test export-pdf works for batches with status='generated'"""
-    log_test(f"\n=== TEST: Export PDF for 'generated' Status Batch ===", "INFO")
-    
-    # Find a batch with status='generated'
-    generated_batch = None
-    for batch in batches:
-        if batch.get("status") == "generated":
-            generated_batch = batch
-            break
-    
-    if generated_batch is None:
-        log_test("No batch with status='generated' found. Checking if any batch works...", "WARN")
-        # Use any available batch as fallback
-        if batches:
-            generated_batch = batches[0]
-            log_test(f"Using batch with status='{generated_batch.get('status')}' instead", "INFO")
+    if response.status_code == 200:
+        content_type = response.headers.get("Content-Type", "")
+        content_length = len(response.content)
+        first_bytes = response.content[:4]
+        
+        if "application/pdf" in content_type and first_bytes == b'%PDF' and content_length > 0:
+            log_test(f"✓ Valid PDF returned: {content_length:,} bytes", "PASS")
+            results["a3_export_pdf"] = True
         else:
-            log_test("No batches available for testing", "WARN")
-            return False
+            log_test(f"✗ Invalid PDF: content_type={content_type}, starts_with={first_bytes}", "FAIL")
+            results["a3_export_pdf"] = False
+    else:
+        log_test(f"✗ Export PDF failed: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["a3_export_pdf"] = False
     
-    batch_id = generated_batch.get("id")
-    batch_label = generated_batch.get("batch_label")
-    status = generated_batch.get("status")
+    # A4: Print-mixed
+    log_test("\n[A4] Testing print-mixed...", "INFO")
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/print-mixed",
+        headers=headers,
+        json={"batch_ids": [batch_id], "side": "both"}
+    )
     
-    log_test(f"Testing batch: {batch_label}, status={status}, id={batch_id}", "INFO")
+    if response.status_code == 200:
+        content_type = response.headers.get("Content-Type", "")
+        content_length = len(response.content)
+        first_bytes = response.content[:4]
+        
+        if "application/pdf" in content_type and first_bytes == b'%PDF' and content_length > 0:
+            log_test(f"✓ Valid PDF returned: {content_length:,} bytes", "PASS")
+            results["a4_print_mixed"] = True
+        else:
+            log_test(f"✗ Invalid PDF: content_type={content_type}, starts_with={first_bytes}", "FAIL")
+            results["a4_print_mixed"] = False
+    else:
+        log_test(f"✗ Print-mixed failed: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["a4_print_mixed"] = False
     
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"{BASE_URL}/dms/coupons/batches/{batch_id}/export-pdf"
+    # A5: Print-mixed/preview (per_sheet should be 77)
+    log_test("\n[A5] Testing print-mixed/preview (per_sheet verification)...", "INFO")
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/print-mixed/preview",
+        headers=headers,
+        json={"batch_ids": [batch_id]}
+    )
     
-    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        data = response.json()
+        per_sheet = data.get("per_sheet")
+        
+        if per_sheet == 77:
+            log_test(f"✓ per_sheet = 77 (CORRECT)", "PASS")
+            results["a5_preview_per_sheet"] = True
+        else:
+            log_test(f"✗ per_sheet = {per_sheet} (expected 77)", "FAIL")
+            results["a5_preview_per_sheet"] = False
+    else:
+        log_test(f"✗ Print-mixed preview failed: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["a5_preview_per_sheet"] = False
+    
+    return results
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TEST GROUP B: Sales Person CASH coupon reduces Retailer↔Distributor outstanding
+# ═════════════════════════════════════════════════════════════════════════════
+
+def test_group_b_cash_coupon_ledger(owner_token: str, sp_token: str) -> Dict[str, bool]:
+    """Test Sales Person CASH coupon scan reduces retailer outstanding"""
+    log_test("\n" + "="*80, "INFO")
+    log_test("TEST GROUP B: Sales Person CASH Coupon → Retailer Outstanding", "INFO")
+    log_test("="*80, "INFO")
+    
+    results = {}
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    sp_headers = {"Authorization": f"Bearer {sp_token}"}
+    
+    # Use timestamp to ensure unique prefix
+    unique_suffix = str(int(time.time()))[-4:]
+    
+    # B0: Setup - Create CASH batch, activate, assign to distributor via box workflow
+    log_test("\n[B0] Setup: Creating CASH batch for retailer test...", "INFO")
+    batch_payload = {
+        "coupon_type": "cash",
+        "coupon_value": 200,
+        "count": 5,
+        "prefix": f"CSH{unique_suffix}",
+        "serial_start": 1,
+        "serial_pad": 3,
+        "title": "Cash Test Batch"
+    }
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/batches",
+        headers=owner_headers,
+        json=batch_payload
+    )
     
     if response.status_code != 200:
-        log_test(f"FAIL: HTTP {response.status_code}", "FAIL")
-        return False
+        log_test(f"✗ Failed to create CASH batch: {response.status_code}", "FAIL")
+        results["b0_setup"] = False
+        return results
     
-    content_type = response.headers.get("Content-Type", "")
-    content_length = len(response.content)
-    first_bytes = response.content[:4]
+    cash_batch_id = response.json().get("batch", {}).get("id")
+    log_test(f"✓ CASH batch created: {cash_batch_id}", "PASS")
     
-    if "application/pdf" in content_type and first_bytes == b'%PDF' and content_length > 0:
-        log_test(f"✓ Export-pdf works for status='{status}' batch", "PASS")
-        log_test(f"✓ Valid PDF: {content_length:,} bytes", "PASS")
-        return True
+    # Activate batch
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/batches/{cash_batch_id}/activate",
+        headers=owner_headers
+    )
+    if response.status_code != 200:
+        log_test(f"✗ Failed to activate CASH batch: {response.status_code}", "FAIL")
+        results["b0_setup"] = False
+        return results
+    log_test(f"✓ CASH batch activated", "PASS")
+    
+    # Create box
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/boxes",
+        headers=owner_headers,
+        json={"notes": "Test box for cash coupons"}
+    )
+    if response.status_code != 200:
+        log_test(f"✗ Failed to create box: {response.status_code}", "FAIL")
+        results["b0_setup"] = False
+        return results
+    
+    box_id = response.json().get("box", {}).get("id")
+    box_number = response.json().get("box", {}).get("box_number")
+    log_test(f"✓ Box created: {box_number} (ID: {box_id})", "PASS")
+    
+    # Assign coupons to box
+    first_serial = f"CSH{unique_suffix}001"
+    last_serial = f"CSH{unique_suffix}005"
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/boxes/{box_id}/assign-coupons",
+        headers=owner_headers,
+        json={"batch_id": cash_batch_id, "from_serial": first_serial, "to_serial": last_serial}
+    )
+    if response.status_code != 200:
+        log_test(f"✗ Failed to assign coupons to box: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["b0_setup"] = False
+        return results
+    log_test(f"✓ Coupons assigned to box", "PASS")
+    
+    # Assign box to distributor
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/boxes/{box_id}/assign-distributor",
+        headers=owner_headers,
+        json={"distributor_id": DISTRIBUTOR_ID}
+    )
+    if response.status_code != 200:
+        log_test(f"✗ Failed to assign box to distributor: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["b0_setup"] = False
+        return results
+    log_test(f"✓ Box assigned to distributor {DISTRIBUTOR_ID}", "PASS")
+    
+    # Get one coupon code for scanning
+    response = requests.get(
+        f"{BASE_URL}/dms/coupons?batch_id={cash_batch_id}&limit=1",
+        headers=owner_headers
+    )
+    if response.status_code != 200 or not response.json().get("data"):
+        log_test(f"✗ Failed to fetch coupon code: {response.status_code}", "FAIL")
+        results["b0_setup"] = False
+        return results
+    
+    coupon_code = response.json()["data"][0].get("visible_serial") or response.json()["data"][0].get("coupon_code")
+    log_test(f"✓ Coupon code for scanning: {coupon_code}", "PASS")
+    results["b0_setup"] = True
+    
+    # B1: Get current outstanding for retailer
+    log_test("\n[B1] Getting current outstanding for retailer...", "INFO")
+    response = requests.get(
+        f"{BASE_URL}/dms/ledger/secondary?retailer_id={RETAILER_ID}",
+        headers=owner_headers
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        summary_list = data.get("summary", [])
+        # Find the retailer in summary list
+        retailer_summary = next((s for s in summary_list if s.get("retailer_id") == RETAILER_ID), None)
+        if retailer_summary:
+            current_outstanding = retailer_summary.get("outstanding", 0)
+            log_test(f"✓ Current outstanding: ₹{current_outstanding}", "PASS")
+            results["b1_get_outstanding"] = True
+        else:
+            current_outstanding = 0
+            log_test(f"✓ No ledger entries yet, outstanding: ₹0", "PASS")
+            results["b1_get_outstanding"] = True
     else:
-        log_test(f"FAIL: Invalid PDF response", "FAIL")
-        return False
+        log_test(f"✗ Failed to get ledger: {response.status_code}", "FAIL")
+        results["b1_get_outstanding"] = False
+        return results
+    
+    # B2: Scan preview (should show projected outstanding)
+    log_test("\n[B2] Testing scan/preview...", "INFO")
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/scan/preview",
+        headers=sp_headers,
+        json={"retailer_id": RETAILER_ID, "coupon_code": coupon_code}
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        preview = data.get("preview", {})
+        
+        if data.get("ok") and preview.get("coupon_type") == "cash":
+            current = preview.get("current_outstanding")
+            projected = preview.get("projected_outstanding")
+            log_test(f"✓ Preview OK: current={current}, projected={projected}", "PASS")
+            log_test(f"  Expected reduction: ₹200", "INFO")
+            results["b2_scan_preview"] = True
+        else:
+            log_test(f"✗ Preview failed or not cash: ok={data.get('ok')}, type={preview.get('coupon_type')}", "FAIL")
+            results["b2_scan_preview"] = False
+    else:
+        log_test(f"✗ Scan preview failed: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["b2_scan_preview"] = False
+    
+    # B3: Actual scan (should reduce outstanding by 200)
+    log_test("\n[B3] Scanning CASH coupon...", "INFO")
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/scan",
+        headers=sp_headers,
+        json={"retailer_id": RETAILER_ID, "coupon_code": coupon_code}
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        wallet_type = data.get("wallet_type")
+        new_outstanding = data.get("new_outstanding")
+        
+        if wallet_type == "cash":
+            expected_outstanding = max(0, current_outstanding - 200)
+            if abs(new_outstanding - expected_outstanding) < 0.01:
+                log_test(f"✓ Scan successful: wallet_type=cash, new_outstanding=₹{new_outstanding}", "PASS")
+                results["b3_scan_coupon"] = True
+            else:
+                log_test(f"✗ Outstanding mismatch: expected ₹{expected_outstanding}, got ₹{new_outstanding}", "FAIL")
+                results["b3_scan_coupon"] = False
+        else:
+            log_test(f"✗ Wrong wallet_type: {wallet_type} (expected 'cash')", "FAIL")
+            results["b3_scan_coupon"] = False
+    else:
+        log_test(f"✗ Scan failed: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["b3_scan_coupon"] = False
+    
+    # B4: Verify ledger updated
+    log_test("\n[B4] Verifying ledger updated...", "INFO")
+    response = requests.get(
+        f"{BASE_URL}/dms/ledger/secondary?retailer_id={RETAILER_ID}",
+        headers=owner_headers
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        summary_list = data.get("summary", [])
+        retailer_summary = next((s for s in summary_list if s.get("retailer_id") == RETAILER_ID), None)
+        
+        if retailer_summary:
+            new_outstanding_ledger = retailer_summary.get("outstanding", 0)
+        else:
+            new_outstanding_ledger = 0
+        
+        expected_outstanding = max(0, current_outstanding - 200)
+        
+        if abs(new_outstanding_ledger - expected_outstanding) < 0.01:
+            log_test(f"✓ Ledger updated: outstanding dropped by ₹200 (now ₹{new_outstanding_ledger})", "PASS")
+            results["b4_verify_ledger"] = True
+            
+            # Check for coupon_credit entry
+            entries = data.get("entries", [])
+            coupon_credit_found = any(e.get("kind") == "coupon_credit" for e in entries)
+            if coupon_credit_found:
+                log_test(f"✓ coupon_credit entry found in ledger", "PASS")
+            else:
+                log_test(f"⚠ No coupon_credit entry found (may be in different page)", "WARN")
+        else:
+            log_test(f"✗ Outstanding mismatch: expected ₹{expected_outstanding}, got ₹{new_outstanding_ledger}", "FAIL")
+            results["b4_verify_ledger"] = False
+    else:
+        log_test(f"✗ Failed to get ledger: {response.status_code}", "FAIL")
+        results["b4_verify_ledger"] = False
+    
+    # B5: Duplicate scan (should return 400)
+    log_test("\n[B5] Testing duplicate scan (should fail)...", "INFO")
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/scan",
+        headers=sp_headers,
+        json={"retailer_id": RETAILER_ID, "coupon_code": coupon_code}
+    )
+    
+    if response.status_code == 400:
+        log_test(f"✓ Duplicate scan rejected with 400 (correct)", "PASS")
+        results["b5_duplicate_rejected"] = True
+    else:
+        log_test(f"✗ Duplicate scan returned {response.status_code} (expected 400)", "FAIL")
+        results["b5_duplicate_rejected"] = False
+    
+    return results
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TEST GROUP C: POINTS coupon credits reward wallet, NOT cash ledger
+# ═════════════════════════════════════════════════════════════════════════════
+
+def test_group_c_points_coupon_wallet(owner_token: str, sp_token: str) -> Dict[str, bool]:
+    """Test POINTS coupon credits reward wallet, NOT cash ledger"""
+    log_test("\n" + "="*80, "INFO")
+    log_test("TEST GROUP C: POINTS Coupon → Reward Wallet (NOT Cash Ledger)", "INFO")
+    log_test("="*80, "INFO")
+    
+    results = {}
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+    sp_headers = {"Authorization": f"Bearer {sp_token}"}
+    
+    # Use timestamp to ensure unique prefix
+    unique_suffix = str(int(time.time()))[-4:]
+    
+    # C0: Setup - Create REWARD batch, activate, assign to distributor via box workflow
+    log_test("\n[C0] Setup: Creating REWARD batch...", "INFO")
+    batch_payload = {
+        "coupon_type": "reward",
+        "coupon_value": 180,
+        "count": 2,
+        "prefix": f"RW{unique_suffix}",
+        "serial_start": 1,
+        "serial_pad": 3,
+        "title": "Reward Test Batch"
+    }
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/batches",
+        headers=owner_headers,
+        json=batch_payload
+    )
+    
+    if response.status_code != 200:
+        log_test(f"✗ Failed to create REWARD batch: {response.status_code}", "FAIL")
+        results["c0_setup"] = False
+        return results
+    
+    reward_batch_id = response.json().get("batch", {}).get("id")
+    log_test(f"✓ REWARD batch created: {reward_batch_id}", "PASS")
+    
+    # Activate batch
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/batches/{reward_batch_id}/activate",
+        headers=owner_headers
+    )
+    if response.status_code != 200:
+        log_test(f"✗ Failed to activate REWARD batch: {response.status_code}", "FAIL")
+        results["c0_setup"] = False
+        return results
+    log_test(f"✓ REWARD batch activated", "PASS")
+    
+    # Create box
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/boxes",
+        headers=owner_headers,
+        json={"notes": "Test box for reward coupons"}
+    )
+    if response.status_code != 200:
+        log_test(f"✗ Failed to create box: {response.status_code}", "FAIL")
+        results["c0_setup"] = False
+        return results
+    
+    box_id = response.json().get("box", {}).get("id")
+    box_number = response.json().get("box", {}).get("box_number")
+    log_test(f"✓ Box created: {box_number} (ID: {box_id})", "PASS")
+    
+    # Assign coupons to box
+    first_serial = f"RW{unique_suffix}001"
+    last_serial = f"RW{unique_suffix}002"
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/boxes/{box_id}/assign-coupons",
+        headers=owner_headers,
+        json={"batch_id": reward_batch_id, "from_serial": first_serial, "to_serial": last_serial}
+    )
+    if response.status_code != 200:
+        log_test(f"✗ Failed to assign coupons to box: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["c0_setup"] = False
+        return results
+    log_test(f"✓ Coupons assigned to box", "PASS")
+    
+    # Assign box to distributor
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/boxes/{box_id}/assign-distributor",
+        headers=owner_headers,
+        json={"distributor_id": DISTRIBUTOR_ID}
+    )
+    if response.status_code != 200:
+        log_test(f"✗ Failed to assign box to distributor: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["c0_setup"] = False
+        return results
+    log_test(f"✓ Box assigned to distributor {DISTRIBUTOR_ID}", "PASS")
+    
+    # Get one coupon code for scanning
+    response = requests.get(
+        f"{BASE_URL}/dms/coupons?batch_id={reward_batch_id}&limit=1",
+        headers=owner_headers
+    )
+    if response.status_code != 200 or not response.json().get("data"):
+        log_test(f"✗ Failed to fetch coupon code: {response.status_code}", "FAIL")
+        results["c0_setup"] = False
+        return results
+    
+    coupon_code = response.json()["data"][0].get("visible_serial") or response.json()["data"][0].get("coupon_code")
+    log_test(f"✓ Coupon code for scanning: {coupon_code}", "PASS")
+    results["c0_setup"] = True
+    
+    # C1: Get current outstanding (should NOT change after points scan)
+    log_test("\n[C1] Getting current outstanding for retailer...", "INFO")
+    response = requests.get(
+        f"{BASE_URL}/dms/ledger/secondary?retailer_id={RETAILER_ID}",
+        headers=owner_headers
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        summary_list = data.get("summary", [])
+        retailer_summary = next((s for s in summary_list if s.get("retailer_id") == RETAILER_ID), None)
+        
+        if retailer_summary:
+            outstanding_before = retailer_summary.get("outstanding", 0)
+        else:
+            outstanding_before = 0
+        
+        log_test(f"✓ Outstanding before points scan: ₹{outstanding_before}", "PASS")
+        results["c1_get_outstanding"] = True
+    else:
+        log_test(f"✗ Failed to get ledger: {response.status_code}", "FAIL")
+        results["c1_get_outstanding"] = False
+        return results
+    
+    # C2: Scan REWARD coupon
+    log_test("\n[C2] Scanning REWARD coupon...", "INFO")
+    response = requests.post(
+        f"{BASE_URL}/dms/coupons/scan",
+        headers=sp_headers,
+        json={"retailer_id": RETAILER_ID, "coupon_code": coupon_code}
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        wallet_type = data.get("wallet_type")
+        new_balance = data.get("new_balance")
+        
+        if wallet_type == "reward":
+            log_test(f"✓ Scan successful: wallet_type=reward, new_balance={new_balance} points", "PASS")
+            results["c2_scan_reward"] = True
+        else:
+            log_test(f"✗ Wrong wallet_type: {wallet_type} (expected 'reward')", "FAIL")
+            results["c2_scan_reward"] = False
+    else:
+        log_test(f"✗ Scan failed: {response.status_code} - {response.text[:200]}", "FAIL")
+        results["c2_scan_reward"] = False
+    
+    # C3: Verify outstanding did NOT change
+    log_test("\n[C3] Verifying outstanding did NOT change...", "INFO")
+    response = requests.get(
+        f"{BASE_URL}/dms/ledger/secondary?retailer_id={RETAILER_ID}",
+        headers=owner_headers
+    )
+    
+    if response.status_code == 200:
+        data = response.json()
+        summary_list = data.get("summary", [])
+        retailer_summary = next((s for s in summary_list if s.get("retailer_id") == RETAILER_ID), None)
+        
+        if retailer_summary:
+            outstanding_after = retailer_summary.get("outstanding", 0)
+        else:
+            outstanding_after = 0
+        
+        if abs(outstanding_after - outstanding_before) < 0.01:
+            log_test(f"✓ Outstanding unchanged: ₹{outstanding_after} (CORRECT - points don't affect cash ledger)", "PASS")
+            results["c3_outstanding_unchanged"] = True
+        else:
+            log_test(f"✗ Outstanding changed: ₹{outstanding_before} → ₹{outstanding_after} (WRONG - points should NOT affect cash ledger)", "FAIL")
+            results["c3_outstanding_unchanged"] = False
+    else:
+        log_test(f"✗ Failed to get ledger: {response.status_code}", "FAIL")
+        results["c3_outstanding_unchanged"] = False
+    
+    return results
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MAIN TEST RUNNER
+# ═════════════════════════════════════════════════════════════════════════════
 
 def main():
     """Main test runner"""
     print("\n" + "="*80)
-    print("GO OIL DMS - COUPON SHEET PDF ENDPOINT FIX - BACKEND TESTING")
-    print("Testing large-batch (1400 coupons) PDF generation fix")
+    print("GO OIL DMS - COUPON FEATURES BACKEND TESTING")
+    print("Testing coupon PDF endpoints + Sales Person cash/points coupon flows")
     print("="*80 + "\n")
     
-    # Login
-    token = login_owner()
-    if not token:
-        log_test("Cannot proceed without authentication", "FAIL")
+    # Login as owner
+    owner_token = login(OWNER_EMAIL, OWNER_PASSWORD)
+    if not owner_token:
+        log_test("Cannot proceed without owner authentication", "FAIL")
         return
     
-    # Test 1: List batches and identify large/small batches
-    large_batch, small_batch = test_list_batches(token)
+    # Login as salesperson
+    sp_token = login(SALESPERSON_EMAIL, SALESPERSON_PASSWORD)
+    if not sp_token:
+        log_test("Cannot proceed without salesperson authentication", "FAIL")
+        return
     
-    # Get all batches for generated status test
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(f"{BASE_URL}/dms/coupons/batches", headers=headers)
-    all_batches = response.json().get("data", []) if response.status_code == 200 else []
+    # Run test groups
+    results_a = test_group_a_pdf_endpoints(owner_token)
+    results_b = test_group_b_cash_coupon_ledger(owner_token, sp_token)
+    results_c = test_group_c_points_coupon_wallet(owner_token, sp_token)
     
-    # Test 2: Large batch PDF export (the critical fix)
-    test_2_pass = test_export_pdf(token, large_batch, "LARGE")
-    
-    # Test 3: Small batch PDF export
-    test_3_pass = test_export_pdf(token, small_batch, "SMALL")
-    
-    # Test 4: Generated status batch
-    test_4_pass = test_generated_status_batch(token, all_batches)
-    
-    # Test 5: Print-mixed preview (per_sheet == 77)
-    test_5_pass = test_print_mixed_preview(token, small_batch if small_batch else large_batch)
-    
-    # Test 6: Optional side parameter
-    test_6_pass = test_export_pdf_with_side_param(token, small_batch if small_batch else large_batch)
+    # Combine all results
+    all_results = {**results_a, **results_b, **results_c}
     
     # Summary
     print("\n" + "="*80)
     print("TEST SUMMARY")
     print("="*80)
     
-    tests = [
-        ("List batches & identify large/small", large_batch is not None and small_batch is not None),
-        ("LARGE batch PDF export (1400 coupons)", test_2_pass),
-        ("SMALL batch PDF export (~100 coupons)", test_3_pass),
-        ("'generated' status batch PDF export", test_4_pass),
-        ("Print-mixed preview (per_sheet == 77)", test_5_pass),
-        ("Export PDF with side=front parameter", test_6_pass),
-    ]
+    # Group A
+    log_test("\nGROUP A: Coupon Sheet PDF Endpoints", "INFO")
+    for key, passed in results_a.items():
+        status = "PASS" if passed else "FAIL"
+        log_test(f"  {key}: {status}", status)
     
-    passed = sum(1 for _, result in tests if result)
-    total = len(tests)
+    # Group B
+    log_test("\nGROUP B: Sales Person CASH Coupon → Retailer Outstanding", "INFO")
+    for key, passed in results_b.items():
+        status = "PASS" if passed else "FAIL"
+        log_test(f"  {key}: {status}", status)
     
-    for test_name, result in tests:
-        status = "PASS" if result else "FAIL"
-        log_test(f"{test_name}: {status}", status)
+    # Group C
+    log_test("\nGROUP C: POINTS Coupon → Reward Wallet (NOT Cash Ledger)", "INFO")
+    for key, passed in results_c.items():
+        status = "PASS" if passed else "FAIL"
+        log_test(f"  {key}: {status}", status)
+    
+    # Overall
+    passed = sum(1 for result in all_results.values() if result)
+    total = len(all_results)
     
     print("\n" + "="*80)
-    log_test(f"TOTAL: {passed}/{total} tests passed ({passed*100//total}%)", 
+    log_test(f"TOTAL: {passed}/{total} tests passed ({passed*100//total if total else 0}%)", 
              "PASS" if passed == total else "WARN")
     print("="*80 + "\n")
     
     if passed == total:
-        log_test("✅ ALL TESTS PASSED - Coupon PDF endpoint fix verified!", "PASS")
+        log_test("✅ ALL TESTS PASSED - Coupon features verified!", "PASS")
     else:
         log_test(f"⚠️  {total - passed} test(s) failed", "WARN")
 

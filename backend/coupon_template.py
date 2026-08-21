@@ -403,16 +403,27 @@ def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
                     width=qr_sz, height=qr_sz, preserveAspectRatio=True)
         serial = cp.get("visible_serial") or cp.get("coupon_code")
         if serial:
+            serial = str(serial)
             strip_cy_frac = ((qr_top_frac + qs) + qy1) / 2.0
             cy = y + d_pts * (1.0 - strip_cy_frac)
-            fsz = max(4.0, 0.11 * qbw * d_pts)
-            c.setFillColorRGB(0.06, 0.06, 0.06)
+            # Auto-fit: shrink the serial so the FULL code always fits inside the
+            # white box with side padding (never clipped at the box/circle edge).
+            box_w = qbw * d_pts                     # width of the white QR box
+            target_w = 0.90 * box_w                 # keep ~5% padding each side
+            font_name = _SERIAL_PDF_FONT
+            fsz = 0.11 * qbw * d_pts                # ideal starting size
             try:
-                c.setFont(_SERIAL_PDF_FONT, fsz)
+                w = pdfmetrics.stringWidth(serial, font_name, fsz)
             except Exception:
-                c.setFont("Helvetica-Bold", fsz)
+                font_name = "Helvetica-Bold"
+                w = pdfmetrics.stringWidth(serial, font_name, fsz)
+            if w > target_w and w > 0:
+                fsz = fsz * (target_w / w)
+            fsz = max(3.0, fsz)
+            c.setFillColorRGB(0.06, 0.06, 0.06)
+            c.setFont(font_name, fsz)
             cx = x + ((qx0 + qx1) / 2.0) * d_pts
-            c.drawCentredString(cx, cy - fsz * 0.35, str(serial))
+            c.drawCentredString(cx, cy - fsz * 0.35, serial)
 
     def _draw_side(which: str, with_blank: bool):
         mirror = (which == "back")
