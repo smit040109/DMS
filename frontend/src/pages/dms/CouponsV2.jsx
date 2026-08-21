@@ -29,6 +29,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import QrScanner from "./QrScanner";
 import {
   Ticket, Plus, Shield, ShieldAlert, ScanLine, CheckCircle2, XCircle, Trophy,
   Users, Store, Award, RefreshCw, PackageCheck, Printer, FileSpreadsheet,
@@ -2345,6 +2346,7 @@ export function SalesOfficerScanPage() {
   const [scanned, setScanned] = useState(null);    // {qr, code} used for preview
   const [search, setSearch] = useState("");
   const [gps, setGps] = useState(null);   // { lat, lng }
+  const [scanOpen, setScanOpen] = useState(false);
 
   useEffect(() => {
     dms.cpnSoRetailers().then(r => setRetailers(r.data || []))
@@ -2495,7 +2497,7 @@ export function SalesOfficerScanPage() {
           </div>
 
           <Label>QR Payload (paste from scanner)</Label>
-          <div className="flex gap-2 mt-1 mb-3">
+          <div className="flex gap-2 mt-1 mb-2">
             <Input value={qrPayload} onChange={e => setQrPayload(e.target.value)}
                    placeholder="GOOIL2:xxxxx (paste from scanner)"
                    onKeyDown={e => e.key === "Enter" && runPreview()}
@@ -2505,6 +2507,13 @@ export function SalesOfficerScanPage() {
               {busy ? "…" : "Validate"}
             </Button>
           </div>
+          <Button variant="outline" className="w-full mb-3 gap-2"
+                  disabled={!selectedRid} onClick={() => setScanOpen(true)}
+                  data-testid="so-open-camera">
+            <ScanLine size={16} /> Scan with Camera
+          </Button>
+          <QrScanner open={scanOpen} onClose={() => setScanOpen(false)}
+                     onResult={(text) => { setScanOpen(false); setQrPayload(text); runPreview(text); }} />
 
           <div className="relative flex items-center py-2">
             <div className="flex-grow border-t border-slate-200"></div>
@@ -2556,11 +2565,29 @@ export function SalesOfficerScanPage() {
                 <PreviewKV k="Coupon Type" v={preview.coupon_type} />
                 <PreviewKV k="Coupon Value" v={preview.coupon_type === "cash" ? `₹${preview.coupon_value}` : preview.coupon_value} />
                 <PreviewKV k="Reward Points" v={preview.reward_points ?? "—"} />
+                {preview.coupon_type === "cash" && !preview.fraud && (
+                  <>
+                    <PreviewKV k="Current Outstanding" v={
+                      (preview.current_credit || 0) > 0
+                        ? `Credit ₹${preview.current_credit}`
+                        : `₹${preview.current_outstanding ?? 0}`} />
+                    <PreviewKV k="After This Coupon" v={
+                      (preview.projected_credit || 0) > 0
+                        ? `Credit ₹${preview.projected_credit}`
+                        : `₹${preview.projected_outstanding ?? 0}`} />
+                  </>
+                )}
               </div>
+              {preview.coupon_type === "cash" && !preview.fraud && (
+                <div className="mt-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-2 py-1">
+                  This ₹{preview.coupon_value} cash coupon will be adjusted against{" "}
+                  <b>{preview.retailer_name}</b>{"'s"} outstanding with the distributor.
+                </div>
+              )}
               <div className="flex gap-2 mt-3">
                 <Button className={GOLD_BTN} disabled={busy || preview.fraud}
                         onClick={confirmSubmit} data-testid="so-submit">
-                  {busy ? "Submitting…" : "Submit & Credit Wallet"}
+                  {busy ? "Submitting…" : (preview.coupon_type === "cash" ? "Submit & Apply to Ledger" : "Submit & Credit Wallet")}
                 </Button>
                 <Button variant="outline" onClick={resetPreview} disabled={busy}>Cancel</Button>
               </div>
@@ -2583,13 +2610,21 @@ export function SalesOfficerScanPage() {
                       <div><span className="font-mono font-bold">{last.coupon_code}</span></div>
                       <div>
                         {last.coupon_type === "cash" ? (
-                          <>+<b className="text-emerald-700">{inr(last.coupon_value)}</b> to Cash Wallet</>
+                          <><b className="text-emerald-700">{inr(last.coupon_value)}</b> applied to outstanding</>
                         ) : (
                           <>+<b className="text-emerald-700">{last.coupon_value} pts</b> to Reward Wallet</>
                         )}
                       </div>
                       <div className="text-xs text-slate-600">Retailer: {last.retailer_name} · Distributor: {last.distributor_name}</div>
-                      <div className="text-xs">New {last.wallet_type} balance: <b>{last.wallet_type === "cash" ? inr(last.new_balance) : `${last.new_balance} pts`}</b></div>
+                      {last.coupon_type === "cash" ? (
+                        <div className="text-xs">
+                          {(last.new_credit || 0) > 0
+                            ? <>Credit balance: <b>{inr(last.new_credit)}</b></>
+                            : <>New outstanding: <b>{inr(last.new_outstanding || 0)}</b></>}
+                        </div>
+                      ) : (
+                        <div className="text-xs">New reward balance: <b>{last.new_balance} pts</b></div>
+                      )}
                     </div>
                   )}
                   {!last.ok && <div className="text-sm text-slate-700 mt-1">{last.message}</div>}
@@ -2616,6 +2651,7 @@ export function RetailerScanPage() {
   const [scanned, setScanned] = useState(null);
   const [gps, setGps] = useState(null);
   const [permOk, setPermOk] = useState(null);   // null=loading, true/false
+  const [scanOpen, setScanOpen] = useState(false);
 
   useEffect(() => {
     dms.cpnGetScanPermission()
@@ -2641,9 +2677,9 @@ export function RetailerScanPage() {
     } catch { return null; }
   }, []);
 
-  const runPreview = async () => {
+  const runPreview = async (payloadOverride) => {
     const cCode = (code || "").trim().toUpperCase();
-    const qr = (qrPayload || "").trim();
+    const qr = (payloadOverride ?? qrPayload ?? "").trim();
     if (!qr && !cCode) { toast.error("Enter coupon code or paste QR"); return; }
     setBusy(true); setLast(null); setPreview(null);
     try {
@@ -2709,16 +2745,21 @@ export function RetailerScanPage() {
           </div>
 
           <Label>QR Payload (paste from scanner)</Label>
-          <div className="flex gap-2 mt-1 mb-3">
+          <div className="flex gap-2 mt-1 mb-2">
             <Input value={qrPayload} onChange={e => setQrPayload(e.target.value)}
                    placeholder="GOOIL2:xxxxx (paste from scanner)"
                    onKeyDown={e => e.key === "Enter" && runPreview()}
                    data-testid="ret-qr-input" />
             <Button className={GOLD_BTN} disabled={busy || !qrPayload.trim()}
-                    onClick={runPreview} data-testid="ret-qr-scan">
+                    onClick={() => runPreview()} data-testid="ret-qr-scan">
               {busy ? "…" : "Validate"}
             </Button>
           </div>
+          <Button variant="outline" className="w-full mb-3 gap-2" onClick={() => setScanOpen(true)} data-testid="ret-open-camera">
+            <ScanLine size={16} /> Scan with Camera
+          </Button>
+          <QrScanner open={scanOpen} onClose={() => setScanOpen(false)}
+                     onResult={(text) => { setScanOpen(false); setQrPayload(text); runPreview(text); }} />
 
           <div className="relative flex items-center py-2">
             <div className="flex-grow border-t border-slate-200"></div>
@@ -2825,6 +2866,7 @@ export function DistributorScanPage() {
   const [scanned, setScanned] = useState(null);
   const [gps, setGps] = useState(null);
   const [wallet, setWallet] = useState(null);
+  const [scanOpen, setScanOpen] = useState(false);
 
   const loadWallet = () => dms.cpnDistWallet().then(setWallet).catch(() => {});
   useEffect(() => {
@@ -2846,9 +2888,9 @@ export function DistributorScanPage() {
     } catch { return null; }
   }, []);
 
-  const runPreview = async () => {
+  const runPreview = async (payloadOverride) => {
     const cCode = (code || "").trim().toUpperCase();
-    const qr = (qrPayload || "").trim();
+    const qr = (payloadOverride ?? qrPayload ?? "").trim();
     if (!qr && !cCode) { toast.error("Enter coupon code or paste QR"); return; }
     setBusy(true); setLast(null); setPreview(null);
     try {
@@ -2893,11 +2935,16 @@ export function DistributorScanPage() {
             <h3 className="font-bold text-slate-900">Scan / Enter Coupon</h3>
           </div>
           <Label>QR Payload (paste from scanner)</Label>
-          <div className="flex gap-2 mt-1 mb-3">
+          <div className="flex gap-2 mt-1 mb-2">
             <Input value={qrPayload} onChange={e => setQrPayload(e.target.value)} placeholder="GOOIL2:xxxxx (paste from scanner)"
                    onKeyDown={e => e.key === "Enter" && runPreview()} data-testid="dist-qr-input" />
-            <Button className={GOLD_BTN} disabled={busy || !qrPayload.trim()} onClick={runPreview} data-testid="dist-qr-scan">{busy ? "…" : "Validate"}</Button>
+            <Button className={GOLD_BTN} disabled={busy || !qrPayload.trim()} onClick={() => runPreview()} data-testid="dist-qr-scan">{busy ? "…" : "Validate"}</Button>
           </div>
+          <Button variant="outline" className="w-full mb-3 gap-2" onClick={() => setScanOpen(true)} data-testid="dist-open-camera">
+            <ScanLine size={16} /> Scan with Camera
+          </Button>
+          <QrScanner open={scanOpen} onClose={() => setScanOpen(false)}
+                     onResult={(text) => { setScanOpen(false); setQrPayload(text); runPreview(text); }} />
           <div className="relative flex items-center py-2">
             <div className="flex-grow border-t border-slate-200"></div>
             <span className="mx-3 text-xs text-slate-400">OR enter manually</span>

@@ -456,6 +456,33 @@ def build_coupons_router(db, get_current_user, notify=None):
             return _round(row.get("total", 0))
         return 0.0
 
+    async def _retailer_ledger_balance(retailer_id: str) -> Dict[str, float]:
+        """Retailer ↔ Distributor secondary-goods outstanding, derived from
+        dms_retailer_ledger. Mirrors dms_router.secondary_ledger math:
+          billed  = invoice + debit_note
+          paid    = payment + coupon_credit + credit_note
+          outstanding = billed - paid   (negative ⇒ credit balance)
+        Returns {billed, paid, outstanding, credit}. `outstanding` is never
+        negative for display; the surplus is exposed as `credit`."""
+        billed = 0.0
+        paid = 0.0
+        async for e in db.dms_retailer_ledger.find(
+            {"retailer_id": retailer_id}, {"_id": 0, "kind": 1, "amount": 1}
+        ):
+            k = e.get("kind")
+            amt = _round(e.get("amount", 0))
+            if k in ("invoice", "debit_note"):
+                billed += amt
+            elif k in ("payment", "coupon_credit", "credit_note"):
+                paid += amt
+        net = _round(billed - paid)
+        return {
+            "billed": _round(billed),
+            "paid": _round(paid),
+            "outstanding": _round(net if net > 0 else 0.0),
+            "credit": _round(-net if net < 0 else 0.0),
+        }
+
     async def _ensure_wallet(retailer_id: str, wallet_type: str) -> None:
         await db.dms_v2_retailer_wallets.update_one(
             {"retailer_id": retailer_id, "wallet_type": wallet_type},
@@ -2263,6 +2290,18 @@ def build_coupons_router(db, get_current_user, notify=None):
                         "gps_lng": meta.get("gps_lng"),
                         "device_id": meta.get("device_id"),
                         "timestamp": _now()})
+        # For a valid CASH coupon show the outstanding impact on the confirm screen.
+        if cp and not fraud_reason and cp.get("coupon_type") == "cash":
+            bal = await _retailer_ledger_balance(retailer_id)
+            val = _round(cp.get("coupon_value") or 0)
+            net_before = _round(bal["outstanding"] - bal["credit"])   # +owe / -credit
+            net_after = _round(net_before - val)
+            preview.update({
+                "current_outstanding": bal["outstanding"],
+                "current_credit": bal["credit"],
+                "projected_outstanding": _round(net_after if net_after > 0 else 0.0),
+                "projected_credit": _round(-net_after if net_after < 0 else 0.0),
+            })
         return {"ok": not preview["fraud"], "fraud": preview["fraud"],
                 "fraud_reason": fraud_reason, "preview": preview}
 
@@ -2514,30 +2553,68 @@ def build_coupons_router(db, get_current_user, notify=None):
                              request=request, body=body)
             raise HTTPException(400, "Coupon has just been claimed by another scan")
 
-        # wallet transaction (immutable credit)
+        # ── FINANCIAL POSTING (cash → outstanding ledger, points → wallet) ──
+        # CASH coupons reduce the Retailer ↔ Distributor outstanding (secondary
+        # goods ledger) as a `coupon_credit` — auto credit carry-forward is
+        # handled by the ledger summary math. POINTS/REWARD coupons credit the
+        # retailer's reward (points) wallet. The two never mix.
         wallet_type = "cash" if cp["coupon_type"] == "cash" else "reward"
-        await _ensure_wallet(retailer_id, wallet_type)
-        tx_id = _nid("wtx")
-        await db.dms_v2_wallet_transactions.insert_one({
-            "id": tx_id,
-            "retailer_id": retailer_id,
-            "distributor_id": distributor_id,
-            "wallet_type": wallet_type,
-            "kind": "credit_coupon",
-            "amount": _round(cp["coupon_value"]),   # positive = credit
-            "coupon_id": cp["id"],
-            "coupon_code": cp["coupon_code"],
-            "batch_id": cp["batch_id"],
-            "created_by": user["id"],
-            "created_by_name": user.get("name"),
-            "created_by_role": user.get("role"),
-            "at": _now(),
-        })
+        tx_id: Optional[str] = None
+        ledger_id: Optional[str] = None
+        new_bal = 0.0
+        new_outstanding = None
+        new_credit = None
 
-        # link tx back to coupon
-        await db.dms_v2_coupons.update_one(
-            {"id": cp["id"]}, {"$set": {"wallet_transaction_id": tx_id, "updated_at": _now()}}
-        )
+        if wallet_type == "cash":
+            ledger_id = _nid("rle")
+            await db.dms_retailer_ledger.insert_one({
+                "id": ledger_id,
+                "distributor_id": distributor_id,
+                "retailer_id": retailer_id,
+                "retailer_name": retailer.get("name"),
+                "kind": "coupon_credit",
+                "reference_id": cp["id"],
+                "reference_no": cp["coupon_code"],
+                "amount": _round(cp["coupon_value"]),   # positive; reduces outstanding
+                "coupon_id": cp["id"],
+                "coupon_code": cp["coupon_code"],
+                "batch_id": cp["batch_id"],
+                "description": f"Cash coupon {cp.get('visible_serial') or cp['coupon_code']} "
+                               f"(₹{cp['coupon_value']:g})",
+                "at": _now(),
+                "recorded_by": user["id"],
+                "recorded_by_role": user.get("role"),
+                "recorded_by_name": user.get("name") or user.get("email"),
+            })
+            await db.dms_v2_coupons.update_one(
+                {"id": cp["id"]},
+                {"$set": {"retailer_ledger_id": ledger_id, "updated_at": _now()}},
+            )
+            bal = await _retailer_ledger_balance(retailer_id)
+            new_outstanding = bal["outstanding"]
+            new_credit = bal["credit"]
+        else:
+            await _ensure_wallet(retailer_id, wallet_type)
+            tx_id = _nid("wtx")
+            await db.dms_v2_wallet_transactions.insert_one({
+                "id": tx_id,
+                "retailer_id": retailer_id,
+                "distributor_id": distributor_id,
+                "wallet_type": wallet_type,
+                "kind": "credit_coupon",
+                "amount": _round(cp["coupon_value"]),   # positive = credit
+                "coupon_id": cp["id"],
+                "coupon_code": cp["coupon_code"],
+                "batch_id": cp["batch_id"],
+                "created_by": user["id"],
+                "created_by_name": user.get("name"),
+                "created_by_role": user.get("role"),
+                "at": _now(),
+            })
+            await db.dms_v2_coupons.update_one(
+                {"id": cp["id"]}, {"$set": {"wallet_transaction_id": tx_id, "updated_at": _now()}}
+            )
+            new_bal = await _wallet_balance(retailer_id, wallet_type)
 
         # audit
         await _audit(user, "coupon.claimed", "coupon", cp["id"], {
@@ -2547,6 +2624,7 @@ def build_coupons_router(db, get_current_user, notify=None):
             "distributor_id": distributor_id,
             "distributor_name": distributor.get("name"),
             "wallet_transaction_id": tx_id,
+            "retailer_ledger_id": ledger_id,
         })
 
         # optional retailer notification
@@ -2554,17 +2632,34 @@ def build_coupons_router(db, get_current_user, notify=None):
             user_of_ret = await db.users.find_one({"retailer_id": retailer_id, "role": "retailer"},
                                                   {"_id": 0, "id": 1})
             if user_of_ret:
-                unit = "₹" if wallet_type == "cash" else ""
-                suffix = "" if wallet_type == "cash" else " points"
                 try:
-                    await notify(user_of_ret["id"], "coupon_scanned",
-                                 f"Coupon credited to your {wallet_type} wallet",
-                                 f"{unit}{cp['coupon_value']:g}{suffix} added by {user.get('name')}",
-                                 "/dms/retailer/wallet")
+                    if wallet_type == "cash":
+                        outs_txt = (f"₹{new_outstanding:g} outstanding"
+                                    if (new_outstanding or 0) > 0
+                                    else f"₹{new_credit:g} credit balance")
+                        await notify(user_of_ret["id"], "coupon_scanned",
+                                     "Cash coupon applied to your account",
+                                     f"₹{cp['coupon_value']:g} adjusted by {user.get('name')} "
+                                     f"\u2022 now {outs_txt}",
+                                     "/dms/retailer/ledger")
+                    else:
+                        await notify(user_of_ret["id"], "coupon_scanned",
+                                     "Points credited to your wallet",
+                                     f"{cp['coupon_value']:g} points added by {user.get('name')}",
+                                     "/dms/retailer/wallet")
                 except Exception:
                     pass
 
-        new_bal = await _wallet_balance(retailer_id, wallet_type)
+        if wallet_type == "cash":
+            if (new_outstanding or 0) > 0:
+                msg = (f"₹{cp['coupon_value']:g} applied to {retailer.get('name')} \u2022 "
+                       f"outstanding now ₹{new_outstanding:g}")
+            else:
+                msg = (f"₹{cp['coupon_value']:g} applied to {retailer.get('name')} \u2022 "
+                       f"credit balance ₹{new_credit:g}")
+        else:
+            msg = f"{cp['coupon_value']:g} points credited to {retailer.get('name')}'s Reward Wallet"
+
         return {
             "ok": True,
             "coupon_code": cp["coupon_code"],
@@ -2573,13 +2668,15 @@ def build_coupons_router(db, get_current_user, notify=None):
             "coupon_value": cp["coupon_value"],
             "box_number": box_number,
             "wallet_type": wallet_type,
-            "new_balance": new_bal,
+            "new_balance": new_bal,                 # reward points balance (0 for cash)
+            "new_outstanding": new_outstanding,     # retailer↔distributor outstanding (cash)
+            "new_credit": new_credit,               # credit balance if overpaid (cash)
+            "retailer_ledger_id": ledger_id,
+            "wallet_transaction_id": tx_id,
             "retailer_name": retailer.get("name"),
             "distributor_name": distributor.get("name"),
             "fraud": False,
-            "message": (f"₹{cp['coupon_value']:g} credited to {retailer.get('name')}'s Cash Wallet"
-                        if wallet_type == "cash"
-                        else f"{cp['coupon_value']:g} points credited to {retailer.get('name')}'s Reward Wallet"),
+            "message": msg,
         }
 
     # ─────────────────────────────────────────────────────────────────────────
