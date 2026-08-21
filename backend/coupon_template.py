@@ -377,7 +377,7 @@ def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
         x, y = _pos(idx_in_sheet, mirror)
         c.saveState()
         c.setLineWidth(0.5)
-        c.setDash(2, 2)
+        c.setDash()  # solid full line (no dots/dashes)
         c.setStrokeColorRGB(0.7, 0.7, 0.7)
         c.circle(x + d_pts / 2.0, y + d_pts / 2.0, d_pts / 2.0, stroke=1, fill=0)
         c.restoreState()

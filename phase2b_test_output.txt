@@ -1,5 +1,5 @@
 🚀 GO OIL DMS — Phase 2B Backend Testing
-Base URL: https://points-wallet-hub-2.preview.emergentagent.com/api
+Base URL: https://dot-to-lines.preview.emergentagent.com/api
 
 ================================================================================
   LOGIN ALL ROLES

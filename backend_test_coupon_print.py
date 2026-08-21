@@ -10,7 +10,7 @@ import sys
 from datetime import datetime, timedelta
 
 # Public URL from frontend/.env
-BASE_URL = "https://points-wallet-hub-2.preview.emergentagent.com/api"
+BASE_URL = "https://dot-to-lines.preview.emergentagent.com/api"
 
 # Test credentials
 OWNER_EMAIL = "owner@gooil.com"

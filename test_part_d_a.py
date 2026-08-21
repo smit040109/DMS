@@ -4,7 +4,7 @@ import requests
 import time
 import json
 
-BASE_URL = "https://points-wallet-hub-2.preview.emergentagent.com/api"
+BASE_URL = "https://dot-to-lines.preview.emergentagent.com/api"
 
 def login():
     resp = requests.post(f"{BASE_URL}/auth/login", 

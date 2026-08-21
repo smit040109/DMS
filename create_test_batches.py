@@ -6,7 +6,7 @@ Create test coupon batches for PDF export testing
 import requests
 import json
 
-BASE_URL = "https://points-wallet-hub-2.preview.emergentagent.com/api"
+BASE_URL = "https://dot-to-lines.preview.emergentagent.com/api"
 OWNER_EMAIL = "gooilindia13@gmail.com"
 OWNER_PASSWORD = "Arjun@india13"
 
