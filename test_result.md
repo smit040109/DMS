@@ -1176,7 +1176,7 @@ backend:
           🐛 BUG FIX — Login failing on deployed URL with "Network error"
           
           User reported: "log in nai ho raha" (login not working) on deployed URL
-          https://po-order-sync.preview.emergentagent.com/login
+          https://points-wallet-hub-2.preview.emergentagent.com/login
           
           ROOT CAUSE IDENTIFIED (via browser network capture):
           - Deployed frontend had old sandbox URL baked into REACT_APP_BACKEND_URL at build time
@@ -1202,7 +1202,7 @@ backend:
           ✅ CORS BUG FIX VERIFIED — ALL 13 TESTS PASSED (100%)
           
           Comprehensive backend API testing completed for CORS fix verification.
-          Tested on sandbox URL: https://po-order-sync.preview.emergentagent.com
+          Tested on sandbox URL: https://points-wallet-hub-2.preview.emergentagent.com
           
           **TEST 1 — Sandbox login end-to-end: 6/6 PASSED ✅**
           - Test 1a: POST /api/auth/login with owner@gooil.com → 200 with JWT token ✅
@@ -1211,12 +1211,12 @@ backend:
           - Test 1d: Wrong password → 401 (security intact) ✅
           
           **TEST 2 — CORS behaviour compatible with cross-origin: 3/3 PASSED ✅**
-          - Test 2a: OPTIONS preflight with Origin: https://po-order-sync.preview.emergentagent.com
+          - Test 2a: OPTIONS preflight with Origin: https://points-wallet-hub-2.preview.emergentagent.com
             * Status: 204 ✅
             * Access-Control-Allow-Origin: * ✅
             * Access-Control-Allow-Methods: includes POST ✅
             * Access-Control-Allow-Headers: * (wildcard includes content-type + authorization) ✅
-          - Test 2b: POST /api/auth/login with Origin: https://po-order-sync.preview.emergentagent.com
+          - Test 2b: POST /api/auth/login with Origin: https://points-wallet-hub-2.preview.emergentagent.com
             * Status: 200 (not blocked by CORS) ✅
           - Test 2c: POST with random origin (https://random-other-domain.example.com)
             * Status: 200 (handled cleanly, no 500 error) ✅
@@ -1283,7 +1283,7 @@ backend:
              - JWT_SECRET="gooil-dms-production-jwt-secret-key-2026-please-rotate"
              - CORS_ORIGINS="*"
           2. Created /app/frontend/.env with:
-             - REACT_APP_BACKEND_URL=https://po-order-sync.preview.emergentagent.com
+             - REACT_APP_BACKEND_URL=https://points-wallet-hub-2.preview.emergentagent.com
              - WDS_SOCKET_PORT=443
           3. Backend server.py already has load_dotenv(ROOT_DIR / ".env") at top
           
@@ -1425,7 +1425,7 @@ frontend:
           ✅ ALL 3 LOGIN PAGE CHECKS PASSED (100%)
           
           Comprehensive verification completed on PREVIEW environment:
-          URL: https://po-order-sync.preview.emergentagent.com/login
+          URL: https://points-wallet-hub-2.preview.emergentagent.com/login
           
           **TEST 1: SUBTITLE TEXT VERIFICATION — ✅ PASSED**
           - Subtitle text under "Sign in" heading verified
@@ -1660,7 +1660,7 @@ agent_communication:
       ✅ LOGIN PAGE VERIFICATION COMPLETE — ALL 3 CHECKS PASSED (100%)
       
       Tested GO OIL DMS login page on PREVIEW environment as requested.
-      URL: https://po-order-sync.preview.emergentagent.com/login
+      URL: https://points-wallet-hub-2.preview.emergentagent.com/login
       
       **RESULTS:**
       
@@ -2174,7 +2174,7 @@ agent_communication:
       User-reported login issue "Something went wrong. Please try again." is RESOLVED.
       
       ✅ CORS CONFIGURATION FIX CONFIRMED:
-      - Backend /app/backend/.env: CORS_ORIGINS set to specific origin (https://po-order-sync.preview.emergentagent.com)
+      - Backend /app/backend/.env: CORS_ORIGINS set to specific origin (https://points-wallet-hub-2.preview.emergentagent.com)
       - Frontend axios withCredentials: true working correctly
       - Preflight requests returning access-control-allow-credentials: true
       - access_token cookie being set and sent correctly
@@ -4499,7 +4499,7 @@ agent_communication:
       🐛 CORS BUG FIX REQUEST — Login Cross-Origin Issue
       
       User reported: "log in nai ho raha" (login not working) on deployed URL
-      https://po-order-sync.preview.emergentagent.com/login → showing "Network error — is the server reachable?"
+      https://points-wallet-hub-2.preview.emergentagent.com/login → showing "Network error — is the server reachable?"
       
       ROOT CAUSE IDENTIFIED:
       - Frontend axios client had `withCredentials: true` (unnecessary for JWT Bearer auth)
@@ -5294,61 +5294,61 @@ agent_communication:
           
           **OWNER ROLE (8/8 PASSED):**
           1. ✅ Coupons → /dms/owner/coupons
-             - URL: https://po-order-sync.preview.emergentagent.com/dms/owner/coupons
+             - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/owner/coupons
              - Heading: "Coupon Management"
              - Page renders with KPI cards and batches table
           
           2. ✅ All Coupons → /dms/owner/coupons/all
-             - URL: https://po-order-sync.preview.emergentagent.com/dms/owner/coupons/all
+             - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/owner/coupons/all
              - Heading: "All Coupons"
              - Page renders correctly
           
           3. ✅ Redemptions → /dms/owner/coupons/redemptions
-             - URL: https://po-order-sync.preview.emergentagent.com/dms/owner/coupons/redemptions
+             - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/owner/coupons/redemptions
              - Heading: "Redemption Requests"
              - Page renders correctly
           
           4. ✅ Credit Notes → /dms/owner/coupons/credit-notes
-             - URL: https://po-order-sync.preview.emergentagent.com/dms/owner/coupons/credit-notes
+             - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/owner/coupons/credit-notes
              - Heading: "Credit Notes"
              - Page renders correctly
           
           5. ✅ Dispatch Advices → /dms/owner/coupons/dispatch-advices
-             - URL: https://po-order-sync.preview.emergentagent.com/dms/owner/coupons/dispatch-advices
+             - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/owner/coupons/dispatch-advices
              - Heading: "Dispatch Advices"
              - Page renders correctly
           
           6. ✅ Coupon Reports → /dms/owner/coupon-reports
-             - URL: https://po-order-sync.preview.emergentagent.com/dms/owner/coupon-reports
+             - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/owner/coupon-reports
              - Heading: "Coupon Reports"
              - Page renders correctly
           
           7. ✅ Coupon Audit Log → /dms/owner/coupons/audit-log
-             - URL: https://po-order-sync.preview.emergentagent.com/dms/owner/coupons/audit-log
+             - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/owner/coupons/audit-log
              - Heading: "Coupon Audit Log"
              - Page renders correctly
           
           8. ✅ Batch Detail → /dms/owner/coupons/batches/cbt-a936658197c6
-             - URL: https://po-order-sync.preview.emergentagent.com/dms/owner/coupons/batches/cbt-a936658197c6
+             - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/owner/coupons/batches/cbt-a936658197c6
              - Heading: "Batch GO-R-00003"
              - Clicked "Open" button on batch row, navigated to batch detail page
              - Page shows batch details with status cards and coupons table
           
           **SALESPERSON ROLE (1/1 PASSED):**
           9. ✅ Scan Coupon → /dms/salesperson/scan
-             - URL: https://po-order-sync.preview.emergentagent.com/dms/salesperson/scan
+             - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/salesperson/scan
              - Heading: "Scan Coupon"
              - Page renders with two-column layout (Retailer picker + Scan panel)
           
           **RETAILER ROLE (1/1 PASSED):**
           10. ✅ My Wallet → /dms/retailer/wallet
-              - URL: https://po-order-sync.preview.emergentagent.com/dms/retailer/wallet
+              - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/retailer/wallet
               - Heading: "My Wallets & Coupons"
               - Page renders with two large wallet cards (Cash Wallet + Reward Wallet)
           
           **DISTRIBUTOR ROLE (1/1 PASSED):**
           11. ✅ Coupon Rewards → /dms/distributor/coupons
-              - URL: https://po-order-sync.preview.emergentagent.com/dms/distributor/coupons
+              - URL: https://points-wallet-hub-2.preview.emergentagent.com/dms/distributor/coupons
               - Heading: "Coupon Rewards"
               - Page renders with KPI cards and tabs (Retailer Wallets, Redemptions, 
                 Credit Notes, Dispatch Advices)
@@ -5984,7 +5984,7 @@ agent_communication:
           **TEST SETUP:**
           - Used existing batch: GO-C-00003 (100 coupons)
           - Auth: owner@gooil.com / GoOil@2026
-          - Public URL: https://po-order-sync.preview.emergentagent.com
+          - Public URL: https://points-wallet-hub-2.preview.emergentagent.com
           - All routes under /api/*
           
           **TEST 1 — PDF Export with Default Diameter (34mm) ✅**
@@ -6428,7 +6428,7 @@ backend:
           - DB re-seeded (135 products, 2 distributors)
           - All passwords: GoOil@2026
           - Login working for all 9 roles
-          - Backend URL: https://po-order-sync.preview.emergentagent.com/api
+          - Backend URL: https://points-wallet-hub-2.preview.emergentagent.com/api
           
           **NO MAJOR CRITICAL ISSUES FOUND.**
           All 8 core features working as designed. Only party_statement report endpoint missing.
@@ -9597,7 +9597,7 @@ frontend_v4:
         comment: |
           ⚠️ PARTIAL TEST — Login timeout issue on preview URL
           
-          **TESTED ON:** https://po-order-sync.preview.emergentagent.com (NOT localhost)
+          **TESTED ON:** https://points-wallet-hub-2.preview.emergentagent.com (NOT localhost)
           
           **ISSUE:**
           - Login as owner (gooilindia13@gmail.com) succeeded
@@ -9628,7 +9628,7 @@ frontend_v4:
         comment: |
           ⚠️ UNABLE TO TEST — Login timeout issue
           
-          **TESTED ON:** https://po-order-sync.preview.emergentagent.com
+          **TESTED ON:** https://points-wallet-hub-2.preview.emergentagent.com
           
           **ISSUE:**
           - Could not re-login as salesperson after owner login timeout
@@ -9650,7 +9650,7 @@ frontend_v4:
         comment: |
           ✅ PASSED — Salesperson report shows correct role-based data
           
-          **TESTED ON:** https://po-order-sync.preview.emergentagent.com
+          **TESTED ON:** https://points-wallet-hub-2.preview.emergentagent.com
           
           **TEST RESULTS:**
           1. **As SALESPERSON (salesperson@gooil.com):**
@@ -9685,7 +9685,7 @@ frontend_v4:
         comment: |
           ✅ PASSED — Coupon module loads and print action works
           
-          **TESTED ON:** https://po-order-sync.preview.emergentagent.com
+          **TESTED ON:** https://points-wallet-hub-2.preview.emergentagent.com
           
           **TEST RESULTS:**
           1. **Coupons Module Page:**
@@ -9781,7 +9781,7 @@ agent_communication:
     message: |
       📋 CONTINUATION v4 FRONTEND UI TESTING COMPLETE (PREVIEW URL)
       
-      **TESTED ON:** https://po-order-sync.preview.emergentagent.com (NOT localhost)
+      **TESTED ON:** https://points-wallet-hub-2.preview.emergentagent.com (NOT localhost)
       
       **TEST SUMMARY:**
       - Total Areas: 4

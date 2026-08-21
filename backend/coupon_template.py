@@ -328,8 +328,10 @@ def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
     per sheet, cutting-friendly grid).
 
     Layout requirements (business):
-      * ``lead_blank_sheet`` — the VERY FIRST page of each side is a BLANK sheet
-        with 77 empty 35 mm circles (die-cut guide).
+      * ``lead_blank_sheet`` — a SINGLE BLANK "dye" sheet with 77 empty 35 mm
+        circles is added ONCE at the very START of the whole document (before the
+        front side only, used to calibrate the 35 mm die-cut). It is never
+        repeated for the back side.
       * ``pad_last_sheet``  — the last partially-filled coupon sheet is padded up
         to 77 with blank 35 mm circles.
 
@@ -412,9 +414,9 @@ def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
             cx = x + ((qx0 + qx1) / 2.0) * d_pts
             c.drawCentredString(cx, cy - fsz * 0.35, str(serial))
 
-    def _draw_side(which: str):
+    def _draw_side(which: str, with_blank: bool):
         mirror = (which == "back")
-        if lead_blank_sheet:
+        if with_blank:
             _blank_sheet(mirror)
         for s in range(n_sheets):
             chunk = coupons[s * PER_SHEET:(s + 1) * PER_SHEET]
@@ -434,10 +436,15 @@ def build_print_pdf(coupons: List[Dict[str, Any]], *, side: str = "both",
                     _blank_circle(i, mirror)
             c.showPage()
 
+    # A single BLANK "dye" calibration sheet is emitted ONCE at the very start of
+    # the whole document (before the FRONT side only) — never per side.
     if side in ("front", "both"):
-        _draw_side("front")
+        _draw_side("front", with_blank=lead_blank_sheet)
     if side in ("back", "both"):
-        _draw_side("back")
+        # When both sides are produced the lead blank already appeared before the
+        # front sheets, so the back side must NOT repeat it. For a back-only PDF we
+        # still want the single lead blank.
+        _draw_side("back", with_blank=(lead_blank_sheet and side == "back"))
 
     c.save()
     buf.seek(0)

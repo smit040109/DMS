@@ -10,7 +10,7 @@ import io
 from datetime import datetime
 
 # Configuration
-BASE_URL = "https://po-order-sync.preview.emergentagent.com/api"
+BASE_URL = "https://points-wallet-hub-2.preview.emergentagent.com/api"
 PASSWORD = "GoOil@2026"
 
 # Test credentials
